@@ -1,0 +1,1226 @@
+{
+  "categories": [
+    {
+      "code": "HDPE",
+      "name": "HDPE",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "LDPE",
+      "name": "LDPE",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "LLDPE",
+      "name": "LLDPE",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "PP",
+      "name": "PP",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "PET",
+      "name": "PET",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "PVC",
+      "name": "PVC",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "ABS",
+      "name": "ABS",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "HIPS",
+      "name": "HIPS",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "NYLON",
+      "name": "Nylon",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "EVA",
+      "name": "EVA",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "POM",
+      "name": "POM",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "PC",
+      "name": "PC",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "SAN",
+      "name": "SAN",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "GPPS",
+      "name": "GPPS",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "PMMA",
+      "name": "PMMA",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "PBT",
+      "name": "PBT",
+      "parentGroup": "Polymers"
+    },
+    {
+      "code": "COMPOUNDS",
+      "name": "Compounds",
+      "parentGroup": "Compounds"
+    },
+    {
+      "code": "MASTERBATCH",
+      "name": "Masterbatch",
+      "parentGroup": "Masterbatch"
+    },
+    {
+      "code": "ELASTOMER",
+      "name": "Elastomer",
+      "parentGroup": "Elastomers"
+    },
+    {
+      "code": "CHEMICALS",
+      "name": "Chemicals",
+      "parentGroup": "Chemicals"
+    },
+    {
+      "code": "SOLVENTS",
+      "name": "Solvents",
+      "parentGroup": "Solvents"
+    },
+    {
+      "code": "INTERMEDIATES",
+      "name": "Intermediates",
+      "parentGroup": "Intermediates"
+    },
+    {
+      "code": "RECYCLED",
+      "name": "Recycled",
+      "parentGroup": "Recycled"
+    },
+    {
+      "code": "BASE_OIL",
+      "name": "Base Oil",
+      "parentGroup": "Base Oils"
+    },
+    {
+      "code": "SPECIALTY",
+      "name": "Specialty",
+      "parentGroup": "Specialty"
+    }
+  ],
+  "grades": [
+    {
+      "code": "HDPE_FILM",
+      "name": "HD Film",
+      "categoryId": "cat-hdpe",
+      "description": "High-density polyethylene film grade for liners and flexible packaging.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Packaging",
+        "Film",
+        "Flexible Packaging"
+      ]
+    },
+    {
+      "code": "HDPE_BLOW",
+      "name": "HD Blow",
+      "categoryId": "cat-hdpe",
+      "description": "Blow moulding HDPE for drums, jerry cans and industrial containers.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Blow Moulding",
+        "Drums",
+        "Containers"
+      ]
+    },
+    {
+      "code": "HDPE_PIPE",
+      "name": "HD Pipe",
+      "categoryId": "cat-hdpe",
+      "description": "PE100 / pipe-grade HDPE for pressure piping and fittings.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Pipes",
+        "Fittings",
+        "Infrastructure"
+      ]
+    },
+    {
+      "code": "HDPE_MOULD",
+      "name": "HD Mould",
+      "categoryId": "cat-hdpe",
+      "description": "Injection moulding HDPE for crates, caps and household items.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Injection Moulding",
+        "Crates",
+        "Caps"
+      ]
+    },
+    {
+      "code": "LDPE_FILM",
+      "name": "LD Film",
+      "categoryId": "cat-ldpe",
+      "description": "Low-density polyethylene film grade for bags and lamination.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Film",
+        "Bags",
+        "Lamination"
+      ]
+    },
+    {
+      "code": "LDPE_INJECTION",
+      "name": "LD Injection",
+      "categoryId": "cat-ldpe",
+      "description": "Injection moulding LDPE for lids, closures and flexible parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": false,
+      "applications": [
+        "Injection Moulding",
+        "Closures"
+      ]
+    },
+    {
+      "code": "LLDPE_FILM",
+      "name": "LLDPE Film",
+      "categoryId": "cat-lldpe",
+      "description": "Linear low-density film grade for stretch wrap and agricultural film.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Stretch Wrap",
+        "Agricultural Film",
+        "Pouches"
+      ]
+    },
+    {
+      "code": "LLDPE_ROTO",
+      "name": "LLDPE Rotomoulding",
+      "categoryId": "cat-lldpe",
+      "description": "Rotomoulding LLDPE for tanks and large hollow articles.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Rotomoulding",
+        "Tanks"
+      ]
+    },
+    {
+      "code": "PP_RAFFIA",
+      "name": "PP Raffia",
+      "categoryId": "cat-pp",
+      "description": "Raffia / woven-sack polypropylene, typically 3.5 MFI.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Woven Sacks",
+        "Raffia",
+        "FIBC"
+      ]
+    },
+    {
+      "code": "PP_FILM",
+      "name": "PP Film",
+      "categoryId": "cat-pp",
+      "description": "Oriented / TQ film polypropylene for packaging films.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Film",
+        "Packaging"
+      ]
+    },
+    {
+      "code": "PP_INJECTION",
+      "name": "PP Injection",
+      "categoryId": "cat-pp",
+      "description": "Homopolymer injection grade for thin-wall moulding and housewares.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Injection Moulding",
+        "Housewares",
+        "Packaging"
+      ]
+    },
+    {
+      "code": "PP_RANDOM",
+      "name": "PP Random",
+      "categoryId": "cat-pp",
+      "description": "Random copolymer PP for transparent containers and blow moulding.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Blow Moulding",
+        "Transparent Containers"
+      ]
+    },
+    {
+      "code": "PP_CP",
+      "name": "PP CP",
+      "categoryId": "cat-pp",
+      "description": "Impact copolymer polypropylene for automotive and industrial parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Automotive",
+        "Industrial Parts"
+      ]
+    },
+    {
+      "code": "PP_UNFILLED",
+      "name": "PP Unfilled",
+      "categoryId": "cat-pp",
+      "description": "Unfilled polypropylene compound base for further compounding.",
+      "status": "ACTIVE",
+      "customerVisible": false,
+      "sellerVisible": true,
+      "applications": [
+        "Compounding",
+        "Injection Moulding"
+      ]
+    },
+    {
+      "code": "PET_BOTTLE",
+      "name": "PET Bottle",
+      "categoryId": "cat-pet",
+      "description": "Bottle-grade PET resin for CSD and water bottles.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Bottles",
+        "Packaging"
+      ]
+    },
+    {
+      "code": "PET_SHEET",
+      "name": "PET Sheet",
+      "categoryId": "cat-pet",
+      "description": "Sheet-grade PET for thermoforming and packaging trays.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Sheet",
+        "Thermoforming"
+      ]
+    },
+    {
+      "code": "PVC_PIPE",
+      "name": "PVC Pipe",
+      "categoryId": "cat-pvc",
+      "description": "Suspension PVC (K67) for pipes, fittings and rigid profiles.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Pipes",
+        "Fittings",
+        "Rigid Profiles"
+      ]
+    },
+    {
+      "code": "RPVC",
+      "name": "RPVC",
+      "categoryId": "cat-pvc",
+      "description": "Rigid PVC compound for profiles, window frames and sheets.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Profiles",
+        "Windows",
+        "Sheets"
+      ]
+    },
+    {
+      "code": "ABS_INJECTION",
+      "name": "ABS Injection",
+      "categoryId": "cat-abs",
+      "description": "General-purpose ABS for automotive interiors and appliances.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Automotive",
+        "Appliances",
+        "Injection Moulding"
+      ]
+    },
+    {
+      "code": "G_ABS",
+      "name": "gABS",
+      "categoryId": "cat-abs",
+      "description": "General-purpose ABS reprocessed / gABS for non-critical moulding.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Injection Moulding",
+        "Compounds"
+      ]
+    },
+    {
+      "code": "ABS_REGRIND_IMPORTED",
+      "name": "Imported ABS Regrind",
+      "categoryId": "cat-abs",
+      "description": "Imported ABS regrind for blending and non-food applications.",
+      "status": "ACTIVE",
+      "customerVisible": false,
+      "sellerVisible": true,
+      "applications": [
+        "Regrind",
+        "Blending"
+      ]
+    },
+    {
+      "code": "HIPS_INJECTION",
+      "name": "HIPS",
+      "categoryId": "cat-hips",
+      "description": "High-impact polystyrene for packaging and appliance housings.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Packaging",
+        "Appliances"
+      ]
+    },
+    {
+      "code": "PA66_GF30_FR_BK",
+      "name": "PA66 30% GF FR BK",
+      "categoryId": "cat-nylon",
+      "description": "Glass-filled flame-retardant black PA66 for electrical housings.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Electrical",
+        "Automotive",
+        "Engineering Plastics"
+      ]
+    },
+    {
+      "code": "NYLON_PA6",
+      "name": "Nylon PA6",
+      "categoryId": "cat-nylon",
+      "description": "Unfilled polyamide 6 for engineering and textile applications.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Engineering Plastics",
+        "Textiles"
+      ]
+    },
+    {
+      "code": "EVA_FILM",
+      "name": "EVA",
+      "categoryId": "cat-eva",
+      "description": "EVA copolymer for film, foam and hot-melt applications.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Film",
+        "Foam",
+        "Adhesives"
+      ]
+    },
+    {
+      "code": "POM_COPOLYMER",
+      "name": "POM",
+      "categoryId": "cat-pom",
+      "description": "Acetal copolymer for precision gears and mechanical parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Gears",
+        "Precision Parts"
+      ]
+    },
+    {
+      "code": "PC_INJECTION",
+      "name": "PC",
+      "categoryId": "cat-pc",
+      "description": "Polycarbonate for transparent housings and electrical parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Electrical",
+        "Transparent Parts"
+      ]
+    },
+    {
+      "code": "SAN_TRANSPARENT",
+      "name": "SAN",
+      "categoryId": "cat-san",
+      "description": "Styrene acrylonitrile for transparent housewares and cosmetics packaging.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Housewares",
+        "Packaging"
+      ]
+    },
+    {
+      "code": "GPPS_GENERAL",
+      "name": "GPPS",
+      "categoryId": "cat-gpps",
+      "description": "General-purpose polystyrene for packaging and disposable items.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Packaging",
+        "Disposables"
+      ]
+    },
+    {
+      "code": "PMMA_SHEET",
+      "name": "PMMA",
+      "categoryId": "cat-pmma",
+      "description": "Acrylic / PMMA for sheets, lighting and optical parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Sheets",
+        "Lighting",
+        "Optical"
+      ]
+    },
+    {
+      "code": "PBT_GF",
+      "name": "PBT",
+      "categoryId": "cat-pbt",
+      "description": "PBT engineering plastic for electrical connectors and automotive.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Electrical",
+        "Automotive"
+      ]
+    },
+    {
+      "code": "PP_ABS",
+      "name": "PP ABS",
+      "categoryId": "cat-compounds",
+      "description": "PP/ABS blend compound for automotive interior parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Automotive",
+        "Compounds"
+      ]
+    },
+    {
+      "code": "MASTERBATCH_BLACK",
+      "name": "Masterbatch",
+      "categoryId": "cat-masterbatch",
+      "description": "Colour and additive masterbatches for polymer processing.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Colouring",
+        "Additives"
+      ]
+    },
+    {
+      "code": "TPU_ELASTOMER",
+      "name": "TPU",
+      "categoryId": "cat-elastomer",
+      "description": "Thermoplastic polyurethane elastomer for hoses, films and footwear.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Hoses",
+        "Footwear",
+        "Film"
+      ]
+    },
+    {
+      "code": "TPEE",
+      "name": "TPEE",
+      "categoryId": "cat-elastomer",
+      "description": "Thermoplastic polyester elastomer for flexible engineering parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Automotive",
+        "Cable",
+        "Elastomers"
+      ]
+    },
+    {
+      "code": "TPV",
+      "name": "TPV",
+      "categoryId": "cat-elastomer",
+      "description": "Thermoplastic vulcanizate for automotive weatherseals and soft-touch parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Automotive",
+        "Seals"
+      ]
+    },
+    {
+      "code": "PLASTOMER",
+      "name": "Plastomer",
+      "categoryId": "cat-elastomer",
+      "description": "Polyolefin plastomer for film modification and impact improvement.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": false,
+      "applications": [
+        "Film Modification",
+        "Impact Modifier"
+      ]
+    },
+    {
+      "code": "METALLOCENE",
+      "name": "Metallocene",
+      "categoryId": "cat-specialty",
+      "description": "Metallocene-catalyzed polyethylene for high-clarity film.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Film",
+        "Specialty Polymers"
+      ]
+    },
+    {
+      "code": "XLPE",
+      "name": "XLPE",
+      "categoryId": "cat-specialty",
+      "description": "Cross-linkable polyethylene for cable insulation.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Cable",
+        "Insulation"
+      ]
+    },
+    {
+      "code": "EVOH",
+      "name": "EVOH",
+      "categoryId": "cat-specialty",
+      "description": "Ethylene vinyl alcohol barrier resin for multilayer packaging.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Barrier Film",
+        "Packaging"
+      ]
+    },
+    {
+      "code": "PBAT",
+      "name": "PBAT",
+      "categoryId": "cat-specialty",
+      "description": "Biodegradable polyester for compostable film and bags.",
+      "status": "INACTIVE",
+      "customerVisible": false,
+      "sellerVisible": false,
+      "applications": [
+        "Compostable Film",
+        "Bags"
+      ]
+    },
+    {
+      "code": "ETHYL_ACETATE",
+      "name": "Ethyl Acetate",
+      "categoryId": "cat-solvents",
+      "description": "Industrial ethyl acetate solvent for coatings, inks and adhesives.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Coatings",
+        "Inks",
+        "Adhesives"
+      ]
+    },
+    {
+      "code": "ACETONE",
+      "name": "Acetone",
+      "categoryId": "cat-solvents",
+      "description": "Industrial acetone for cleaning, coatings and chemical synthesis.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Solvent",
+        "Cleaning",
+        "Synthesis"
+      ]
+    },
+    {
+      "code": "IPA",
+      "name": "IPA",
+      "categoryId": "cat-solvents",
+      "description": "Isopropyl alcohol for pharma, electronics and industrial cleaning.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Cleaning",
+        "Pharma",
+        "Electronics"
+      ]
+    },
+    {
+      "code": "MEK",
+      "name": "MEK",
+      "categoryId": "cat-solvents",
+      "description": "Methyl ethyl ketone for coatings, adhesives and degreasing.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Coatings",
+        "Adhesives"
+      ]
+    },
+    {
+      "code": "MIBK",
+      "name": "MIBK",
+      "categoryId": "cat-solvents",
+      "description": "Methyl isobutyl ketone solvent for coatings and extraction.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Coatings",
+        "Extraction"
+      ]
+    },
+    {
+      "code": "BUTYL_ACETATE",
+      "name": "Butyl Acetate",
+      "categoryId": "cat-solvents",
+      "description": "n-Butyl acetate for paints, coatings and flavour intermediates.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Paints",
+        "Coatings"
+      ]
+    },
+    {
+      "code": "N_PROPYL_ACETATE",
+      "name": "N-Propyl Acetate",
+      "categoryId": "cat-solvents",
+      "description": "n-Propyl acetate solvent for inks and coatings.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Inks",
+        "Coatings"
+      ]
+    },
+    {
+      "code": "CYCLOHEXANE",
+      "name": "Cyclohexane",
+      "categoryId": "cat-solvents",
+      "description": "Cyclohexane for nylon intermediates and solvent applications.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Intermediates",
+        "Solvent"
+      ]
+    },
+    {
+      "code": "CYCLOHEXANONE",
+      "name": "Cyclohexanone",
+      "categoryId": "cat-solvents",
+      "description": "Cyclohexanone for caprolactam, coatings and adhesives.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Coatings",
+        "Adhesives",
+        "Intermediates"
+      ]
+    },
+    {
+      "code": "ETHANOL",
+      "name": "Ethanol",
+      "categoryId": "cat-solvents",
+      "description": "Industrial ethanol for solvents, sanitizers and chemical feedstock.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Solvent",
+        "Feedstock"
+      ]
+    },
+    {
+      "code": "IBA",
+      "name": "IBA",
+      "categoryId": "cat-solvents",
+      "description": "Isobutanol for coatings, plasticizers and chemical intermediates.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Coatings",
+        "Plasticizers"
+      ]
+    },
+    {
+      "code": "CAUSTIC",
+      "name": "Caustic",
+      "categoryId": "cat-chemicals",
+      "description": "Caustic soda (NaOH) for alumina, pulp, soap and chemical processing.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Chemical Processing",
+        "Pulp",
+        "Soap"
+      ]
+    },
+    {
+      "code": "TIO2",
+      "name": "TiO2",
+      "categoryId": "cat-chemicals",
+      "description": "Titanium dioxide pigment for paints, plastics and masterbatch.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Paints",
+        "Plastics",
+        "Masterbatch"
+      ]
+    },
+    {
+      "code": "MELAMINE",
+      "name": "Melamine",
+      "categoryId": "cat-chemicals",
+      "description": "Melamine for laminates, resins and moulding compounds.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Laminates",
+        "Resins"
+      ]
+    },
+    {
+      "code": "GLYCERINE",
+      "name": "Glycerine",
+      "categoryId": "cat-chemicals",
+      "description": "Refined glycerine for pharma, personal care and chemical synthesis.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Pharma",
+        "Personal Care"
+      ]
+    },
+    {
+      "code": "POLYOL",
+      "name": "Polyol",
+      "categoryId": "cat-chemicals",
+      "description": "Polyether polyol for polyurethane foams and elastomers.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "PU Foam",
+        "Elastomers"
+      ]
+    },
+    {
+      "code": "ISOCYANATES",
+      "name": "Isocyanates",
+      "categoryId": "cat-chemicals",
+      "description": "MDI / TDI isocyanates for polyurethane systems.",
+      "status": "ACTIVE",
+      "customerVisible": false,
+      "sellerVisible": true,
+      "applications": [
+        "PU Systems",
+        "Foams"
+      ]
+    },
+    {
+      "code": "PLASTICIZER",
+      "name": "Plasticizer",
+      "categoryId": "cat-chemicals",
+      "description": "Phthalate / non-phthalate plasticizers for flexible PVC.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Flexible PVC",
+        "Cables"
+      ]
+    },
+    {
+      "code": "SODIUM_HYDROSULPHITE",
+      "name": "Sodium Hydrosulphite",
+      "categoryId": "cat-chemicals",
+      "description": "Sodium hydrosulphite for textile bleaching and vat dyeing.",
+      "status": "INACTIVE",
+      "customerVisible": false,
+      "sellerVisible": false,
+      "applications": [
+        "Textiles",
+        "Bleaching"
+      ]
+    },
+    {
+      "code": "ORTHO_XYLENE",
+      "name": "Ortho Xylene",
+      "categoryId": "cat-intermediates",
+      "description": "o-Xylene feedstock for phthalic anhydride.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Phthalic Anhydride",
+        "Intermediates"
+      ]
+    },
+    {
+      "code": "STYRENE",
+      "name": "Styrene",
+      "categoryId": "cat-intermediates",
+      "description": "Styrene monomer for PS, ABS and SBR production.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "PS",
+        "ABS",
+        "SBR"
+      ]
+    },
+    {
+      "code": "MMA",
+      "name": "MMA",
+      "categoryId": "cat-intermediates",
+      "description": "Methyl methacrylate monomer for PMMA and coatings.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "PMMA",
+        "Coatings"
+      ]
+    },
+    {
+      "code": "C9",
+      "name": "C-9",
+      "categoryId": "cat-intermediates",
+      "description": "C9 aromatic hydrocarbon for resins and solvents.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Resins",
+        "Solvents"
+      ]
+    },
+    {
+      "code": "AMINE",
+      "name": "Amine",
+      "categoryId": "cat-intermediates",
+      "description": "Industrial amines for gas treating and chemical synthesis.",
+      "status": "ACTIVE",
+      "customerVisible": false,
+      "sellerVisible": true,
+      "applications": [
+        "Gas Treating",
+        "Synthesis"
+      ]
+    },
+    {
+      "code": "PG",
+      "name": "PG",
+      "categoryId": "cat-intermediates",
+      "description": "Propylene glycol for unsaturated polyester resins and antifreeze.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Resins",
+        "Antifreeze"
+      ]
+    },
+    {
+      "code": "DEG",
+      "name": "DEG",
+      "categoryId": "cat-intermediates",
+      "description": "Diethylene glycol for resins, solvents and unsaturated polyesters.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Resins",
+        "Solvents"
+      ]
+    },
+    {
+      "code": "GLYCOL",
+      "name": "Glycol",
+      "categoryId": "cat-intermediates",
+      "description": "Monoethylene glycol for polyester fibre and antifreeze.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Polyester",
+        "Antifreeze"
+      ]
+    },
+    {
+      "code": "POLYBUTENE",
+      "name": "Polybutene",
+      "categoryId": "cat-specialty",
+      "description": "Polybutene for adhesives, sealants and lubricant additives.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Adhesives",
+        "Lubricants"
+      ]
+    },
+    {
+      "code": "R_HDPE",
+      "name": "rHDPE",
+      "categoryId": "cat-recycled",
+      "description": "Recycled HDPE for non-food moulding, pipes and crates.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Recycled",
+        "Moulding",
+        "Pipes"
+      ]
+    },
+    {
+      "code": "R_LDPE",
+      "name": "rLDPE",
+      "categoryId": "cat-recycled",
+      "description": "Recycled LDPE for films, liners and compounding.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Recycled",
+        "Film",
+        "Compounding"
+      ]
+    },
+    {
+      "code": "R_LLDPE",
+      "name": "rLLDPE",
+      "categoryId": "cat-recycled",
+      "description": "Recycled LLDPE for film blending and non-food packaging.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Recycled",
+        "Film"
+      ]
+    },
+    {
+      "code": "R_PP",
+      "name": "rPP",
+      "categoryId": "cat-recycled",
+      "description": "Recycled polypropylene for injection moulding and compounding.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Recycled",
+        "Injection Moulding"
+      ]
+    },
+    {
+      "code": "R_PP_UNFILLED",
+      "name": "rPP Unfilled",
+      "categoryId": "cat-recycled",
+      "description": "Unfilled recycled PP for natural-colour compounding.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Recycled",
+        "Compounding"
+      ]
+    },
+    {
+      "code": "R_PPCP",
+      "name": "rPPCP",
+      "categoryId": "cat-recycled",
+      "description": "Recycled polypropylene copolymer for impact applications.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Recycled",
+        "Impact Moulding"
+      ]
+    },
+    {
+      "code": "R_PET",
+      "name": "rPET",
+      "categoryId": "cat-recycled",
+      "description": "Recycled PET flakes / pellets for fibre and sheet.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Fibre",
+        "Sheet",
+        "Recycled"
+      ]
+    },
+    {
+      "code": "R_PVC",
+      "name": "rPVC",
+      "categoryId": "cat-recycled",
+      "description": "Recycled PVC for pipes, profiles and footwear compounds.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Pipes",
+        "Profiles",
+        "Recycled"
+      ]
+    },
+    {
+      "code": "R_ABS",
+      "name": "rABS",
+      "categoryId": "cat-recycled",
+      "description": "Recycled ABS for non-critical injection moulding.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Recycled",
+        "Injection Moulding"
+      ]
+    },
+    {
+      "code": "RECYCLED_BASE_OIL",
+      "name": "Recycled Base Oil",
+      "categoryId": "cat-base-oil",
+      "description": "Re-refined base oil for blending industrial lubricants.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Lubricants",
+        "Blending"
+      ]
+    },
+    {
+      "code": "BASE_OIL",
+      "name": "Base Oil",
+      "categoryId": "cat-base-oil",
+      "description": "Virgin Group I / II base oil for lubricant blending.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": [
+        "Lubricants",
+        "Blending"
+      ]
+    },
+    {
+      "code": "NPA",
+      "name": "NPA",
+      "categoryId": "cat-solvents",
+      "description": "n-Propyl alcohol for coatings, inks and pharmaceutical solvents.",
+      "status": "INACTIVE",
+      "customerVisible": false,
+      "sellerVisible": true,
+      "applications": [
+        "Coatings",
+        "Pharma"
+      ]
+    },
+    {
+      "code": "BAM",
+      "name": "BAM",
+      "categoryId": "cat-chemicals",
+      "description": "Benzyl alcohol / related aromatic intermediate for coatings and fragrances.",
+      "status": "INACTIVE",
+      "customerVisible": false,
+      "sellerVisible": false,
+      "applications": [
+        "Coatings",
+        "Fragrances"
+      ]
+    }
+  ],
+  "gradeCount": 82,
+  "catCount": 25
+}

@@ -1,0 +1,411 @@
+import { createHash } from 'node:crypto';
+import { BadRequestException } from '@nestjs/common';
+import {
+  OfferStatus,
+  ProductStatus,
+  type Offer,
+  type OfferPriceTier,
+} from '../../../generated/prisma/client.js';
+
+export class MarketplaceException extends BadRequestException {
+  constructor(code: string, message?: string) {
+    super({ code, message: message ?? code });
+  }
+}
+
+export function anonymousSupplierRef(organizationId: string): string {
+  const hash = createHash('sha256').update(organizationId).digest('hex');
+  return `SUP-${hash.slice(0, 8).toUpperCase()}`;
+}
+
+export function toBlindProduct(product: {
+  id: string;
+  code: string;
+  name: string;
+  brand: string | null;
+  description: string | null;
+  technicalSpecs: unknown;
+  mfi: string | null;
+  density: string | null;
+  packaging: string | null;
+  unit: string;
+  countryOfOrigin: string | null;
+  supplyOrigin: string | null;
+  status: string;
+  grade?: {
+    id: string;
+    code: string;
+    name: string;
+    displayName: string | null;
+    category?: { id: string; code: string; name: string } | null;
+  } | null;
+  media?: Array<{
+    id: string;
+    type: string;
+    sortOrder: number;
+    fileName: string | null;
+  }>;
+  offers?: unknown[];
+}) {
+  return {
+    id: product.id,
+    code: product.code,
+    name: product.name,
+    brand: product.brand,
+    description: product.description,
+    technicalSpecs: product.technicalSpecs,
+    mfi: product.mfi,
+    density: product.density,
+    packaging: product.packaging,
+    unit: product.unit,
+    countryOfOrigin: product.countryOfOrigin,
+    supplyOrigin: product.supplyOrigin,
+    status: product.status,
+    grade: product.grade
+      ? {
+          id: product.grade.id,
+          code: product.grade.code,
+          name: product.grade.name,
+          displayName: product.grade.displayName ?? product.grade.name,
+          category: product.grade.category ?? null,
+        }
+      : null,
+    media: (product.media ?? []).map((m) => ({
+      id: m.id,
+      type: m.type,
+      sortOrder: m.sortOrder,
+      fileName: m.fileName,
+    })),
+    offers: product.offers ?? undefined,
+    supplier: {
+      displayName: 'ANONYMOUS SUPPLIER',
+    },
+  };
+}
+
+export function toBlindOffer(offer: {
+  id: string;
+  referenceNumber: string;
+  quantity: unknown;
+  moq: unknown;
+  unit: string;
+  basePrice: unknown;
+  currency: string;
+  pricingBasis: string | null;
+  paymentTerms: unknown;
+  deliveryTerms: string | null;
+  validFrom: Date | null;
+  validUntil: Date | null;
+  status: string;
+  organizationId: string;
+  product?: {
+    id: string;
+    code: string;
+    name: string;
+    packaging: string | null;
+    unit: string;
+  } | null;
+  grade?: {
+    id: string;
+    code: string;
+    name: string;
+    displayName: string | null;
+  } | null;
+  warehouse?: {
+    city: string | null;
+    state: string | null;
+    country: string;
+  } | null;
+  priceTiers?: Array<{
+    minQty: unknown;
+    maxQty: unknown;
+    price: unknown;
+    currency: string;
+    paymentMethod: string | null;
+  }>;
+}) {
+  return {
+    id: offer.id,
+    referenceNumber: offer.referenceNumber,
+    quantityAvailable: offer.quantity,
+    moq: offer.moq,
+    unit: offer.unit,
+    price: offer.basePrice,
+    currency: offer.currency,
+    pricingBasis: offer.pricingBasis,
+    paymentTerms: offer.paymentTerms,
+    deliveryTerms: offer.deliveryTerms,
+    validFrom: offer.validFrom,
+    validUntil: offer.validUntil,
+    status: offer.status,
+    packaging: offer.product?.packaging ?? null,
+    region:
+      offer.warehouse?.state || offer.warehouse?.city
+        ? [offer.warehouse.city, offer.warehouse.state, offer.warehouse.country]
+            .filter(Boolean)
+            .join(', ')
+        : null,
+    product: offer.product
+      ? {
+          id: offer.product.id,
+          code: offer.product.code,
+          name: offer.product.name,
+          unit: offer.product.unit,
+        }
+      : null,
+    grade: offer.grade
+      ? {
+          id: offer.grade.id,
+          code: offer.grade.code,
+          name: offer.grade.name,
+          displayName: offer.grade.displayName ?? offer.grade.name,
+        }
+      : null,
+    priceTiers: (offer.priceTiers ?? []).map((t) => ({
+      minQty: t.minQty,
+      maxQty: t.maxQty,
+      price: t.price,
+      currency: t.currency,
+      paymentMethod: t.paymentMethod,
+    })),
+    supplier: {
+      displayName: 'ANONYMOUS SUPPLIER',
+      reference: anonymousSupplierRef(offer.organizationId),
+    },
+  };
+}
+
+export function resolveOfferUnitPrice(
+  offer: Offer & { priceTiers?: OfferPriceTier[] },
+  quantity: number,
+): Offer['basePrice'] {
+  const tiers = [...(offer.priceTiers ?? [])].sort(
+    (a, b) => Number(a.minQty) - Number(b.minQty),
+  );
+  for (const tier of tiers) {
+    const min = Number(tier.minQty);
+    const max = tier.maxQty == null ? Infinity : Number(tier.maxQty);
+    if (quantity >= min && quantity <= max) {
+      return tier.price;
+    }
+  }
+  return offer.basePrice;
+}
+
+export function assertMarketplaceOffer(
+  offer: {
+    status: OfferStatus;
+    validUntil: Date | null;
+    validFrom: Date | null;
+    deletedAt?: Date | null;
+    visibility?: string | null;
+    product?: { status: ProductStatus; deletedAt: Date | null } | null;
+  },
+  quantity: number,
+  moq: unknown,
+) {
+  if (offer.deletedAt) {
+    throw new MarketplaceException('OFFER_NOT_FOUND');
+  }
+  if (offer.status !== OfferStatus.ACTIVE) {
+    throw new MarketplaceException('OFFER_NOT_ACTIVE');
+  }
+  if (offer.visibility && offer.visibility !== 'MARKETPLACE') {
+    throw new MarketplaceException(
+      'OFFER_NOT_ACTIVE',
+      'Offer not marketplace visible',
+    );
+  }
+  const now = new Date();
+  if (offer.validUntil && offer.validUntil < now) {
+    throw new MarketplaceException('OFFER_EXPIRED');
+  }
+  if (offer.validFrom && offer.validFrom > now) {
+    throw new MarketplaceException('OFFER_NOT_ACTIVE', 'Offer not yet valid');
+  }
+  if (
+    !offer.product ||
+    offer.product.deletedAt ||
+    offer.product.status !== ProductStatus.ACTIVE
+  ) {
+    throw new MarketplaceException('PRODUCT_NOT_AVAILABLE');
+  }
+  if (!(quantity > 0)) {
+    throw new MarketplaceException(
+      'QUANTITY_BELOW_MOQ',
+      'Quantity must be greater than 0',
+    );
+  }
+  const moqNum = moq == null ? 0 : Number(moq);
+  if (quantity < moqNum) {
+    throw new MarketplaceException('QUANTITY_BELOW_MOQ');
+  }
+}
+
+export function assertAvailability(offerQuantity: unknown, requested: number) {
+  const available = Number(offerQuantity);
+  if (Number.isFinite(available) && requested > available) {
+    throw new MarketplaceException('QUANTITY_EXCEEDS_AVAILABILITY');
+  }
+}
+
+export function toCustomerFacingPr(
+  pr: {
+    id: string;
+    referenceNumber: string;
+    status: string;
+    paymentMethod: string | null;
+    targetPrice: unknown;
+    currency: string;
+    requiredByDate: Date | null;
+    destinationRegion: string | null;
+    notes: string | null;
+    expiresAt: Date | null;
+    responseDeadline: Date | null;
+    submittedAt: Date | null;
+    createdAt: Date;
+    rejectionReason: string | null;
+    sellerOrgId: string | null;
+    commerciallyAcceptedAt?: Date | null;
+    items?: Array<{
+      id: string;
+      quantity: unknown;
+      unit: string;
+      targetUnitPrice: unknown;
+      unitPriceSnapshot: unknown;
+      paymentMethod: string | null;
+      packaging: string | null;
+      offerId: string | null;
+      grade?: {
+        id: string;
+        code: string;
+        name: string;
+        displayName: string | null;
+      } | null;
+      product?: { id: string; code: string; name: string } | null;
+      offer?: { id: string; referenceNumber: string } | null;
+    }>;
+    responses?: Array<{
+      id: string;
+      type: string;
+      message: string | null;
+      counterPrice: unknown;
+      counterQuantity: unknown;
+      currency: string;
+      validUntil: Date | null;
+      createdAt: Date;
+    }>;
+    purchaseOrders?: Array<{
+      referenceNumber: string;
+      status: string;
+    }>;
+    counterOffers?: Array<{
+      roundNumber: number;
+      createdByRole: string;
+      unitPrice: unknown;
+      quantity: unknown;
+      paymentMethod: string | null;
+      currency: string;
+      status: string;
+      validUntil: Date | null;
+      note: string | null;
+      createdAt: Date;
+      respondedAt?: Date | null;
+    }>;
+  },
+  extras?: {
+    remainingSeconds?: number | null;
+    allowedActions?: string[];
+    poNumber?: string | null;
+  },
+) {
+  const deadline = pr.responseDeadline ?? pr.expiresAt;
+  const po = pr.purchaseOrders?.[0];
+  const poNumber = extras?.poNumber ?? po?.referenceNumber ?? null;
+
+  return {
+    id: pr.id,
+    referenceNumber: pr.referenceNumber,
+    status: pr.status,
+    paymentMethod: pr.paymentMethod,
+    targetPrice: pr.targetPrice,
+    currency: pr.currency,
+    requiredByDate: pr.requiredByDate,
+    destinationRegion: pr.destinationRegion,
+    notes: pr.notes,
+    expiresAt: pr.expiresAt,
+    responseDeadline: deadline,
+    remainingSeconds:
+      extras?.remainingSeconds ??
+      (deadline
+        ? Math.max(0, Math.floor((deadline.getTime() - Date.now()) / 1000))
+        : null),
+    allowedActions: extras?.allowedActions ?? [],
+    commerciallyAcceptedAt: pr.commerciallyAcceptedAt ?? null,
+    poNumber,
+    purchaseOrder: poNumber
+      ? { referenceNumber: poNumber, status: po?.status ?? null }
+      : null,
+    submittedAt: pr.submittedAt,
+    createdAt: pr.createdAt,
+    rejectionReason: pr.rejectionReason,
+    supplier: {
+      displayName: 'ANONYMOUS SUPPLIER',
+      reference: pr.sellerOrgId ? anonymousSupplierRef(pr.sellerOrgId) : null,
+    },
+    items: (pr.items ?? []).map((item) => ({
+      id: item.id,
+      quantity: item.quantity,
+      unit: item.unit,
+      unitPriceSnapshot: item.unitPriceSnapshot ?? item.targetUnitPrice,
+      paymentMethod: item.paymentMethod,
+      packaging: item.packaging,
+      offer: item.offer
+        ? {
+            id: item.offer.id,
+            referenceNumber: item.offer.referenceNumber,
+          }
+        : item.offerId
+          ? { id: item.offerId }
+          : null,
+      grade: item.grade
+        ? {
+            id: item.grade.id,
+            code: item.grade.code,
+            name: item.grade.name,
+            displayName: item.grade.displayName ?? item.grade.name,
+          }
+        : null,
+      product: item.product
+        ? {
+            id: item.product.id,
+            code: item.product.code,
+            name: item.product.name,
+          }
+        : null,
+    })),
+    responses: (pr.responses ?? []).map((r) => ({
+      id: r.id,
+      type: r.type,
+      message: r.message,
+      counterPrice: r.counterPrice,
+      counterQuantity: r.counterQuantity,
+      currency: r.currency,
+      validUntil: r.validUntil,
+      createdAt: r.createdAt,
+    })),
+    counterOffers: (pr.counterOffers ?? []).map((c) => ({
+      roundNumber: c.roundNumber,
+      role: c.createdByRole,
+      unitPrice: c.unitPrice,
+      quantity: c.quantity,
+      paymentMethod: c.paymentMethod,
+      currency: c.currency,
+      status: c.status,
+      validUntil: c.validUntil,
+      note: c.note,
+      createdAt: c.createdAt,
+      respondedAt: c.respondedAt ?? null,
+    })),
+  };
+}
