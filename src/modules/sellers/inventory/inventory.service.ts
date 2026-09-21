@@ -24,6 +24,7 @@ import type {
   AdjustInventoryDto,
   CreateInventoryDto,
   InventoryQueryDto,
+  ReserveInventoryDto,
   UpdateInventoryDto,
 } from './inventory.dto.js';
 
@@ -315,6 +316,127 @@ export class InventoryService {
       },
     });
 
+    return result;
+  }
+
+  async reserve(userId: string, id: string, dto: ReserveInventoryDto) {
+    const ctx = await this.ctx(userId);
+    await this.assertOwned(ctx, id);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT id FROM inventory WHERE id = ${id}::uuid FOR UPDATE
+      `;
+      const current = await tx.inventory.findFirst({
+        where: { id, organizationId: ctx.organizationId, deletedAt: null },
+      });
+      if (!current) throw new NotFoundException('Inventory not found');
+
+      const qty = new Prisma.Decimal(dto.quantity);
+      const available = new Prisma.Decimal(current.availableQty);
+      if (available.lessThan(qty)) {
+        throw new BadRequestException(
+          `Cannot reserve ${qty.toFixed(3)}; available is ${available.toFixed(3)}`,
+        );
+      }
+      const nextAvailable = available.minus(qty);
+      const nextReserved = new Prisma.Decimal(current.reservedQty).plus(qty);
+      if (nextAvailable.lessThan(0) || nextReserved.lessThan(0)) {
+        throw new BadRequestException('availableQty cannot be negative');
+      }
+
+      const minStock =
+        current.minStockQty != null ? Number(current.minStockQty) : null;
+      const updated = await tx.inventory.update({
+        where: { id },
+        data: {
+          availableQty: nextAvailable,
+          reservedQty: nextReserved,
+          status: this.deriveStatus(Number(nextAvailable), minStock),
+        },
+        include: inventoryInclude,
+      });
+      await tx.stockMovement.create({
+        data: {
+          inventoryId: id,
+          type: StockMovementType.RESERVE,
+          quantity: qty,
+          unit: current.unit,
+          referenceType: dto.referenceType,
+          referenceId: dto.referenceId,
+          notes: 'Inventory reserved',
+        },
+      });
+      return updated;
+    });
+
+    await this.audit.log({
+      action: 'INVENTORY_RESERVED',
+      actorUserId: userId,
+      organizationId: ctx.organizationId,
+      entityType: EntityOwnerType.SELLER,
+      entityId: id,
+      newData: { quantity: dto.quantity, availableQty: result.availableQty },
+    });
+    return result;
+  }
+
+  async release(userId: string, id: string, dto: ReserveInventoryDto) {
+    const ctx = await this.ctx(userId);
+    await this.assertOwned(ctx, id);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT id FROM inventory WHERE id = ${id}::uuid FOR UPDATE
+      `;
+      const current = await tx.inventory.findFirst({
+        where: { id, organizationId: ctx.organizationId, deletedAt: null },
+      });
+      if (!current) throw new NotFoundException('Inventory not found');
+
+      const qty = new Prisma.Decimal(dto.quantity);
+      const reserved = new Prisma.Decimal(current.reservedQty);
+      if (reserved.lessThan(qty)) {
+        throw new BadRequestException(
+          `Cannot release ${qty.toFixed(3)}; reserved is ${reserved.toFixed(3)}`,
+        );
+      }
+      const nextReserved = reserved.minus(qty);
+      const nextAvailable = new Prisma.Decimal(current.availableQty).plus(qty);
+
+      const minStock =
+        current.minStockQty != null ? Number(current.minStockQty) : null;
+      const updated = await tx.inventory.update({
+        where: { id },
+        data: {
+          availableQty: nextAvailable,
+          reservedQty: nextReserved,
+          status: this.deriveStatus(Number(nextAvailable), minStock),
+        },
+        include: inventoryInclude,
+      });
+      await tx.stockMovement.create({
+        data: {
+          inventoryId: id,
+          type: StockMovementType.RELEASE,
+          quantity: qty,
+          unit: current.unit,
+          referenceType: dto.referenceType,
+          referenceId: dto.referenceId,
+          notes: 'Inventory reservation released',
+        },
+      });
+      return updated;
+    });
+
+    await this.audit.log({
+      action: 'INVENTORY_RELEASED',
+      actorUserId: userId,
+      organizationId: ctx.organizationId,
+      entityType: EntityOwnerType.SELLER,
+      entityId: id,
+      newData: { quantity: dto.quantity, availableQty: result.availableQty },
+    });
     return result;
   }
 

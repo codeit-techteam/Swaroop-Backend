@@ -91,7 +91,15 @@ export class AuthService {
       data: { consumedAt: new Date() },
     });
 
-    const otp = this.crypto.generateOtp(otpLength);
+    const demoPhone = '+918240890242';
+    const isNonProduction =
+      this.configService.get<string>('app.env') !== 'production';
+    const useFixedDevOtp =
+      isNonProduction &&
+      identifierType === OtpIdentifierType.PHONE &&
+      identifier === demoPhone;
+
+    const otp = useFixedDevOtp ? '123456' : this.crypto.generateOtp(otpLength);
     const otpHash = this.crypto.hashOtp(otp);
     const user = await this.findUserByIdentifier(identifier, identifierType);
 

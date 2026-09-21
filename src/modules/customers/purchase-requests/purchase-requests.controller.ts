@@ -35,7 +35,8 @@ export class PurchaseRequestsController {
 
   @Post()
   @ApiOperation({
-    summary: 'Create purchase request(s) from cart (one PR per seller org)',
+    summary:
+      'Create purchase request from checkout quote or cart (one PR per matched seller org)',
   })
   async create(
     @CurrentUser() user: AuthenticatedUser,

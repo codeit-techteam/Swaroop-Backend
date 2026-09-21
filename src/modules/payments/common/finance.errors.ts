@@ -37,6 +37,7 @@ const CONFLICT_CODES = new Set<FinanceErrorCode>([
   'PAYMENT_ALREADY_VERIFIED',
   'IDEMPOTENCY_CONFLICT',
   'CREDIT_NOT_AVAILABLE',
+  'CREDIT_LIMIT_EXCEEDED',
 ]);
 
 const FORBIDDEN_CODES = new Set<FinanceErrorCode>([

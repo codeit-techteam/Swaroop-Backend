@@ -64,6 +64,12 @@ describe('Customer Marketplace (e2e)', () => {
     expect(grades.status).toBe(200);
     expect(Array.isArray(grades.body.data)).toBe(true);
     expect(JSON.stringify(grades.body)).not.toMatch(/seller@test\.local/i);
+
+    const categories = await request(app.getHttpServer())
+      .get('/api/v1/customer/marketplace/categories')
+      .set('Authorization', `Bearer ${customerToken}`);
+    expect(categories.status).toBe(200);
+    expect(Array.isArray(categories.body.data)).toBe(true);
   });
 
   it('lists products and offers with anonymous supplier', async () => {
@@ -72,6 +78,20 @@ describe('Customer Marketplace (e2e)', () => {
       .query({ search: 'HDPE' })
       .set('Authorization', `Bearer ${customerToken}`);
     expect(products.status).toBe(200);
+    const listed = products.body.data?.[0];
+    if (listed) {
+      expect(listed.supplier.displayName).toBe('ANONYMOUS SUPPLIER');
+      expect(listed.sellerId).toBeUndefined();
+      expect(listed.organizationId).toBeUndefined();
+      expect(JSON.stringify(listed)).not.toContain('Demo Seller Polymers');
+    }
+
+    const qSearch = await request(app.getHttpServer())
+      .get('/api/v1/customer/products')
+      .query({ q: 'HDPE', limit: 50 })
+      .set('Authorization', `Bearer ${customerToken}`);
+    expect(qSearch.status).toBe(200);
+    expect(qSearch.body.meta?.total).toBeGreaterThan(0);
 
     const offers = await request(app.getHttpServer())
       .get('/api/v1/customer/offers')
@@ -146,6 +166,59 @@ describe('Customer Marketplace (e2e)', () => {
     expect(deadline - created).toBeGreaterThanOrEqual(14 * 60 * 1000);
     expect(deadline - created).toBeLessThanOrEqual(16 * 60 * 1000);
     expect(JSON.stringify(payload)).not.toContain('Demo Seller Polymers');
+  });
+
+  it('creates an authoritative quote and purchase request from Buy Now', async () => {
+    const quoteRes = await request(app.getHttpServer())
+      .post('/api/v1/customer/checkout/quote')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        offerId,
+        quantity: 15,
+        paymentOption: 'ADVANCE',
+      });
+    expect(quoteRes.status).toBe(200);
+    const quote = quoteRes.body.data;
+    expect(quote.quoteId).toBeTruthy();
+    expect(quote.offerId).toBe(offerId);
+    expect(quote.paymentOption).toBe('ADVANCE');
+    expect(quote.totalAmount).toBeTruthy();
+    expect(quote.pricingVersion).toBeTruthy();
+    expect(JSON.stringify(quote)).not.toMatch(/sellerOrgId|sellerName|seller@test/i);
+
+    const options = await request(app.getHttpServer())
+      .get('/api/v1/customer/checkout/payment-options')
+      .set('Authorization', `Bearer ${customerToken}`);
+    expect(options.status).toBe(200);
+    expect(options.body.data.options.some((o: { paymentOption: string }) => o.paymentOption === 'ADVANCE')).toBe(true);
+    expect(JSON.stringify(options.body.data)).toMatch(/PetroTrade/);
+
+    const create = await request(app.getHttpServer())
+      .post('/api/v1/customer/purchase-requests')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        quoteId: quote.quoteId,
+        destinationRegion: 'West India',
+        notes: 'Buy now quote PR',
+        idempotencyKey: `e2e-quote-${Date.now()}`,
+      });
+    expect([200, 201]).toContain(create.status);
+    const payload = create.body.data.purchaseRequests?.[0] ?? create.body.data;
+    expect(payload.referenceNumber).toMatch(/^PR-\d{4}-\d{6}$/);
+    expect(payload.supplier.displayName).toBe('ANONYMOUS SUPPLIER');
+    expect(payload.commercial || payload.targetPrice).toBeTruthy();
+    expect(JSON.stringify(payload)).not.toContain('Demo Seller Polymers');
+
+    const replay = await request(app.getHttpServer())
+      .post('/api/v1/customer/purchase-requests')
+      .set('Authorization', `Bearer ${customerToken}`)
+      .send({
+        quoteId: quote.quoteId,
+        idempotencyKey: create.body.data.purchaseRequests
+          ? undefined
+          : `e2e-quote-replay-${Date.now()}`,
+      });
+    expect([200, 201, 400, 409]).toContain(replay.status);
   });
 
   it('enforces blind marketplace on seller PR inbox', async () => {

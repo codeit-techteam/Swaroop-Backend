@@ -10,6 +10,7 @@ import {
   PaymentTermType,
   PrismaClient,
 } from '../src/generated/prisma/client.js';
+import { runCatalogImport } from '../scripts/import-catalog.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -645,34 +646,37 @@ async function seedDevUsers() {
   const bcrypt = await import('bcrypt');
   const passwordHash = await bcrypt.hash('Test@12345', 12);
 
+  /**
+   * Shared PetroTrade/Swaroop demo identity used across Customer + Seller panels:
+   * phone 8240890242 · OTP 123456 (frontend/dev) · password Test@12345
+   * Phone is unique in DB — attached to the customer account; seller keeps email login
+   * and mirrors the same display name for UI consistency.
+   */
   const users = [
     {
       email: 'customer@test.local',
-      phone: '+919900000001',
-      firstName: 'Demo',
-      lastName: 'Customer',
-      role: 'CUSTOMER',
+      phone: '+918240890242',
+      firstName: 'Karan',
+      lastName: 'Veer',
+      roles: ['CUSTOMER', 'SELLER'] as const,
     },
     {
       email: 'seller@test.local',
-      phone: '+919900000002',
-      firstName: 'Demo',
-      lastName: 'Seller',
-      role: 'SELLER',
+      phone: '+918240890243',
+      firstName: 'Karan',
+      lastName: 'Veer',
+      roles: ['SELLER'] as const,
     },
     {
       email: 'admin@test.local',
       phone: '+919900000003',
       firstName: 'Demo',
       lastName: 'Admin',
-      role: 'ADMIN',
+      roles: ['ADMIN'] as const,
     },
   ] as const;
 
   for (const item of users) {
-    const role = await prisma.role.findUnique({ where: { code: item.role } });
-    if (!role) continue;
-
     const user = await prisma.user.upsert({
       where: { email: item.email },
       update: {
@@ -696,21 +700,26 @@ async function seedDevUsers() {
       },
     });
 
-    const existingRole = await prisma.userRole.findFirst({
-      where: {
-        userId: user.id,
-        roleId: role.id,
-        organizationId: null,
-      },
-    });
+    for (const roleCode of item.roles) {
+      const role = await prisma.role.findUnique({ where: { code: roleCode } });
+      if (!role) continue;
 
-    if (!existingRole) {
-      await prisma.userRole.create({
-        data: {
+      const existingRole = await prisma.userRole.findFirst({
+        where: {
           userId: user.id,
           roleId: role.id,
+          organizationId: null,
         },
       });
+
+      if (!existingRole) {
+        await prisma.userRole.create({
+          data: {
+            userId: user.id,
+            roleId: role.id,
+          },
+        });
+      }
     }
   }
 }
@@ -987,8 +996,9 @@ async function main() {
   const counts = await seedMasterData();
   await seedDevUsers();
   await seedSellerDemoData();
+  const catalog = await runCatalogImport(prisma);
   console.log(
-    `Seed completed: ${counts.categories} categories, ${counts.grades} grades, seller demo product/offer/PR, and DEVELOPMENT users.`,
+    `Seed completed: ${counts.categories} categories, ${counts.grades} grades, catalog products inserted=${catalog.products.inserted} updated=${catalog.products.updated}, offers inserted=${catalog.listings.inserted}, and DEVELOPMENT users.`,
   );
 }
 

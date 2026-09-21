@@ -291,6 +291,7 @@ enum PaymentMethod {
   BEFORE_DISPATCH
   ON_LOADING
   ON_DELIVERY
+  CREDIT
   CREDIT_15
   CREDIT_30
   PARTIAL_ADVANCE
@@ -520,6 +521,7 @@ enum DocumentCategory {
   PAYMENT_PROOF
   SETTLEMENT_STATEMENT
   CREDIT_APPLICATION
+  FINANCIAL_STATEMENT
   COMPLIANCE
   PRODUCT_IMAGE
   PRODUCT_TDS
@@ -562,10 +564,94 @@ enum CreditStatus {
   NOT_APPLIED
   PENDING
   UNDER_REVIEW
+  DOCUMENTS_REQUIRED
   APPROVED
   REJECTED
+  CANCELLED
   SUSPENDED
+  BLOCKED
   EXPIRED
+  CLOSED
+}
+
+enum CreditApplicationStatus {
+  PENDING
+  UNDER_REVIEW
+  DOCUMENTS_REQUIRED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum CreditAccountStatus {
+  ACTIVE
+  SUSPENDED
+  BLOCKED
+  EXPIRED
+  CLOSED
+}
+
+enum CreditTransactionType {
+  CREDIT_APPROVED
+  CREDIT_LIMIT_ADJUSTED
+  CREDIT_RESERVED
+  CREDIT_UTILIZED
+  CREDIT_REPAID
+  CREDIT_SETTLED
+  CREDIT_RELEASED
+  CREDIT_ADJUSTMENT
+  CREDIT_REFUND
+  CREDIT_SUSPENDED
+  CREDIT_REVERSED
+}
+
+enum CreditTransactionStatus {
+  POSTED
+  PENDING
+  REVERSED
+  FAILED
+}
+
+enum CreditInsuranceStatus {
+  NOT_REQUIRED
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+  CLAIMED
+}
+
+enum CreditInsuranceClaimStatus {
+  NONE
+  OPEN
+  SETTLED
+  REJECTED
+}
+
+enum CmsBannerStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  EXPIRED
+  ARCHIVED
+}
+
+enum CmsBannerPlacement {
+  HOME_HERO
+  MARKETPLACE
+  DASHBOARD
+  OFFERS
+  LOGIN
+  OTHER
+}
+
+enum CmsBannerPlatform {
+  ALL
+  CUSTOMER_APP
+  CUSTOMER_WEB
+  SELLER_APP
+  SELLER_WEB
+  ADMIN_WEB
 }
 
 enum CurrencyCode {
@@ -592,6 +678,8 @@ enum EntityOwnerType {
   SHIPMENT
   SETTLEMENT
   DOCUMENT
+  CREDIT
+  CMS
   OTHER
 }
 
@@ -626,6 +714,10 @@ model User {
   notifications           Notification[]           @relation("NotificationRecipient")
   notificationPreferences NotificationPreference[]
   auditLogs               AuditLog[]               @relation("AuditActor")
+  assignedCreditApplications CreditApplication[]   @relation("CreditApplicationAssignee")
+  assignedCreditProfiles  CustomerCreditProfile[]  @relation("CreditProfileAssignee")
+  creditTransactions      CreditTransaction[]      @relation("CreditTransactionActor")
+  createdCmsBanners       CmsBanner[]              @relation("CmsBannerCreatedBy")
   assignedProcurements    ProcurementAssignment[]
   procurementActivities   ProcurementActivity[]
   createdOffers           Offer[]                  @relation("OfferCreatedBy")
@@ -694,6 +786,8 @@ model Organization {
   bankAccounts        BankAccount[]
   notifications       Notification[]
   auditLogs           AuditLog[]
+  checkoutQuotesAsCustomer CheckoutQuote[] @relation("CheckoutQuoteCustomerOrg")
+  checkoutQuotesAsSeller   CheckoutQuote[] @relation("CheckoutQuoteSellerOrg")
 
   @@index([type])
   @@index([status])
@@ -804,9 +898,13 @@ model CustomerProfile {
   organization     Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   preferences      CustomerPreference?
   creditProfile    CustomerCreditProfile?
+  creditApplications CreditApplication[]
+  creditTransactions CreditTransaction[]
+  creditInsurance  CreditInsurance?
   cart             Cart?
   purchaseRequests PurchaseRequest[]
   orders           Order[]
+  checkoutQuotes   CheckoutQuote[]
 
   @@index([status])
   @@index([creditStatus])
@@ -831,26 +929,128 @@ model CustomerPreference {
 }
 
 model CustomerCreditProfile {
-  id                String       @id @default(uuid()) @db.Uuid
-  customerProfileId String       @unique @map("customer_profile_id") @db.Uuid
-  status            CreditStatus @default(PENDING)
-  requestedLimit    Decimal?     @map("requested_limit") @db.Decimal(18, 2)
-  approvedLimit     Decimal?     @map("approved_limit") @db.Decimal(18, 2)
-  availableLimit    Decimal?     @map("available_limit") @db.Decimal(18, 2)
-  currency          CurrencyCode @default(INR)
-  creditTermDays    Int?         @map("credit_term_days")
-  interestRateBps   Int?         @map("interest_rate_bps")
-  approvedAt        DateTime?    @map("approved_at")
-  expiresAt         DateTime?    @map("expires_at")
+  id                String              @id @default(uuid()) @db.Uuid
+  customerProfileId String              @unique @map("customer_profile_id") @db.Uuid
+  accountNumber     String?             @unique @map("account_number")
+  status            CreditStatus        @default(PENDING)
+  accountStatus     CreditAccountStatus @default(ACTIVE) @map("account_status")
+  requestedLimit    Decimal?            @map("requested_limit") @db.Decimal(18, 2)
+  approvedLimit     Decimal?            @map("approved_limit") @db.Decimal(18, 2)
+  availableLimit    Decimal?            @map("available_limit") @db.Decimal(18, 2)
+  utilizedAmount    Decimal             @default(0) @map("utilized_amount") @db.Decimal(18, 2)
+  pendingCredit     Decimal             @default(0) @map("pending_credit") @db.Decimal(18, 2)
+  outstandingAmount Decimal             @default(0) @map("outstanding_amount") @db.Decimal(18, 2)
+  overdueAmount     Decimal             @default(0) @map("overdue_amount") @db.Decimal(18, 2)
+  currency          CurrencyCode        @default(INR)
+  creditTermDays    Int?                @map("credit_term_days")
+  interestRateBps   Int?                @map("interest_rate_bps")
+  approvedAt        DateTime?           @map("approved_at")
+  effectiveAt       DateTime?           @map("effective_at")
+  expiresAt         DateTime?           @map("expires_at")
+  reviewAt          DateTime?           @map("review_at")
+  assignedAdminId   String?             @map("assigned_admin_id") @db.Uuid
   notes             String?
   metadata          Json?
-  createdAt         DateTime     @default(now()) @map("created_at")
-  updatedAt         DateTime     @updatedAt @map("updated_at")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
 
-  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile     @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  assignedAdmin   User?               @relation("CreditProfileAssignee", fields: [assignedAdminId], references: [id])
+  applications    CreditApplication[]
+  transactions    CreditTransaction[]
+  insurance       CreditInsurance?
 
   @@index([status])
+  @@index([accountStatus])
+  @@index([assignedAdminId])
   @@map("customer_credit_profiles")
+}
+
+model CreditApplication {
+  id                  String                   @id @default(uuid()) @db.Uuid
+  applicationNumber   String                   @unique @map("application_number")
+  customerProfileId   String                   @map("customer_profile_id") @db.Uuid
+  creditProfileId     String?                  @map("credit_profile_id") @db.Uuid
+  status              CreditApplicationStatus  @default(PENDING)
+  requestedLimit      Decimal                  @map("requested_limit") @db.Decimal(18, 2)
+  requestedTenureDays Int?                     @map("requested_tenure_days")
+  purpose             String?
+  currency            CurrencyCode             @default(INR)
+  assignedAdminId     String?                  @map("assigned_admin_id") @db.Uuid
+  decidedAt           DateTime?                @map("decided_at")
+  decisionReason      String?                  @map("decision_reason")
+  approvedLimit       Decimal?                 @map("approved_limit") @db.Decimal(18, 2)
+  notes               String?
+  metadata            Json?
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  updatedAt           DateTime                 @updatedAt @map("updated_at")
+
+  customerProfile CustomerProfile        @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  creditProfile   CustomerCreditProfile? @relation(fields: [creditProfileId], references: [id])
+  assignedAdmin   User?                  @relation("CreditApplicationAssignee", fields: [assignedAdminId], references: [id])
+
+  @@index([customerProfileId, status])
+  @@index([status, createdAt])
+  @@index([assignedAdminId])
+  @@map("credit_applications")
+}
+
+model CreditTransaction {
+  id                String                   @id @default(uuid()) @db.Uuid
+  transactionNumber String                   @unique @map("transaction_number")
+  creditProfileId   String                   @map("credit_profile_id") @db.Uuid
+  customerProfileId String                   @map("customer_profile_id") @db.Uuid
+  type              CreditTransactionType
+  status            CreditTransactionStatus  @default(POSTED)
+  amount            Decimal                  @db.Decimal(18, 2)
+  balanceBefore     Decimal?                 @map("balance_before") @db.Decimal(18, 2)
+  balanceAfter      Decimal?                 @map("balance_after") @db.Decimal(18, 2)
+  currency          CurrencyCode             @default(INR)
+  referenceType     String?                  @map("reference_type")
+  referenceId       String?                  @map("reference_id")
+  purchaseOrderId   String?                  @map("purchase_order_id") @db.Uuid
+  paymentId         String?                  @map("payment_id") @db.Uuid
+  createdById       String?                  @map("created_by_id") @db.Uuid
+  source            String?
+  notes             String?
+  metadata          Json?
+  createdAt         DateTime                 @default(now()) @map("created_at")
+
+  creditProfile   CustomerCreditProfile @relation(fields: [creditProfileId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile       @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  purchaseOrder   PurchaseOrder?        @relation(fields: [purchaseOrderId], references: [id])
+  payment         Payment?              @relation(fields: [paymentId], references: [id])
+  createdBy       User?                 @relation("CreditTransactionActor", fields: [createdById], references: [id])
+
+  @@index([creditProfileId, createdAt])
+  @@index([customerProfileId, createdAt])
+  @@index([type, createdAt])
+  @@index([purchaseOrderId])
+  @@index([paymentId])
+  @@map("credit_transactions")
+}
+
+model CreditInsurance {
+  id                String                     @id @default(uuid()) @db.Uuid
+  creditProfileId   String                     @unique @map("credit_profile_id") @db.Uuid
+  customerProfileId String                     @unique @map("customer_profile_id") @db.Uuid
+  providerName      String?                    @map("provider_name")
+  policyNumber      String?                    @map("policy_number")
+  coverageAmount    Decimal?                   @map("coverage_amount") @db.Decimal(18, 2)
+  status            CreditInsuranceStatus      @default(NOT_REQUIRED)
+  claimStatus       CreditInsuranceClaimStatus @default(NONE) @map("claim_status")
+  startDate         DateTime?                  @map("start_date")
+  endDate           DateTime?                  @map("end_date")
+  notes             String?
+  metadata          Json?
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+
+  creditProfile   CustomerCreditProfile @relation(fields: [creditProfileId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile       @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@map("credit_insurance")
 }
 
 model Cart {
@@ -897,6 +1097,52 @@ model CartItem {
   @@index([offerId])
   @@index([gradeId])
   @@map("cart_items")
+}
+
+model CheckoutQuote {
+  id                String        @id @default(uuid()) @db.Uuid
+  customerOrgId     String        @map("customer_org_id") @db.Uuid
+  customerProfileId String        @map("customer_profile_id") @db.Uuid
+  productId         String        @map("product_id") @db.Uuid
+  offerId           String        @map("offer_id") @db.Uuid
+  gradeId           String        @map("grade_id") @db.Uuid
+  sellerOrgId       String        @map("seller_org_id") @db.Uuid
+  quantity          Decimal       @db.Decimal(18, 3)
+  unit              String        @default("MT")
+  paymentMethod     PaymentMethod @map("payment_method")
+  shippingAddressId String?       @map("shipping_address_id") @db.Uuid
+  billingAddressId  String?       @map("billing_address_id") @db.Uuid
+  unitPrice         Decimal       @map("unit_price") @db.Decimal(18, 4)
+  baseAmount        Decimal       @map("base_amount") @db.Decimal(18, 2)
+  discountAmount    Decimal       @map("discount_amount") @db.Decimal(18, 2)
+  freightAmount     Decimal       @map("freight_amount") @db.Decimal(18, 2)
+  taxAmount         Decimal       @map("tax_amount") @db.Decimal(18, 2)
+  taxBps            Int           @map("tax_bps")
+  platformFee       Decimal       @map("platform_fee") @db.Decimal(18, 2)
+  insuranceAmount   Decimal       @map("insurance_amount") @db.Decimal(18, 2)
+  totalAmount       Decimal       @map("total_amount") @db.Decimal(18, 2)
+  currency          CurrencyCode  @default(INR)
+  pricingVersion    String        @map("pricing_version")
+  matchStrategy     String        @map("match_strategy")
+  snapshot          Json
+  expiresAt         DateTime      @map("expires_at")
+  consumedAt        DateTime?     @map("consumed_at")
+  purchaseRequestId String?       @unique @map("purchase_request_id") @db.Uuid
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  customerOrg     Organization     @relation("CheckoutQuoteCustomerOrg", fields: [customerOrgId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile  @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  product         Product          @relation(fields: [productId], references: [id])
+  offer           Offer            @relation(fields: [offerId], references: [id])
+  grade           Grade            @relation(fields: [gradeId], references: [id])
+  sellerOrg       Organization     @relation("CheckoutQuoteSellerOrg", fields: [sellerOrgId], references: [id])
+  purchaseRequest PurchaseRequest? @relation(fields: [purchaseRequestId], references: [id])
+
+  @@index([customerOrgId, createdAt])
+  @@index([offerId])
+  @@index([expiresAt])
+  @@map("checkout_quotes")
 }
 
 model SellerProfile {
@@ -1166,6 +1412,7 @@ model Grade {
   cartItems            CartItem[]
   purchaseRequestItems PurchaseRequestItem[]
   orderItems           OrderItem[]
+  checkoutQuotes       CheckoutQuote[]
 
   @@index([categoryId])
   @@index([subcategoryId])
@@ -1294,6 +1541,7 @@ model Product {
   cartItems            CartItem[]
   purchaseRequestItems PurchaseRequestItem[]
   orderItems           OrderItem[]
+  checkoutQuotes       CheckoutQuote[]
 
   @@unique([organizationId, code])
   @@index([gradeId])
@@ -1484,6 +1732,7 @@ model Offer {
   cartItems            CartItem[]
   purchaseRequestItems PurchaseRequestItem[]
   orderItems           OrderItem[]
+  checkoutQuotes       CheckoutQuote[]
 
   @@index([organizationId, status])
   @@index([sellerProfileId])
@@ -1560,6 +1809,7 @@ model PurchaseRequest {
   sellerRespondedAt       DateTime?             @map("seller_responded_at")
   commerciallyAcceptedAt  DateTime?             @map("commercially_accepted_at")
   commercialSnapshot      Json?                 @map("commercial_snapshot")
+  quoteId                 String?               @map("quote_id") @db.Uuid
   idempotencyKey          String?               @unique @map("idempotency_key")
   metadata                Json?
   submittedAt             DateTime?             @map("submitted_at")
@@ -1579,6 +1829,7 @@ model PurchaseRequest {
   procurementCase ProcurementCase?
   purchaseOrders  PurchaseOrder[]
   orders          Order[]
+  checkoutQuotes  CheckoutQuote[]
 
   @@index([customerOrgId, status])
   @@index([sellerOrgId, status])
@@ -1586,6 +1837,7 @@ model PurchaseRequest {
   @@index([priority])
   @@index([expiresAt])
   @@index([responseDeadline])
+  @@index([quoteId])
   @@map("purchase_requests")
 }
 
@@ -1803,7 +2055,8 @@ model PurchaseOrder {
   dispatches       Dispatch[]
   shipments        Shipment[]
   deliveries       Delivery[]
-  ewayBills        EWayBill[]
+  ewayBills          EWayBill[]
+  creditTransactions CreditTransaction[]
 
   @@index([customerOrgId, status])
   @@index([sellerOrgId, status])
@@ -2072,7 +2325,8 @@ model Payment {
   allocations     PaymentAllocation[]
   statusHistory   PaymentStatusHistory[]
   settlementItems SettlementItem[]
-  refunds         Refund[]
+  refunds            Refund[]
+  creditTransactions CreditTransaction[]
 
   @@index([orderId])
   @@index([purchaseOrderId])
@@ -2566,6 +2820,32 @@ model Notification {
   @@index([status, createdAt])
   @@index([entityType, entityId])
   @@map("notifications")
+}
+
+model CmsBanner {
+  id           String             @id @default(uuid()) @db.Uuid
+  title        String
+  subtitle     String?
+  placement    CmsBannerPlacement @default(HOME_HERO)
+  platform     CmsBannerPlatform  @default(ALL)
+  status       CmsBannerStatus    @default(DRAFT)
+  displayOrder Int                @default(0) @map("display_order")
+  startAt      DateTime?          @map("start_at")
+  endAt        DateTime?          @map("end_at")
+  mediaKey     String?            @map("media_key")
+  targetRoute  String?            @map("target_route")
+  createdById  String?            @map("created_by_id") @db.Uuid
+  metadata     Json?
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+  deletedAt    DateTime?          @map("deleted_at")
+
+  createdBy User? @relation("CmsBannerCreatedBy", fields: [createdById], references: [id])
+
+  @@index([status, placement, platform])
+  @@index([displayOrder])
+  @@index([startAt, endAt])
+  @@map("cms_banners")
 }
 
 model NotificationPreference {

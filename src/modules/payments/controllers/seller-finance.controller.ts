@@ -18,6 +18,7 @@ import {
 } from '../../master-data/common/pagination.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { FinanceException } from '../common/finance.errors.js';
+import { toDecimal } from '../common/money.util.js';
 import { FinanceListQueryDto } from '../dto/finance.dto.js';
 import { DispatchGateService } from '../services/dispatch-gate.service.js';
 import { FinanceSummaryService } from '../services/finance-summary.service.js';
@@ -82,6 +83,106 @@ export class SellerFinanceController {
     return successResponse(
       rows.map((pi) => this.proformas.toSellerView(pi)),
       'Proforma invoices retrieved',
+      paginationMeta(page, limit, total),
+    );
+  }
+
+  @Get('purchase-orders')
+  @ApiOperation({ summary: 'List seller purchase orders' })
+  async listPurchaseOrders(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: FinanceListQueryDto,
+  ) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    const { skip, take, page, limit } = skipTake(query.page, query.limit);
+    const where = {
+      sellerOrgId: seller.organizationId,
+      deletedAt: null,
+    };
+    const [items, total] = await Promise.all([
+      this.prisma.purchaseOrder.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+        include: {
+          purchaseRequest: {
+            select: {
+              id: true,
+              referenceNumber: true,
+              items: {
+                take: 1,
+                include: {
+                  grade: {
+                    select: { code: true, name: true, displayName: true },
+                  },
+                  product: { select: { name: true, code: true } },
+                },
+              },
+            },
+          },
+          payments: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { status: true },
+          },
+          dispatches: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { status: true },
+          },
+          shipments: {
+            where: { deletedAt: null },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { status: true, referenceNumber: true },
+          },
+        },
+      }),
+      this.prisma.purchaseOrder.count({ where }),
+    ]);
+    return successResponse(
+      items.map((po) => {
+        const line = po.purchaseRequest?.items?.[0];
+        const snapshot = (
+          po.metadata as {
+            commercialSnapshot?: { quantity?: number; unit?: string };
+          } | null
+        )?.commercialSnapshot;
+        return {
+          id: po.id,
+          orderNumber: po.referenceNumber,
+          referenceNumber: po.referenceNumber,
+          purchaseOrderId: po.id,
+          status: po.status,
+          paymentMethod: po.paymentMethod,
+          currency: po.currency,
+          totalAmount: toDecimal(po.totalAmount).toFixed(2),
+          orderedQuantity:
+            po.orderedQuantity != null ? String(po.orderedQuantity) : null,
+          createdAt: po.createdAt,
+          updatedAt: po.updatedAt,
+          productName: line?.product?.name ?? 'Material',
+          gradeName:
+            line?.grade?.displayName ??
+            line?.grade?.name ??
+            line?.grade?.code ??
+            '—',
+          quantity: Number(
+            toDecimal(
+              line?.quantity ?? snapshot?.quantity ?? po.orderedQuantity ?? 0,
+            ).toFixed(3),
+          ),
+          unit: line?.unit ?? snapshot?.unit ?? 'MT',
+          paymentStatus: po.payments[0]?.status ?? null,
+          dispatchStatus: po.dispatches[0]?.status ?? null,
+          shipmentStatus: po.shipments[0]?.status ?? null,
+          // Blind marketplace: seller never receives credit underwriting
+          creditStatus: null,
+        };
+      }),
+      'Purchase orders retrieved',
       paginationMeta(page, limit, total),
     );
   }

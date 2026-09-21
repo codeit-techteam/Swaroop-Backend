@@ -34,7 +34,7 @@ async function bootstrap(): Promise<void> {
   app.useBodyParser('urlencoded', { limit: '1mb', extended: true });
 
   app.enableCors({
-    origin: appConfig.corsOrigins,
+    origin: appConfig.env === 'production' ? appConfig.corsOrigins : true,
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Request-Id'],
@@ -93,10 +93,10 @@ async function bootstrap(): Promise<void> {
     }
   });
 
-  await app.listen(appConfig.port);
+  await app.listen(appConfig.port, '0.0.0.0');
 
   logger.log(
-    `${appConfig.name} listening on port ${appConfig.port} [${appConfig.env}]`,
+    `${appConfig.name} listening on 0.0.0.0:${appConfig.port} [${appConfig.env}]`,
   );
   logger.log(`API base path: /${apiPrefix}/v${appConfig.apiVersion}`);
   logger.log(

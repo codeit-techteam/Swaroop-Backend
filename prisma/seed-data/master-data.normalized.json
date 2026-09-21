@@ -1301,6 +1301,94 @@
         "Coatings",
         "Fragrances"
       ]
+    },
+    {
+      "code": "TOLUENE",
+      "name": "Toluene",
+      "displayName": "Toluene",
+      "categoryCode": "SOLVENTS",
+      "description": "Industrial toluene solvent for coatings, adhesives and chemical synthesis.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": ["Coatings", "Adhesives", "Solvent"]
+    },
+    {
+      "code": "BENZENE",
+      "name": "Benzene",
+      "displayName": "Benzene",
+      "categoryCode": "CHEMICALS",
+      "description": "Pure benzene feedstock for styrene, phenol and chemical intermediates.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": ["Feedstock", "Chemical Processing"]
+    },
+    {
+      "code": "MALEIC_ANHYDRIDE",
+      "name": "Maleic Anhydride",
+      "displayName": "Maleic Anhydride",
+      "categoryCode": "CHEMICALS",
+      "description": "Maleic anhydride flakes for UPR, coatings and lubricant additives.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": ["Resins", "Coatings"]
+    },
+    {
+      "code": "STABILIZER",
+      "name": "Stabilizer",
+      "displayName": "Stabilizer",
+      "categoryCode": "SPECIALTY",
+      "description": "Heat / UV stabilizer systems for PVC and polyolefin compounding.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": ["PVC", "Compounding"]
+    },
+    {
+      "code": "PE_WAX",
+      "name": "PE Wax",
+      "displayName": "PE Wax",
+      "categoryCode": "SPECIALTY",
+      "description": "Micronized polyethylene wax for masterbatch, inks and coatings.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": ["Masterbatch", "Coatings"]
+    },
+    {
+      "code": "CPVC",
+      "name": "CPVC",
+      "displayName": "CPVC",
+      "categoryCode": "PVC",
+      "description": "Chlorinated PVC pipe and fitting compound for hot-water systems.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": ["Pipes", "Fittings"]
+    },
+    {
+      "code": "COMPOUND_PP_TALC",
+      "name": "PP Talc Compound",
+      "displayName": "PP Talc Compound",
+      "categoryCode": "COMPOUNDS",
+      "description": "Talc-filled polypropylene compound for automotive and appliance parts.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": ["Automotive", "Appliances"]
+    },
+    {
+      "code": "COMPOUND_ABS_FR",
+      "name": "ABS FR Compound",
+      "displayName": "ABS FR Compound",
+      "categoryCode": "COMPOUNDS",
+      "description": "Flame-retardant ABS compound for electrical housings and appliances.",
+      "status": "ACTIVE",
+      "customerVisible": true,
+      "sellerVisible": true,
+      "applications": ["Electrical", "Appliances"]
     }
   ],
   "applications": [

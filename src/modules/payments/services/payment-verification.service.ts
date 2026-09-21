@@ -11,6 +11,7 @@ import { FinanceEventsService } from '../common/finance-events.service.js';
 import { FinanceException } from '../common/finance.errors.js';
 import { isZero, toDecimal } from '../common/money.util.js';
 import { PaymentStateService } from '../common/payment-state.service.js';
+import { CreditLedgerService } from './credit-ledger.service.js';
 import { FinanceInvoiceService } from './finance-invoice.service.js';
 import { PaymentScheduleService } from './payment-schedule.service.js';
 import { ProformaInvoiceService } from './proforma-invoice.service.js';
@@ -26,6 +27,7 @@ export class PaymentVerificationService {
     private readonly financeInvoices: FinanceInvoiceService,
     private readonly settlements: SettlementService,
     private readonly events: FinanceEventsService,
+    private readonly ledger: CreditLedgerService,
   ) {}
 
   async verify(paymentId: string, adminUserId: string, note?: string) {
@@ -141,6 +143,20 @@ export class PaymentVerificationService {
           note: note ?? null,
         },
       });
+
+      if (
+        po?.paymentMethod === 'CREDIT' ||
+        po?.paymentMethod === 'CREDIT_15' ||
+        po?.paymentMethod === 'CREDIT_30'
+      ) {
+        await this.ledger.repayForPayment(tx, {
+          customerOrgId: po.customerOrgId,
+          purchaseOrderId: po.id,
+          paymentId: payment.id,
+          amount: payment.amount,
+          actorUserId: adminUserId,
+        });
+      }
 
       return tx.payment.findUniqueOrThrow({
         where: { id: paymentId },

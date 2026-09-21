@@ -95,7 +95,8 @@ export default (): AppConfig => {
       logLevel:
         (process.env.LOG_LEVEL as AppConfig['app']['logLevel']) ?? 'info',
       corsOrigins: splitOrigins(
-        process.env.CORS_ORIGINS ?? 'http://localhost:3000',
+        process.env.CORS_ORIGINS ??
+          'http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:4000,http://localhost:5173,http://localhost:8081',
       ),
       skipDbConnectOnBoot:
         process.env.SKIP_DB_CONNECT_ON_BOOT === 'true' ||

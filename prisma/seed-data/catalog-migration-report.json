@@ -1,0 +1,67 @@
+{
+  "generatedAt": "2026-09-18T08:08:13.602Z",
+  "source": "Swaroop-Customer-WEBAPP/mock/blind-grades.ts",
+  "categories": {
+    "existing": 25,
+    "inserted": 0,
+    "updated": 0,
+    "skipped": 0,
+    "duplicate": 0,
+    "conflict": 0,
+    "unmatched": 0
+  },
+  "grades": {
+    "existing": 90,
+    "inserted": 0,
+    "updated": 0,
+    "skipped": 0,
+    "duplicate": 0,
+    "conflict": 0,
+    "unmatched": 0
+  },
+  "products": {
+    "existing": 62,
+    "inserted": 0,
+    "updated": 61,
+    "skipped": 0,
+    "duplicate": 0,
+    "conflict": 0,
+    "unmatched": 0
+  },
+  "attributes": {
+    "existing": 12,
+    "inserted": 0,
+    "updated": 5,
+    "skipped": 0,
+    "duplicate": 0,
+    "conflict": 0,
+    "unmatched": 0
+  },
+  "listings": {
+    "existing": 0,
+    "inserted": 0,
+    "updated": 61,
+    "skipped": 0,
+    "duplicate": 0,
+    "conflict": 0,
+    "unmatched": 0
+  },
+  "conflicts": [
+    {
+      "type": "reconciliation",
+      "existingCode": "DEMO-HDPE-FILM",
+      "incomingCode": "HDPE-FL-002",
+      "incomingName": "HDPE Film Grade",
+      "message": "Possible match with existing DEMO-HDPE-FILM. Imported as a separate catalog SKU; demo row was not overwritten."
+    }
+  ],
+  "unmatched": [],
+  "database": {
+    "categories": 25,
+    "grades": 90,
+    "products": 62,
+    "attributes": 12,
+    "offers": 62,
+    "orphanProducts": 0
+  }
+}

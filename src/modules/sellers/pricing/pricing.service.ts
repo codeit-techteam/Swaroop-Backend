@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   CurrencyCode,
   EntityOwnerType,
@@ -21,6 +25,7 @@ import type {
   SetPriceTierActiveDto,
   UpdatePriceTierDto,
 } from './pricing.dto.js';
+import { isSellerCreditPriceTier } from '../../payments/common/platform-credit.js';
 
 const tierInclude = {
   offer: {
@@ -104,6 +109,11 @@ export class PricingService {
       },
     });
     if (!offer) throw new NotFoundException('Offer not found');
+    if (isSellerCreditPriceTier(dto.paymentMethod)) {
+      throw new BadRequestException(
+        'Seller cannot set credit-specific prices. CREDIT is a PetroTrade platform payment option.',
+      );
+    }
 
     const tier = await this.prisma.offerPriceTier.create({
       data: {
@@ -132,6 +142,11 @@ export class PricingService {
   async update(userId: string, id: string, dto: UpdatePriceTierDto) {
     const ctx = await this.ctx(userId);
     const existing = await this.assertOwnedTier(ctx, id);
+    if (isSellerCreditPriceTier(dto.paymentMethod)) {
+      throw new BadRequestException(
+        'Seller cannot set credit-specific prices. CREDIT is a PetroTrade platform payment option.',
+      );
+    }
     const offerIsActive = existing.offer.status === OfferStatus.ACTIVE;
     const applyToTier = dto.applyToTier !== false;
     const priceChanging =

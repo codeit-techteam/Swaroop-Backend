@@ -37,6 +37,9 @@ import { AdminReportsController } from './reports/admin-reports.controller.js';
 import { AdminReportsService } from './reports/admin-reports.service.js';
 import { AdminSearchController } from './search/admin-search.controller.js';
 import { AdminSearchService } from './search/admin-search.service.js';
+import { AdminCatalogController } from './catalog/admin-catalog.controller.js';
+import { AdminCreditController } from './credit/admin-credit.controller.js';
+import { AdminCreditService } from './credit/admin-credit.service.js';
 import { AdminSellersController } from './sellers/admin-sellers.controller.js';
 import { AdminSellersService } from './sellers/admin-sellers.service.js';
 import { AdminUsersController } from './users/admin-users.controller.js';
@@ -59,6 +62,7 @@ const adminProviders = [
   AdminAuditLogsService,
   AdminSearchService,
   AdminProcurementService,
+  AdminCreditService,
 ];
 
 @Module({
@@ -74,6 +78,7 @@ const adminProviders = [
     AdminProcurementController,
     AdminFinanceController,
     AdminDashboardController,
+    AdminCatalogController,
     AdminUsersController,
     AdminSellersController,
     AdminCustomersController,
@@ -91,6 +96,7 @@ const adminProviders = [
     AdminReportsController,
     AdminAuditLogsController,
     AdminSearchController,
+    AdminCreditController,
   ],
   providers: adminProviders,
   exports: [AdminProcurementService, AdminAuditService],

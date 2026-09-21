@@ -115,4 +115,22 @@ export class AdminOrdersService {
       })),
     };
   }
+
+  async summary() {
+    const [orders, purchaseOrders, purchaseRequests, gmv] = await Promise.all([
+      this.prisma.order.count({ where: { deletedAt: null } }),
+      this.prisma.purchaseOrder.count({ where: { deletedAt: null } }),
+      this.prisma.purchaseRequest.count({ where: { deletedAt: null } }),
+      this.prisma.purchaseOrder.aggregate({
+        where: { deletedAt: null },
+        _sum: { totalAmount: true },
+      }),
+    ]);
+    return {
+      orders,
+      purchaseOrders,
+      purchaseRequests,
+      gmv: (gmv._sum.totalAmount ?? 0).toString(),
+    };
+  }
 }

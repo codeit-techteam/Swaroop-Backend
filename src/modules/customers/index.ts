@@ -15,4 +15,6 @@ export { ProductsService } from './products/products.service.js';
 export { OffersService } from './offers/offers.service.js';
 export { CartService } from './cart/cart.service.js';
 export { PurchaseRequestsService } from './purchase-requests/purchase-requests.service.js';
+export { CheckoutService } from './checkout/checkout.service.js';
+export { CustomerOrdersService } from './orders/customer-orders.service.js';
 export { DashboardService } from './dashboard/dashboard.service.js';

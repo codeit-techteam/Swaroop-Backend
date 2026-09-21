@@ -38,6 +38,15 @@ export class MarketplaceController {
     );
   }
 
+  @Get('categories')
+  @ApiOperation({ summary: 'List customer-visible grade categories' })
+  async listCategories(@CurrentUser() user: AuthenticatedUser) {
+    return successResponse(
+      await this.marketplaceService.listCategories(user.id),
+      'Categories retrieved',
+    );
+  }
+
   @Get('grades')
   @ApiOperation({ summary: 'List customer-visible grades' })
   async listGrades(

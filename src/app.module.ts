@@ -31,6 +31,7 @@ import { RolesPermissionsModule } from './modules/roles-permissions/index.js';
 import { SellersModule } from './modules/sellers/index.js';
 import { SettlementsModule } from './modules/settlements/index.js';
 import { LogisticsModule } from './modules/logistics/index.js';
+import { CmsModule } from './modules/cms/index.js';
 import { ShipmentsModule } from './modules/shipments/index.js';
 import { UsersModule } from './modules/users/index.js';
 import { StorageModule } from './storage/storage.module.js';
@@ -112,6 +113,7 @@ import { StorageModule } from './storage/storage.module.js';
     OrdersModule,
     PaymentsModule,
     LogisticsModule,
+    CmsModule,
     ShipmentsModule,
     DocumentsModule,
     NotificationsModule,

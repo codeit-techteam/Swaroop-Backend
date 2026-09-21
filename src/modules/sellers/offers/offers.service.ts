@@ -26,6 +26,11 @@ import type {
   OfferQueryDto,
   UpdateOfferDto,
 } from './offers.dto.js';
+import {
+  hasSellerCreditPricing,
+  isSellerCreditPriceTier,
+  sanitizeSellerPaymentTerms,
+} from '../../payments/common/platform-credit.js';
 
 const offerInclude = {
   product: { select: { id: true, code: true, name: true, gradeId: true } },
@@ -83,6 +88,21 @@ export class OffersService {
     return product;
   }
 
+  private commercialPriceTiers(
+    tiers?: CreateOfferDto['priceTiers'],
+  ): NonNullable<CreateOfferDto['priceTiers']> | undefined {
+    if (!tiers?.length) return undefined;
+    const commercial = tiers.filter(
+      (tier) => !isSellerCreditPriceTier(tier.paymentMethod),
+    );
+    if (commercial.length !== tiers.length) {
+      throw new BadRequestException(
+        'Seller cannot submit credit pricing. CREDIT is a PetroTrade platform payment option.',
+      );
+    }
+    return commercial;
+  }
+
   async create(userId: string, dto: CreateOfferDto) {
     const ctx = await this.ctx(userId);
     const product = await this.resolveProduct(ctx, dto.productId, dto.gradeId);
@@ -103,6 +123,13 @@ export class OffersService {
       }
     }
 
+    const priceTiers = this.commercialPriceTiers(dto.priceTiers);
+    if (hasSellerCreditPricing(dto.paymentTerms)) {
+      throw new BadRequestException(
+        'Seller cannot submit credit pricing. CREDIT is owned by PetroTrade Credit Management.',
+      );
+    }
+
     const offer = await this.prisma.offer.create({
       data: {
         referenceNumber: nextReference('OFFER'),
@@ -118,7 +145,8 @@ export class OffersService {
         basePrice: dto.basePrice,
         currency: dto.currency ?? CurrencyCode.INR,
         pricingBasis: dto.pricingBasis,
-        paymentTerms: dto.paymentTerms as Prisma.InputJsonValue,
+        paymentTerms: sanitizeSellerPaymentTerms(dto.paymentTerms) as
+          Prisma.InputJsonValue | undefined,
         deliveryTerms: dto.deliveryTerms,
         validFrom: dto.validFrom ? new Date(dto.validFrom) : undefined,
         validUntil: dto.validUntil ? new Date(dto.validUntil) : undefined,
@@ -126,14 +154,16 @@ export class OffersService {
         visibility: dto.visibility ?? 'MARKETPLACE',
         createdById: userId,
         metadata: dto.metadata as Prisma.InputJsonValue,
-        priceTiers: dto.priceTiers?.length
+        priceTiers: priceTiers?.length
           ? {
-              create: dto.priceTiers.map((t) => ({
+              create: priceTiers.map((t) => ({
                 minQty: t.minQty,
                 maxQty: t.maxQty,
                 price: t.price,
                 currency: t.currency ?? dto.currency ?? CurrencyCode.INR,
-                paymentMethod: t.paymentMethod,
+                paymentMethod: isSellerCreditPriceTier(t.paymentMethod)
+                  ? undefined
+                  : t.paymentMethod,
               })),
             }
           : undefined,
@@ -225,6 +255,15 @@ export class OffersService {
       );
     }
 
+    if (dto.priceTiers) {
+      this.commercialPriceTiers(dto.priceTiers);
+    }
+    if (hasSellerCreditPricing(dto.paymentTerms)) {
+      throw new BadRequestException(
+        'Seller cannot submit credit pricing. CREDIT is owned by PetroTrade Credit Management.',
+      );
+    }
+
     const offer = await this.prisma.$transaction(async (tx) => {
       if (dto.priceTiers) {
         await tx.offerPriceTier.deleteMany({ where: { offerId: id } });
@@ -236,7 +275,9 @@ export class OffersService {
               maxQty: t.maxQty,
               price: t.price,
               currency: t.currency ?? dto.currency ?? existing.currency,
-              paymentMethod: t.paymentMethod,
+              paymentMethod: isSellerCreditPriceTier(t.paymentMethod)
+                ? null
+                : t.paymentMethod,
             })),
           });
         }
@@ -258,7 +299,8 @@ export class OffersService {
           paymentTerms:
             dto.paymentTerms === undefined
               ? undefined
-              : (dto.paymentTerms as Prisma.InputJsonValue),
+              : (sanitizeSellerPaymentTerms(dto.paymentTerms) as
+                  Prisma.InputJsonValue | undefined),
           deliveryTerms: dto.deliveryTerms,
           validFrom: dto.validFrom ? new Date(dto.validFrom) : undefined,
           validUntil: dto.validUntil ? new Date(dto.validUntil) : undefined,

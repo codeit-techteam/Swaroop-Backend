@@ -26,6 +26,8 @@
     "prisma:studio": "prisma studio",
     "prisma:validate": "prisma validate",
     "prisma:seed": "tsx prisma/seed.ts",
+    "catalog:extract": "node scripts/extract-frontend-catalog.mjs",
+    "catalog:import": "tsx scripts/import-catalog.ts",
     "postinstall": "prisma generate"
   },
   "engines": {

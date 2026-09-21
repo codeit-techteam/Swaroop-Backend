@@ -1,11 +1,4 @@
-import {
-  Controller,
-  Get,
-  Param,
-  ParseUUIDPipe,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
 import { successResponse } from '../../../common/utils/response.util.js';
@@ -37,7 +30,7 @@ export class ProductsController {
   @ApiOperation({ summary: 'Get product detail' })
   async findOne(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.productsService.findOne(user.id, id),
@@ -49,7 +42,7 @@ export class ProductsController {
   @ApiOperation({ summary: 'List offers for a product' })
   async listOffers(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Query() query: CustomerProductQueryDto,
   ) {
     const { items, meta } = await this.productsService.listOffers(

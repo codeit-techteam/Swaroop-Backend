@@ -74,6 +74,15 @@ export class PaymentScheduleService {
             status: PaymentScheduleStatus.PENDING,
           },
         ];
+      case PaymentMethod.CREDIT:
+        return [
+          {
+            type: PaymentScheduleType.CREDIT,
+            pct: 100,
+            status: PaymentScheduleStatus.DUE,
+            dueAt: addDays(now, 30),
+          },
+        ];
       case PaymentMethod.CREDIT_15:
         return [
           {

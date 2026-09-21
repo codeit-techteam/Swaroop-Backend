@@ -6,6 +6,7 @@ import {
   type Offer,
   type OfferPriceTier,
 } from '../../../generated/prisma/client.js';
+import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 
 export class MarketplaceException extends BadRequestException {
   constructor(code: string, message?: string) {
@@ -45,8 +46,18 @@ export function toBlindProduct(product: {
     sortOrder: number;
     fileName: string | null;
   }>;
-  offers?: unknown[];
+  offers?: Array<{
+    id: string;
+    quantity?: unknown;
+    moq?: unknown;
+    unit?: string;
+    basePrice?: unknown;
+    currency?: string;
+    deliveryTerms?: string | null;
+    organizationId?: string;
+  }>;
 }) {
+  const offer = product.offers?.[0];
   return {
     id: product.id,
     code: product.code,
@@ -76,7 +87,17 @@ export function toBlindProduct(product: {
       sortOrder: m.sortOrder,
       fileName: m.fileName,
     })),
-    offers: product.offers ?? undefined,
+    listing: offer
+      ? {
+          offerId: offer.id,
+          price: offer.basePrice,
+          currency: offer.currency ?? 'INR',
+          unit: offer.unit ?? product.unit,
+          moq: offer.moq,
+          quantityAvailable: offer.quantity,
+          leadTime: offer.deliveryTerms ?? null,
+        }
+      : null,
     supplier: {
       displayName: 'ANONYMOUS SUPPLIER',
     },
@@ -179,10 +200,10 @@ export function resolveOfferUnitPrice(
   offer: Offer & { priceTiers?: OfferPriceTier[] },
   quantity: number,
 ): Offer['basePrice'] {
-  const tiers = [...(offer.priceTiers ?? [])].sort(
-    (a, b) => Number(a.minQty) - Number(b.minQty),
-  );
-  for (const tier of tiers) {
+  const commercialTiers = [...(offer.priceTiers ?? [])]
+    .filter((tier) => !isPlatformCredit(tier.paymentMethod))
+    .sort((a, b) => Number(a.minQty) - Number(b.minQty));
+  for (const tier of commercialTiers) {
     const min = Number(tier.minQty);
     const max = tier.maxQty == null ? Infinity : Number(tier.maxQty);
     if (quantity >= min && quantity <= max) {
@@ -267,6 +288,7 @@ export function toCustomerFacingPr(
     rejectionReason: string | null;
     sellerOrgId: string | null;
     commerciallyAcceptedAt?: Date | null;
+    commercialSnapshot?: unknown;
     items?: Array<{
       id: string;
       quantity: unknown;
@@ -346,6 +368,7 @@ export function toCustomerFacingPr(
     purchaseOrder: poNumber
       ? { referenceNumber: poNumber, status: po?.status ?? null }
       : null,
+    commercial: pr.commercialSnapshot ?? null,
     submittedAt: pr.submittedAt,
     createdAt: pr.createdAt,
     rejectionReason: pr.rejectionReason,

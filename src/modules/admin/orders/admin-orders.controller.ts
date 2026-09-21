@@ -29,6 +29,12 @@ export class AdminOrdersController {
     return successResponse(items, 'Orders retrieved', meta);
   }
 
+  @Get('summary')
+  @ApiOperation({ summary: 'Order counts and GMV from PostgreSQL' })
+  async summary() {
+    return successResponse(await this.orders.summary(), 'Orders summary');
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Order detail' })
   async findOne(@Param('id', ParseUUIDPipe) id: string) {

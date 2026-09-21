@@ -7,6 +7,7 @@ import { PrismaService } from '../../../database/prisma.service.js';
 import type { CommercialSnapshot } from '../../procurement/common/purchase-order.service.js';
 import { FinanceEventsService } from '../common/finance-events.service.js';
 import { CreditEligibilityService } from './credit-eligibility.service.js';
+import { CreditLedgerService } from './credit-ledger.service.js';
 import { PaymentScheduleService } from './payment-schedule.service.js';
 import { ProformaInvoiceService } from './proforma-invoice.service.js';
 
@@ -17,6 +18,7 @@ export class FinanceBootstrapService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly credit: CreditEligibilityService,
+    private readonly ledger: CreditLedgerService,
     private readonly proformas: ProformaInvoiceService,
     private readonly schedules: PaymentScheduleService,
     private readonly events: FinanceEventsService,
@@ -24,7 +26,7 @@ export class FinanceBootstrapService {
 
   /**
    * Idempotent: creates PI + payment schedules for a PO if missing.
-   * Validates credit for CREDIT_15 / CREDIT_30.
+   * Reserves platform credit for CREDIT / CREDIT_15 / CREDIT_30. Does not mark paid.
    */
   async createForPurchaseOrder(
     tx: TxClient,
@@ -91,6 +93,14 @@ export class FinanceBootstrapService {
     );
 
     await this.schedules.createFromPo(tx, purchaseOrder, pi.id, pi.totalAmount);
+
+    if (this.credit.requiresCreditCheck(snapshot.paymentMethod)) {
+      await this.ledger.reserveForPurchaseOrder(tx, {
+        customerOrgId: purchaseOrder.customerOrgId,
+        purchaseOrderId: purchaseOrder.id,
+        amount: snapshot.totalValue,
+      });
+    }
 
     await this.events.record(tx, {
       purchaseOrderId: purchaseOrder.id,

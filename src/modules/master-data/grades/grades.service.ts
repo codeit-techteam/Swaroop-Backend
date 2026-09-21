@@ -5,7 +5,11 @@ import {
   Prisma,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
-import { paginationMeta, skipTake } from '../common/pagination.js';
+import {
+  paginationMeta,
+  resolveSearch,
+  skipTake,
+} from '../common/pagination.js';
 import { assertFound, handlePrismaUnique } from '../common/prisma-helpers.js';
 import type {
   CreateGradeDto,
@@ -111,8 +115,8 @@ export class GradesService {
 
     if (query.categoryId) where.categoryId = query.categoryId;
     if (query.subcategoryId) where.subcategoryId = query.subcategoryId;
-    if (query.search?.trim()) {
-      const q = query.search.trim();
+    if (resolveSearch(query)) {
+      const q = resolveSearch(query)!;
       where.OR = [
         { code: { contains: q, mode: 'insensitive' } },
         { name: { contains: q, mode: 'insensitive' } },

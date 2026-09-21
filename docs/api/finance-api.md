@@ -21,6 +21,11 @@ Idempotent if PI already exists for the PO.
 | --- | --- | --- |
 | GET | `/customer/finance/summary` | Outstanding + status counts |
 | GET | `/customer/purchase-orders` | Minimal PO list for finance UX |
+| GET | `/customer/orders` | Authoritative customer Orders screen (PurchaseOrder projection + progress/payment/logistics) |
+| GET | `/customer/orders/summary` | Active / completed / cancelled / pending payment / in-transit counts |
+| GET | `/customer/orders/:id` | Order detail (own org only) |
+| GET | `/customer/orders/:id/timeline` | Persisted PR/PO/payment/dispatch/shipment events |
+| GET | `/customer/orders/:id/progress` | Backend-derived progress percentage + stage |
 | GET | `/customer/proforma-invoices` | Own PIs |
 | GET | `/customer/proforma-invoices/:id` | Detail + schedules |
 | GET | `/customer/proforma-invoices/:id/payment-status` | Schedules + payments |

@@ -1,10 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import {
+  CreditApplicationStatus,
+  CreditStatus,
   DocumentStatus,
   NotificationStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
+import { toDecimal } from '../../payments/common/money.util.js';
 
 @Injectable()
 export class AdminDashboardService {
@@ -33,6 +36,9 @@ export class AdminDashboardService {
       shipments,
       documentsPending,
       adminUserIds,
+      pendingCreditApplications,
+      approvedCreditAccounts,
+      creditTotals,
     ] = await Promise.all([
       this.prisma.user.count({ where: { deletedAt: null } }),
       this.prisma.customerProfile.count({ where: { deletedAt: null } }),
@@ -56,6 +62,19 @@ export class AdminDashboardService {
         where: { role: { code: { in: adminRoleCodes } } },
         select: { userId: true },
         distinct: ['userId'],
+      }),
+      this.prisma.creditApplication.count({
+        where: { status: CreditApplicationStatus.PENDING },
+      }),
+      this.prisma.customerCreditProfile.count({
+        where: { status: CreditStatus.APPROVED },
+      }),
+      this.prisma.customerCreditProfile.aggregate({
+        _sum: {
+          approvedLimit: true,
+          outstandingAmount: true,
+          overdueAmount: true,
+        },
       }),
     ]);
 
@@ -87,6 +106,46 @@ export class AdminDashboardService {
       shipments,
       documentsPending,
       notificationsUnread,
+      credit: {
+        pendingApplications: pendingCreditApplications,
+        approvedAccounts: approvedCreditAccounts,
+        outstandingAmount: toDecimal(
+          creditTotals._sum.outstandingAmount,
+        ).toFixed(2),
+        overdueAmount: toDecimal(creditTotals._sum.overdueAmount).toFixed(2),
+        approvedLimit: toDecimal(creditTotals._sum.approvedLimit).toFixed(2),
+      },
+    };
+  }
+
+  async catalogSummary() {
+    const [grades, products, offers, categories, inventory] = await Promise.all(
+      [
+        this.prisma.grade.count({ where: { deletedAt: null } }),
+        this.prisma.product.count({ where: { deletedAt: null } }),
+        this.prisma.offer.count({ where: { deletedAt: null } }),
+        this.prisma.gradeCategory.count({ where: { deletedAt: null } }),
+        this.prisma.inventory.count({ where: { deletedAt: null } }),
+      ],
+    );
+    return { grades, products, offers, categories, inventory };
+  }
+
+  async ordersSummary() {
+    const [purchaseRequests, purchaseOrders, orders] = await Promise.all([
+      this.prisma.purchaseRequest.count({ where: { deletedAt: null } }),
+      this.prisma.purchaseOrder.count({ where: { deletedAt: null } }),
+      this.prisma.order.count({ where: { deletedAt: null } }),
+    ]);
+    const gmv = await this.prisma.purchaseOrder.aggregate({
+      where: { deletedAt: null },
+      _sum: { totalAmount: true },
+    });
+    return {
+      purchaseRequests,
+      purchaseOrders,
+      orders,
+      gmv: toDecimal(gmv._sum.totalAmount).toFixed(2),
     };
   }
 }

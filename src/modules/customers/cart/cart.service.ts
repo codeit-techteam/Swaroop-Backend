@@ -48,7 +48,7 @@ export function mapCustomerPaymentMethod(
       `Payment method must be one of: ${[...ALLOWED_PAYMENT_METHODS].join(', ')}`,
     );
   }
-  if (normalized === 'CREDIT') return PaymentMethod.CREDIT_30;
+  if (normalized === 'CREDIT') return PaymentMethod.CREDIT;
   return normalized as PaymentMethod;
 }
 

@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { NegotiationActorRole } from '../../../generated/prisma/client.js';
+import {
+  CREDIT_SOURCE,
+  isPlatformCredit,
+  sellerPlatformCreditStatus,
+} from '../../payments/common/platform-credit.js';
 
 /**
  * Strip buyer identity for blind marketplace seller views.
@@ -68,6 +73,16 @@ export function toBlindPurchaseRequest(
         .toUpperCase()}`,
     },
     paymentMethod: pr.paymentMethod,
+    platformCredit: isPlatformCredit(pr.paymentMethod)
+      ? {
+          paymentMethod: 'CREDIT',
+          source: CREDIT_SOURCE,
+          status: sellerPlatformCreditStatus({
+            paymentMethod: pr.paymentMethod,
+            reserved: Boolean(pr.commerciallyAcceptedAt),
+          }),
+        }
+      : null,
     targetPrice: pr.targetPrice,
     currency: pr.currency,
     requiredByDate: pr.requiredByDate,

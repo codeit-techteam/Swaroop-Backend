@@ -19,6 +19,11 @@ export class PaginationQueryDto {
   @IsString()
   search?: string;
 
+  /** Alias of `search` for marketplace/query clients. */
+  @IsOptional()
+  @IsString()
+  q?: string;
+
   @IsOptional()
   @IsString()
   sortBy?: string = 'sortOrder';
@@ -35,6 +40,10 @@ export function paginationMeta(page: number, limit: number, total: number) {
     total,
     totalPages: Math.max(1, Math.ceil(total / limit)),
   };
+}
+
+export function resolveSearch(query: { search?: string; q?: string }) {
+  return (query.search ?? query.q)?.trim() || undefined;
 }
 
 export function skipTake(page = 1, limit = 20) {

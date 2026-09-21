@@ -21,6 +21,7 @@ import {
   AdjustInventoryDto,
   CreateInventoryDto,
   InventoryQueryDto,
+  ReserveInventoryDto,
   UpdateInventoryDto,
 } from './inventory.dto.js';
 import { InventoryService } from './inventory.service.js';
@@ -113,6 +114,34 @@ export class InventoryController {
     return successResponse(
       await this.inventoryService.adjust(user.id, id, dto),
       'Inventory adjusted',
+    );
+  }
+
+  @Post(':id/reserve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reserve inventory quantity transactionally' })
+  async reserve(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReserveInventoryDto,
+  ) {
+    return successResponse(
+      await this.inventoryService.reserve(user.id, id, dto),
+      'Inventory reserved',
+    );
+  }
+
+  @Post(':id/release')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Release previously reserved inventory' })
+  async release(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: ReserveInventoryDto,
+  ) {
+    return successResponse(
+      await this.inventoryService.release(user.id, id, dto),
+      'Inventory released',
     );
   }
 }

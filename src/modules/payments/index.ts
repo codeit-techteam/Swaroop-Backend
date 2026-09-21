@@ -11,3 +11,10 @@ export { SettlementService } from './services/settlement.service.js';
 export { SettlementCalculationService } from './services/settlement-calculation.service.js';
 export { FinanceSummaryService } from './services/finance-summary.service.js';
 export { CreditEligibilityService } from './services/credit-eligibility.service.js';
+export { CreditLedgerService } from './services/credit-ledger.service.js';
+export { ManualCreditInsuranceProvider } from './services/credit-insurance.provider.js';
+export {
+  isPlatformCredit,
+  PLATFORM_CREDIT_METHODS,
+  CREDIT_SOURCE,
+} from './common/platform-credit.js';

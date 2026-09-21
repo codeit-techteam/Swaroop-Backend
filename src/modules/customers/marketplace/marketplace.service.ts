@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '../../../database/prisma.service.js';
 import {
   paginationMeta,
+  resolveSearch,
   skipTake,
 } from '../../master-data/common/pagination.js';
 import {
@@ -82,6 +83,24 @@ const productInclude = {
       type: true,
       sortOrder: true,
       fileName: true,
+    },
+  },
+  offers: {
+    where: {
+      deletedAt: null,
+      status: OfferStatus.ACTIVE,
+      OR: [{ visibility: 'MARKETPLACE' }, { visibility: null }],
+    },
+    orderBy: { basePrice: 'asc' as const },
+    take: 1,
+    select: {
+      id: true,
+      quantity: true,
+      moq: true,
+      unit: true,
+      basePrice: true,
+      currency: true,
+      deliveryTerms: true,
     },
   },
 } satisfies Prisma.ProductInclude;
@@ -228,18 +247,57 @@ export class MarketplaceService {
     };
   }
 
+  async listCategories(userId: string) {
+    await this.ctx(userId);
+    const categories = await this.prisma.gradeCategory.findMany({
+      where: {
+        deletedAt: null,
+        status: MasterStatus.ACTIVE,
+        isActive: true,
+        grades: { some: customerGradeWhere },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        displayName: true,
+        parentGroup: true,
+        sortOrder: true,
+        _count: {
+          select: { grades: { where: customerGradeWhere } },
+        },
+      },
+    });
+    return categories.map((c) => ({
+      id: c.id,
+      code: c.code,
+      name: c.name,
+      displayName: c.displayName ?? c.name,
+      parentGroup: c.parentGroup,
+      sortOrder: c.sortOrder,
+      gradeCount: c._count.grades,
+    }));
+  }
+
   async listGrades(userId: string, query: MarketplaceListQueryDto) {
     await this.ctx(userId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
-    const search = query.search?.trim();
+    const search = resolveSearch(query);
     const where: Prisma.GradeWhereInput = {
       ...customerGradeWhere,
+      ...(query.categoryId ? { categoryId: query.categoryId } : {}),
       ...(search
         ? {
             OR: [
               { name: { contains: search, mode: 'insensitive' } },
               { code: { contains: search, mode: 'insensitive' } },
               { displayName: { contains: search, mode: 'insensitive' } },
+              {
+                category: {
+                  name: { contains: search, mode: 'insensitive' },
+                },
+              },
             ],
           }
         : {}),

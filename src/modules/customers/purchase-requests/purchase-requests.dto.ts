@@ -19,6 +19,14 @@ import { PaginationQueryDto } from '../../master-data/common/pagination.js';
 
 export class CreatePurchaseRequestDto {
   @ApiPropertyOptional({
+    description:
+      'Authoritative checkout quote id. When provided, cart items are not required.',
+  })
+  @IsOptional()
+  @IsUUID()
+  quoteId?: string;
+
+  @ApiPropertyOptional({
     type: [String],
     description: 'Cart item IDs; omit to use all cart items',
   })

@@ -2,10 +2,12 @@ import { Injectable } from '@nestjs/common';
 import {
   DeliveryStatus,
   DispatchStatus,
+  InventoryStatus,
   PaymentScheduleType,
   Prisma,
   PurchaseOrderStatus,
   ShipmentStatus,
+  StockMovementType,
   VehicleOperationalStatus,
   type Dispatch,
 } from '../../../generated/prisma/client.js';
@@ -13,6 +15,8 @@ import { REFERENCE_NUMBER_PREFIX } from '../../../common/enums/domain.enums.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { DispatchGateService } from '../../payments/services/dispatch-gate.service.js';
 import { PaymentScheduleService } from '../../payments/services/payment-schedule.service.js';
+import { CreditLedgerService } from '../../payments/services/credit-ledger.service.js';
+import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import { LogisticsException } from '../common/logistics.errors.js';
 import { LogisticsEventsService } from '../common/logistics-events.service.js';
 import { DispatchStateService } from '../common/dispatch-state.service.js';
@@ -55,6 +59,7 @@ export class DispatchService {
     private readonly drivers: DriverService,
     private readonly eway: EwayBillService,
     private readonly invoiceLifecycle: InvoiceLifecycleService,
+    private readonly creditLedger: CreditLedgerService,
   ) {}
 
   nextDispatchNumber(now = new Date()): string {
@@ -186,6 +191,25 @@ export class DispatchService {
             await tx.purchaseOrder.update({
               where: { id: po.id },
               data: { status: PurchaseOrderStatus.READY_FOR_DISPATCH },
+            });
+          }
+
+          if (productId) {
+            await this.applyInventoryDispatch(
+              tx,
+              sellerOrgId,
+              productId,
+              check.qty,
+              created.id,
+            );
+          }
+
+          if (isPlatformCredit(po.paymentMethod)) {
+            await this.creditLedger.utilizeReservedCredit(tx, {
+              customerOrgId: po.customerOrgId,
+              purchaseOrderId: po.id,
+              amount: po.totalAmount,
+              actorUserId: actor?.userId,
             });
           }
 
@@ -649,6 +673,61 @@ export class DispatchService {
       actorUserId: opts?.userId,
     });
     return updated;
+  }
+
+  private async applyInventoryDispatch(
+    tx: Prisma.TransactionClient,
+    sellerOrgId: string,
+    productId: string,
+    quantity: Prisma.Decimal,
+    dispatchId: string,
+  ) {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM inventory
+      WHERE organization_id = ${sellerOrgId}::uuid
+        AND product_id = ${productId}::uuid
+        AND deleted_at IS NULL
+      FOR UPDATE
+    `;
+    if (rows.length === 0) return;
+
+    let remaining = toQty(quantity);
+    for (const row of rows) {
+      if (cmpQty(remaining, 0) <= 0) break;
+      const current = await tx.inventory.findUnique({ where: { id: row.id } });
+      if (!current) continue;
+      const available = toQty(current.availableQty);
+      if (cmpQty(available, 0) <= 0) continue;
+      const take = cmpQty(available, remaining) <= 0 ? available : remaining;
+      const nextAvailable = toQty(available.minus(take));
+      const nextSold = toQty(current.soldQty).plus(take);
+      await tx.inventory.update({
+        where: { id: row.id },
+        data: {
+          availableQty: nextAvailable,
+          soldQty: nextSold,
+          status:
+            cmpQty(nextAvailable, 0) <= 0
+              ? InventoryStatus.OUT_OF_STOCK
+              : current.status,
+        },
+      });
+      await tx.stockMovement.create({
+        data: {
+          inventoryId: row.id,
+          type: StockMovementType.DISPATCH,
+          quantity: take,
+          unit: current.unit,
+          referenceType: 'DISPATCH',
+          referenceId: dispatchId,
+          notes: 'Stock deducted on dispatch',
+        },
+      });
+      remaining = toQty(remaining.minus(take));
+    }
+    if (cmpQty(remaining, 0) > 0) {
+      throw new LogisticsException('INSUFFICIENT_INVENTORY');
+    }
   }
 
   toSellerView(d: Dispatch) {

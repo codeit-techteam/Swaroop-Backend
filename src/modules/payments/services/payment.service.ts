@@ -13,6 +13,11 @@ import { REFERENCE_NUMBER_PREFIX } from '../../../common/enums/domain.enums.js';
 import { FinanceEventsService } from '../common/finance-events.service.js';
 import { FinanceException } from '../common/finance.errors.js';
 import { cmp, isPositive, round2, toDecimal } from '../common/money.util.js';
+import {
+  CREDIT_SOURCE,
+  isPlatformCredit,
+  sellerPlatformCreditStatus,
+} from '../common/platform-credit.js';
 import { PaymentStateService } from '../common/payment-state.service.js';
 
 export type CreatePaymentInput = {
@@ -528,11 +533,17 @@ export class PaymentService {
     createdAt: Date;
     verifiedAt: Date | null;
   }) {
+    const credit = isPlatformCredit(payment.method);
     return {
       id: payment.id,
       referenceNumber: payment.referenceNumber,
       purchaseOrderId: payment.purchaseOrderId,
-      method: payment.method,
+      method: credit ? 'CREDIT' : payment.method,
+      platformCreditStatus: sellerPlatformCreditStatus({
+        paymentMethod: payment.method,
+        reserved: credit,
+      }),
+      creditSource: credit ? CREDIT_SOURCE : null,
       rail: payment.rail,
       status: payment.status,
       currency: payment.currency,

@@ -16,6 +16,11 @@ import {
   sub,
   toDecimal,
 } from '../common/money.util.js';
+import {
+  CREDIT_SOURCE,
+  isPlatformCredit,
+  sellerPlatformCreditStatus,
+} from '../common/platform-credit.js';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -169,8 +174,11 @@ export class ProformaInvoiceService {
       sellerOrg?: { id: string; name: string; legalName: string | null };
       lines?: unknown[];
       paymentSchedules?: unknown[];
+      purchaseOrder?: { paymentMethod?: string | null } | null;
     },
   ) {
+    const paymentMethod = this.paymentMethodOf(pi);
+    const credit = isPlatformCredit(paymentMethod);
     return {
       id: pi.id,
       piNumber: pi.piNumber,
@@ -184,6 +192,8 @@ export class ProformaInvoiceService {
       totalAmount: toDecimal(pi.totalAmount).toFixed(2),
       paidAmount: toDecimal(pi.paidAmount).toFixed(2),
       remainingAmount: toDecimal(pi.remainingAmount).toFixed(2),
+      paymentMode: credit ? 'CREDIT' : paymentMethod,
+      creditSource: credit ? CREDIT_SOURCE : null,
       billing: pi.customerOrg
         ? {
             organizationId: pi.customerOrg.id,
@@ -201,8 +211,11 @@ export class ProformaInvoiceService {
       sellerOrg?: { id: string; name: string; legalName: string | null };
       lines?: unknown[];
       paymentSchedules?: unknown[];
+      purchaseOrder?: { paymentMethod?: string | null } | null;
     },
   ) {
+    const paymentMethod = this.paymentMethodOf(pi);
+    const credit = isPlatformCredit(paymentMethod);
     return {
       id: pi.id,
       piNumber: pi.piNumber,
@@ -216,6 +229,13 @@ export class ProformaInvoiceService {
       totalAmount: toDecimal(pi.totalAmount).toFixed(2),
       paidAmount: toDecimal(pi.paidAmount).toFixed(2),
       remainingAmount: toDecimal(pi.remainingAmount).toFixed(2),
+      paymentMode: credit ? 'CREDIT' : paymentMethod,
+      creditSource: credit ? CREDIT_SOURCE : null,
+      platformCreditStatus: sellerPlatformCreditStatus({
+        paymentMethod,
+        reserved: credit,
+        accountActive: credit ? true : null,
+      }),
       company: pi.sellerOrg
         ? {
             organizationId: pi.sellerOrg.id,
@@ -263,6 +283,23 @@ export class ProformaInvoiceService {
       lines: pi.lines ?? undefined,
       paymentSchedules: pi.paymentSchedules ?? undefined,
       commercialSnapshot: pi.commercialSnapshot,
+      paymentMode: isPlatformCredit(this.paymentMethodOf(pi))
+        ? 'CREDIT'
+        : this.paymentMethodOf(pi),
+      creditSource: isPlatformCredit(this.paymentMethodOf(pi))
+        ? CREDIT_SOURCE
+        : null,
     };
+  }
+
+  private paymentMethodOf(
+    pi: ProformaInvoice & {
+      purchaseOrder?: { paymentMethod?: string | null } | null;
+    },
+  ): string | null {
+    const snapshot = pi.commercialSnapshot as {
+      paymentMethod?: string | null;
+    } | null;
+    return pi.purchaseOrder?.paymentMethod ?? snapshot?.paymentMethod ?? null;
   }
 }

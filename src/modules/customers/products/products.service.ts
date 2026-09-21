@@ -3,6 +3,7 @@ import { Prisma, ProductStatus } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import {
   paginationMeta,
+  resolveSearch,
   skipTake,
 } from '../../master-data/common/pagination.js';
 import {
@@ -32,7 +33,7 @@ export class ProductsService {
   async findAll(userId: string, query: CustomerProductQueryDto) {
     await this.ctx(userId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
-    const search = query.search?.trim();
+    const search = resolveSearch(query);
     const sortBy = query.sortBy ?? 'createdAt';
     const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
 
@@ -50,6 +51,16 @@ export class ProductsService {
               { name: { contains: search, mode: 'insensitive' } },
               { code: { contains: search, mode: 'insensitive' } },
               { brand: { contains: search, mode: 'insensitive' } },
+              { mfi: { contains: search, mode: 'insensitive' } },
+              {
+                grade: {
+                  OR: [
+                    { name: { contains: search, mode: 'insensitive' } },
+                    { code: { contains: search, mode: 'insensitive' } },
+                    { displayName: { contains: search, mode: 'insensitive' } },
+                  ],
+                },
+              },
             ],
           }
         : {}),
@@ -76,10 +87,10 @@ export class ProductsService {
     await this.ctx(userId);
     const product = await this.prisma.product.findFirst({
       where: {
-        id,
         deletedAt: null,
         status: ProductStatus.ACTIVE,
         grade: customerGradeWhere,
+        OR: [{ id }, { code: { equals: id, mode: 'insensitive' } }],
       },
       include: productInclude,
     });
@@ -92,11 +103,11 @@ export class ProductsService {
     productId: string,
     query: CustomerProductQueryDto,
   ) {
-    await this.findOne(userId, productId);
+    const product = await this.findOne(userId, productId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const where: Prisma.OfferWhereInput = {
       ...activeMarketplaceOfferWhere(),
-      productId,
+      productId: product.id,
     };
 
     const [total, items] = await this.prisma.$transaction([

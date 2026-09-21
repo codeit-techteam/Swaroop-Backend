@@ -38,7 +38,10 @@ import {
   PR_RESPONSE_WINDOW_MS,
 } from '../common/customer-context.service.js';
 import { CartService } from '../cart/cart.service.js';
+import { CheckoutService } from '../checkout/checkout.service.js';
 import { offerInclude } from '../marketplace/marketplace.service.js';
+import { CreditEligibilityService } from '../../payments/services/credit-eligibility.service.js';
+import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import type {
   CreatePurchaseRequestDto,
   CustomerCounterOfferDto,
@@ -106,10 +109,12 @@ export class PurchaseRequestsService {
     private readonly customerContext: CustomerContextService,
     private readonly audit: CustomerAuditService,
     private readonly cartService: CartService,
+    private readonly checkoutService: CheckoutService,
     private readonly prState: PrStateService,
     private readonly prEvents: PrEventsService,
     private readonly negotiationService: NegotiationService,
     private readonly commercialAcceptance: CommercialAcceptanceService,
+    private readonly creditEligibility: CreditEligibilityService,
   ) {}
 
   private async ctx(userId: string) {
@@ -262,6 +267,10 @@ export class PurchaseRequestsService {
     await this.assertAddress(ctx, dto.shippingAddressId);
     await this.assertAddress(ctx, dto.billingAddressId);
 
+    if (dto.quoteId) {
+      return this.createFromQuote(userId, ctx, dto);
+    }
+
     const cart = await this.cartService.getOrCreateCart(ctx);
     const selected = dto.cartItemIds?.length
       ? cart.items.filter((i) => dto.cartItemIds!.includes(i.id))
@@ -340,6 +349,22 @@ export class PurchaseRequestsService {
           0,
         );
 
+        let creditSnapshot: Record<string, unknown> | null = null;
+        if (isPlatformCredit(paymentMethod)) {
+          const eligibility = await this.creditEligibility.assertEligible(
+            tx,
+            ctx.organizationId,
+            targetPrice,
+          );
+          creditSnapshot = {
+            source: 'PETROTRADE',
+            checkedAt: now.toISOString(),
+            creditAccountId: eligibility.creditAccountId,
+            availableLimit: eligibility.availableLimit,
+            requestedAmount: targetPrice.toFixed(2),
+          };
+        }
+
         const pr = await this.createWithUniqueReference(tx, {
           customerOrgId: ctx.organizationId,
           customerProfileId: ctx.customerProfileId,
@@ -361,7 +386,10 @@ export class PurchaseRequestsService {
             batchKey,
             siblingIndex: i,
             siblingCount: orgEntries.length,
-          },
+            ...(creditSnapshot
+              ? { creditEligibilitySnapshot: creditSnapshot }
+              : {}),
+          } as Prisma.InputJsonValue,
           items: {
             create: rows.map((r) => ({
               gradeId: r.item.gradeId,
@@ -424,6 +452,158 @@ export class PurchaseRequestsService {
 
     return {
       purchaseRequests: created.map((pr) => this.toFacing(pr)),
+      idempotent: false,
+    };
+  }
+
+  private async createFromQuote(
+    userId: string,
+    ctx: CustomerContext,
+    dto: CreatePurchaseRequestDto,
+  ) {
+    const quoteId = dto.quoteId!;
+    const fresh = await this.checkoutService.assertFreshQuote(userId, quoteId);
+    const { quote, match, amounts } = fresh;
+    const now = new Date();
+    const deadline = new Date(now.getTime() + PR_RESPONSE_WINDOW_MS);
+    const shippingAddressId = dto.shippingAddressId ?? quote.shippingAddressId ?? undefined;
+    const billingAddressId = dto.billingAddressId ?? quote.billingAddressId ?? undefined;
+    await this.assertAddress(ctx, shippingAddressId);
+    await this.assertAddress(ctx, billingAddressId);
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRawUnsafe(
+        'SELECT id FROM offers WHERE id = $1::uuid FOR UPDATE',
+        quote.offerId,
+      );
+      await this.checkoutService.assertFreshQuote(userId, quoteId, tx);
+
+      let creditSnapshot: Record<string, unknown> | null = null;
+      if (isPlatformCredit(quote.paymentMethod)) {
+        const eligibility = await this.creditEligibility.assertEligible(
+          tx,
+          ctx.organizationId,
+          amounts.totalAmount,
+        );
+        creditSnapshot = {
+          source: 'PETROTRADE',
+          checkedAt: now.toISOString(),
+          creditAccountId: eligibility.creditAccountId,
+          availableLimit: eligibility.availableLimit,
+          requestedAmount: amounts.totalAmount.toFixed(2),
+        };
+      }
+
+      const commercialSnapshot = {
+        ...(typeof quote.snapshot === 'object' && quote.snapshot
+          ? (quote.snapshot as Record<string, unknown>)
+          : {}),
+        quoteId: quote.id,
+        sellerMatched: true,
+        matchStrategy: quote.matchStrategy,
+      };
+
+      const pr = await this.createWithUniqueReference(tx, {
+        customerOrgId: ctx.organizationId,
+        customerProfileId: ctx.customerProfileId,
+        sellerOrgId: quote.sellerOrgId,
+        createdById: userId,
+        status: PurchaseRequestStatus.SOURCING,
+        paymentMethod: quote.paymentMethod,
+        targetPrice: amounts.totalAmount,
+        currency: quote.currency,
+        notes: dto.notes,
+        destinationRegion: dto.destinationRegion,
+        shippingAddressId,
+        billingAddressId,
+        submittedAt: now,
+        expiresAt: deadline,
+        responseDeadline: deadline,
+        quoteId: quote.id,
+        idempotencyKey: dto.idempotencyKey,
+        commercialSnapshot: commercialSnapshot as Prisma.InputJsonValue,
+        metadata: {
+          quoteId: quote.id,
+          matchStrategy: quote.matchStrategy,
+          ...(creditSnapshot
+            ? { creditEligibilitySnapshot: creditSnapshot }
+            : {}),
+        } as Prisma.InputJsonValue,
+        items: {
+          create: [
+            {
+              gradeId: match.offer.gradeId,
+              productId: match.offer.productId,
+              offerId: match.offer.id,
+              quantity: amounts.quantity,
+              unit: match.offer.unit ?? 'MT',
+              targetUnitPrice: amounts.unitPrice,
+              unitPriceSnapshot: amounts.unitPrice,
+              paymentMethod: quote.paymentMethod,
+              packaging: match.offer.product?.packaging ?? null,
+            },
+          ],
+        },
+      });
+
+      await tx.checkoutQuote.update({
+        where: { id: quote.id },
+        data: {
+          consumedAt: now,
+          purchaseRequestId: pr.id,
+          shippingAddressId: shippingAddressId ?? quote.shippingAddressId,
+          billingAddressId: billingAddressId ?? quote.billingAddressId,
+        },
+      });
+
+      await this.prEvents.record(tx, {
+        purchaseRequestId: pr.id,
+        eventType: 'PURCHASE_REQUEST_CREATED',
+        actorRole: NegotiationActorRole.CUSTOMER,
+        actorUserId: userId,
+        metadata: {
+          referenceNumber: pr.referenceNumber,
+          quoteId: quote.id,
+          sellerOrgId: quote.sellerOrgId,
+          matchStrategy: quote.matchStrategy,
+        },
+      });
+      await this.prEvents.record(tx, {
+        purchaseRequestId: pr.id,
+        eventType: 'SENT_TO_SELLER',
+        actorRole: NegotiationActorRole.SYSTEM,
+        metadata: {
+          sellerOrgId: quote.sellerOrgId,
+          responseDeadline: deadline.toISOString(),
+        },
+      });
+
+      return pr;
+    });
+
+    await this.audit.log({
+      action: 'PURCHASE_REQUEST_CREATED',
+      actorUserId: userId,
+      organizationId: ctx.organizationId,
+      entityType: EntityOwnerType.PURCHASE_REQUEST,
+      entityId: created.id,
+      newData: {
+        referenceNumber: created.referenceNumber,
+        status: created.status,
+        quoteId: quote.id,
+        sellerOrgId: created.sellerOrgId,
+      },
+    });
+    await this.prEvents.notifyStub({
+      actorUserId: userId,
+      organizationId: ctx.organizationId,
+      purchaseRequestId: created.id,
+      eventType: 'PURCHASE_REQUEST_CREATED',
+      message: `PR ${created.referenceNumber} created`,
+    });
+
+    return {
+      purchaseRequests: [this.toFacing(created)],
       idempotent: false,
     };
   }

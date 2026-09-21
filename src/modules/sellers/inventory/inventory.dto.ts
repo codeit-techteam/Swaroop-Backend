@@ -104,6 +104,25 @@ export class AdjustInventoryDto {
   metadata?: Record<string, unknown>;
 }
 
+export class ReserveInventoryDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.001)
+  quantity!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  referenceType?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  referenceId?: string;
+}
+
 export class InventoryQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: InventoryStatus })
   @IsOptional()

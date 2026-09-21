@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { PaginationQueryDto } from '../../master-data/common/pagination.js';
 
 export class MarketplaceHomeQueryDto {
@@ -29,4 +29,14 @@ export class MarketplaceHomeQueryDto {
   gradesLimit?: number = 12;
 }
 
-export class MarketplaceListQueryDto extends PaginationQueryDto {}
+export class MarketplaceListQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  gradeId?: string;
+}
