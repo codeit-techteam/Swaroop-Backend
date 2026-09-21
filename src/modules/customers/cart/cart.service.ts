@@ -23,6 +23,12 @@ import type {
   UpdateCartItemDto,
   ValidateCartDto,
 } from './cart.dto.js';
+import {
+  classifyCartValidation,
+  isCartCheckoutReady,
+  type CartPriceChange,
+  type CartValidationIssue,
+} from './cart-validation.js';
 
 const ALLOWED_PAYMENT_METHODS = new Set([
   'ADVANCE',
@@ -401,13 +407,8 @@ export class CartService {
       ]),
     );
 
-    const issues: Array<{
-      cartItemId: string;
-      code: string;
-      message: string;
-      currentUnitPrice?: number;
-    }> = [];
-
+    const issues: CartValidationIssue[] = [];
+    const changes: CartPriceChange[] = [];
     const validatedItems = [];
 
     for (const item of cart.items) {
@@ -417,27 +418,51 @@ export class CartService {
         assertMarketplaceOffer(offer, quantity, offer.moq);
         assertAvailability(offer.quantity, quantity);
         const unitPrice = resolveOfferUnitPrice(offer, quantity);
+        const livePrice = Number(unitPrice);
+        const snapshotPrice = Number(item.unitPrice);
         const expected = expectedMap.get(item.id);
-        if (expected != null && Number(unitPrice) !== expected) {
+        const priceChanged =
+          (expected != null && livePrice !== expected) ||
+          snapshotPrice !== livePrice;
+
+        if (priceChanged) {
           issues.push({
             cartItemId: item.id,
             code: 'PRICE_CHANGED',
             message: 'Offer unit price has changed',
-            currentUnitPrice: Number(unitPrice),
+            currentUnitPrice: livePrice,
           });
-        } else if (Number(item.unitPrice) !== Number(unitPrice)) {
-          issues.push({
+          changes.push({
             cartItemId: item.id,
-            code: 'PRICE_CHANGED',
-            message: 'Cart unit price is stale',
-            currentUnitPrice: Number(unitPrice),
+            productId: item.productId,
+            productName: item.product?.name ?? offer.product?.name ?? 'Product',
+            gradeName:
+              item.grade?.displayName ??
+              item.grade?.name ??
+              offer.grade?.displayName ??
+              offer.grade?.name ??
+              null,
+            oldUnitPrice: expected ?? snapshotPrice,
+            newUnitPrice: livePrice,
+            quantity,
+            unit: item.unit,
+          });
+          await this.prisma.cartItem.update({
+            where: { id: item.id },
+            data: {
+              unitPrice,
+              priceSnapshotAt: new Date(),
+            },
           });
         }
+
         validatedItems.push({
           cartItemId: item.id,
           offerId: offer.id,
+          productId: item.productId,
           quantity,
-          unitPrice: Number(unitPrice),
+          unit: item.unit,
+          unitPrice: livePrice,
           currency: offer.currency,
           paymentMethod: item.paymentMethod,
           valid: true,
@@ -453,7 +478,9 @@ export class CartService {
         validatedItems.push({
           cartItemId: item.id,
           offerId: item.offerId,
+          productId: item.productId,
           quantity: Number(item.quantity),
+          unit: item.unit,
           unitPrice: Number(item.unitPrice),
           currency: item.currency,
           paymentMethod: item.paymentMethod,
@@ -470,7 +497,9 @@ export class CartService {
       });
     }
 
-    const valid = issues.length === 0;
+    const status = classifyCartValidation(issues, changes);
+    const valid = isCartCheckoutReady(status);
+    const refreshed = await this.getOrCreateCart(ctx);
 
     await this.audit.log({
       action: 'CHECKOUT_VALIDATED',
@@ -478,13 +507,16 @@ export class CartService {
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.CUSTOMER,
       entityId: cart.id,
-      newData: { valid, issueCount: issues.length },
+      newData: { valid, status, issueCount: issues.length, changeCount: changes.length },
     });
 
     return {
+      status,
       valid,
       issues,
+      changes,
       items: validatedItems,
+      cart: this.serializeCart(refreshed),
       shippingAddressId: dto.shippingAddressId ?? null,
       billingAddressId: dto.billingAddressId ?? null,
     };

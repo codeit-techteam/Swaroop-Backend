@@ -40,6 +40,8 @@ import { AdminSearchService } from './search/admin-search.service.js';
 import { AdminCatalogController } from './catalog/admin-catalog.controller.js';
 import { AdminCreditController } from './credit/admin-credit.controller.js';
 import { AdminCreditService } from './credit/admin-credit.service.js';
+import { AdminBulkLogisticsQuotesController } from './bulk-logistics-quotes/admin-bulk-logistics-quotes.controller.js';
+import { AdminBulkLogisticsQuotesService } from './bulk-logistics-quotes/admin-bulk-logistics-quotes.service.js';
 import { AdminSellersController } from './sellers/admin-sellers.controller.js';
 import { AdminSellersService } from './sellers/admin-sellers.service.js';
 import { AdminUsersController } from './users/admin-users.controller.js';
@@ -63,6 +65,7 @@ const adminProviders = [
   AdminSearchService,
   AdminProcurementService,
   AdminCreditService,
+  AdminBulkLogisticsQuotesService,
 ];
 
 @Module({
@@ -97,6 +100,7 @@ const adminProviders = [
     AdminAuditLogsController,
     AdminSearchController,
     AdminCreditController,
+    AdminBulkLogisticsQuotesController,
   ],
   providers: adminProviders,
   exports: [AdminProcurementService, AdminAuditService],

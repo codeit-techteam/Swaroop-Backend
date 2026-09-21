@@ -556,6 +556,13 @@ export class PurchaseRequestsService {
         },
       });
 
+      await tx.cartItem.deleteMany({
+        where: {
+          offerId: quote.offerId,
+          cart: { customerProfileId: ctx.customerProfileId },
+        },
+      });
+
       await this.prEvents.record(tx, {
         purchaseRequestId: pr.id,
         eventType: 'PURCHASE_REQUEST_CREATED',

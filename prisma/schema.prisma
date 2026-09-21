@@ -583,6 +583,14 @@ enum CreditApplicationStatus {
   CANCELLED
 }
 
+enum BulkLogisticsQuoteStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  QUOTED
+  CLOSED
+  CANCELLED
+}
+
 enum CreditAccountStatus {
   ACTIVE
   SUSPENDED
@@ -723,6 +731,7 @@ model User {
   createdOffers           Offer[]                  @relation("OfferCreatedBy")
   createdPurchaseRequests PurchaseRequest[]        @relation("PrCreatedBy")
   verifiedPayments        Payment[]                @relation("PaymentVerifiedBy")
+  assignedBulkLogisticsQuotes BulkLogisticsQuoteRequest[] @relation("BulkLogisticsQuoteAssignee")
   authSessions            AuthSession[]
   otpVerifications        OtpVerification[]
   passwordResetTokens     PasswordResetToken[]
@@ -905,10 +914,43 @@ model CustomerProfile {
   purchaseRequests PurchaseRequest[]
   orders           Order[]
   checkoutQuotes   CheckoutQuote[]
+  bulkLogisticsQuotes BulkLogisticsQuoteRequest[]
 
   @@index([status])
   @@index([creditStatus])
   @@map("customer_profiles")
+}
+
+model BulkLogisticsQuoteRequest {
+  id                String                    @id @default(uuid()) @db.Uuid
+  requestNumber     String                    @unique @map("request_number")
+  customerProfileId String                    @map("customer_profile_id") @db.Uuid
+  status            BulkLogisticsQuoteStatus  @default(SUBMITTED)
+  contactName       String                    @map("contact_name")
+  companyName       String                    @map("company_name")
+  email             String
+  phone             String
+  materialName      String                    @map("material_name")
+  quantityMt        Decimal                   @map("quantity_mt") @db.Decimal(18, 3)
+  pickupLocation    String                    @map("pickup_location")
+  deliveryLocation  String                    @map("delivery_location")
+  preferredDate     DateTime?                 @map("preferred_date") @db.Date
+  message           String?
+  adminNotes        String?                   @map("admin_notes")
+  assignedAdminId   String?                   @map("assigned_admin_id") @db.Uuid
+  reviewedAt        DateTime?                 @map("reviewed_at")
+  closedAt          DateTime?                 @map("closed_at")
+  metadata          Json?
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  assignedAdmin   User?           @relation("BulkLogisticsQuoteAssignee", fields: [assignedAdminId], references: [id])
+
+  @@index([customerProfileId, status])
+  @@index([status, createdAt])
+  @@index([assignedAdminId])
+  @@map("bulk_logistics_quote_requests")
 }
 
 model CustomerPreference {

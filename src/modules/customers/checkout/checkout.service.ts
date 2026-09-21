@@ -6,14 +6,18 @@ import {
 import { PrismaService } from '../../../database/prisma.service.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import { CreditEligibilityService } from '../../payments/services/credit-eligibility.service.js';
-import { mapCustomerPaymentMethod } from '../cart/cart.service.js';
+import { CartService, mapCustomerPaymentMethod } from '../cart/cart.service.js';
+import {
+  classifyCartValidation,
+  isCartCheckoutReady,
+} from '../cart/cart-validation.js';
 import { toBlindOffer } from '../common/blind-marketplace.mapper.js';
 import {
   CustomerContext,
   CustomerContextService,
 } from '../common/customer-context.service.js';
 import { CheckoutException } from './checkout.errors.js';
-import type { CreateCheckoutQuoteDto } from './checkout.dto.js';
+import type { CreateCheckoutQuoteDto, QuoteFromCartDto } from './checkout.dto.js';
 import {
   buildPricingVersion,
   calculateQuoteAmounts,
@@ -82,6 +86,7 @@ export class CheckoutService {
     private readonly customerContext: CustomerContextService,
     private readonly sellerMatching: SellerMatchingService,
     private readonly creditEligibility: CreditEligibilityService,
+    private readonly cartService: CartService,
   ) {}
 
   private async ctx(userId: string) {
@@ -109,6 +114,8 @@ export class CheckoutService {
       country: row.country,
       postalCode: row.postalCode,
       landmark: row.landmark,
+      latitude: row.latitude != null ? Number(row.latitude) : null,
+      longitude: row.longitude != null ? Number(row.longitude) : null,
       isDefault: row.isDefault,
     }));
   }
@@ -272,6 +279,64 @@ export class CheckoutService {
     });
 
     return this.toCustomerQuote(created, match);
+  }
+
+  async quoteFromCart(userId: string, dto: QuoteFromCartDto) {
+    const validation = await this.cartService.validate(userId, {
+      shippingAddressId: dto.shippingAddressId,
+      billingAddressId: dto.billingAddressId,
+      expectedPrices: dto.expectedPrices,
+    });
+
+    const quotes: CustomerQuoteDto[] = [];
+    const issues = [...validation.issues];
+
+    if (isCartCheckoutReady(validation.status)) {
+      for (const item of validation.items.filter((entry) => entry.valid)) {
+        try {
+          const quote = await this.quote(userId, {
+            offerId: item.offerId,
+            productId: item.productId,
+            quantity: item.quantity,
+            paymentOption:
+              dto.paymentOption ?? item.paymentMethod ?? 'ADVANCE',
+            shippingAddressId: dto.shippingAddressId,
+            billingAddressId: dto.billingAddressId,
+          });
+          quotes.push(quote);
+        } catch (err) {
+          const code =
+            err instanceof CheckoutException ? err.code : 'UNKNOWN_ERROR';
+          const message =
+            err instanceof Error
+              ? err.message
+              : 'Unable to generate live pricing for this cart item';
+          issues.push({
+            cartItemId: item.cartItemId,
+            code,
+            message,
+          });
+        }
+      }
+    }
+
+    const classified = classifyCartValidation(issues, validation.changes);
+    const status =
+      quotes.length === 0 && classified === 'OK' ? 'INVALID' : classified;
+    const valid = isCartCheckoutReady(status) && quotes.length > 0;
+
+    return {
+      status,
+      valid,
+      issues,
+      changes: validation.changes,
+      quote: quotes[0] ?? null,
+      quotes,
+      items: validation.items,
+      cart: validation.cart,
+      shippingAddressId: dto.shippingAddressId ?? null,
+      billingAddressId: dto.billingAddressId ?? null,
+    };
   }
 
   async getQuote(userId: string, quoteId: string) {

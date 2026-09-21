@@ -1,13 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
+import { ExpectedCartPriceDto } from '../cart/cart.dto.js';
 
 export class CreateCheckoutQuoteDto {
   @ApiPropertyOptional({
@@ -51,6 +54,35 @@ export class CreateCheckoutQuoteDto {
   @IsOptional()
   @IsUUID()
   billingAddressId?: string;
+}
+
+export class QuoteFromCartDto {
+  @ApiPropertyOptional({
+    example: 'ADVANCE',
+    description:
+      'ADVANCE | ON_LOADING | ON_DELIVERY | CREDIT | CREDIT_15 | CREDIT_30',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  paymentOption?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  shippingAddressId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  billingAddressId?: string;
+
+  @ApiPropertyOptional({ type: [ExpectedCartPriceDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ExpectedCartPriceDto)
+  expectedPrices?: ExpectedCartPriceDto[];
 }
 
 export class PlaceQuotePurchaseRequestDto {

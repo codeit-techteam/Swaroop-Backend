@@ -18,6 +18,7 @@ import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
   CreateCheckoutQuoteDto,
+  QuoteFromCartDto,
 } from './checkout.dto.js';
 import { CheckoutService } from './checkout.service.js';
 
@@ -69,6 +70,22 @@ export class CheckoutController {
     return successResponse(
       await this.checkout.quote(user.id, dto),
       'Quote generated',
+    );
+  }
+
+  @Post('quote-from-cart')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Revalidate the customer cart and generate server-authoritative checkout quotes',
+  })
+  async quoteFromCart(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: QuoteFromCartDto = {},
+  ) {
+    return successResponse(
+      await this.checkout.quoteFromCart(user.id, dto),
+      'Cart quote generated',
     );
   }
 

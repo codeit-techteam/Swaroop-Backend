@@ -14,6 +14,8 @@ import { CustomerDocumentsController } from './documents/documents.controller.js
 import { CustomerDocumentsService } from './documents/documents.service.js';
 import { CustomerCreditController } from './credit/customer-credit.controller.js';
 import { CustomerCreditService } from './credit/customer-credit.service.js';
+import { BulkLogisticsQuotesController } from './bulk-logistics-quotes/bulk-logistics-quotes.controller.js';
+import { BulkLogisticsQuotesService } from './bulk-logistics-quotes/bulk-logistics-quotes.service.js';
 import { MarketplaceController } from './marketplace/marketplace.controller.js';
 import { MarketplaceService } from './marketplace/marketplace.service.js';
 import { OffersController } from './offers/offers.controller.js';
@@ -25,6 +27,8 @@ import { PurchaseRequestsService } from './purchase-requests/purchase-requests.s
 import { CheckoutController } from './checkout/checkout.controller.js';
 import { CheckoutService } from './checkout/checkout.service.js';
 import { SellerMatchingService } from './checkout/seller-matching.service.js';
+import { CustomerAddressesController } from './addresses/addresses.controller.js';
+import { CustomerAddressesService } from './addresses/addresses.service.js';
 import { CustomerOrdersController } from './orders/customer-orders.controller.js';
 import { CustomerOrdersService } from './orders/customer-orders.service.js';
 
@@ -43,10 +47,12 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CartController,
     PurchaseRequestsController,
     CheckoutController,
+    CustomerAddressesController,
     CustomerOrdersController,
     DashboardController,
     CustomerDocumentsController,
     CustomerCreditController,
+    BulkLogisticsQuotesController,
   ],
   providers: [
     CustomerContextService,
@@ -57,11 +63,13 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CartService,
     PurchaseRequestsService,
     CheckoutService,
+    CustomerAddressesService,
     SellerMatchingService,
     CustomerOrdersService,
     DashboardService,
     CustomerDocumentsService,
     CustomerCreditService,
+    BulkLogisticsQuotesService,
   ],
   exports: [
     CustomerContextService,
@@ -72,11 +80,13 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CartService,
     PurchaseRequestsService,
     CheckoutService,
+    CustomerAddressesService,
     SellerMatchingService,
     CustomerOrdersService,
     DashboardService,
     CustomerDocumentsService,
     CustomerCreditService,
+    BulkLogisticsQuotesService,
   ],
 })
 export class CustomersModule {}
