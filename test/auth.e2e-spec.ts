@@ -48,6 +48,18 @@ describe('Auth (e2e)', () => {
     expect(response.body.data.user.roles).toContain('ADMIN');
   });
 
+  it('logs in customer with phone and password', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ phone: '+918240890242', password: 'Test@12345' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.data.accessToken).toBeTruthy();
+    expect(response.body.data.user.email).toBe('customer@test.local');
+    expect(response.body.data.user.roles).toContain('CUSTOMER');
+  });
+
   it('rejects invalid credentials', async () => {
     const response = await request(app.getHttpServer())
       .post('/api/v1/auth/login')

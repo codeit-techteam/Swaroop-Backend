@@ -60,7 +60,7 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Password login (primarily for Admin)' })
+  @ApiOperation({ summary: 'Password login with email or phone' })
   async login(@Body() dto: LoginDto, @Req() req: Request) {
     const data = await this.authService.login(dto, this.meta(req));
     return successResponse(data, 'Login successful');

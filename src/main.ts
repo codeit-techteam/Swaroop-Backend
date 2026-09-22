@@ -27,6 +27,8 @@ async function bootstrap(): Promise<void> {
     helmet({
       contentSecurityPolicy: appConfig.env === 'production' ? undefined : false,
       crossOriginEmbedderPolicy: false,
+      // Browser clients (Customer/Seller/Admin web) call this API cross-origin.
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
 

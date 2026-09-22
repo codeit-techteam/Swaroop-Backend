@@ -259,10 +259,13 @@ export class AuthService {
   }
 
   async login(dto: LoginDto, meta: RequestMeta = {}) {
-    const email = dto.email.trim().toLowerCase();
-    const user = await this.prisma.user.findUnique({
-      where: { email },
-    });
+    const email = dto.email?.trim().toLowerCase();
+    const phone = dto.phone?.trim();
+    const user = email
+      ? await this.prisma.user.findUnique({ where: { email } })
+      : phone
+        ? await this.prisma.user.findUnique({ where: { phone } })
+        : null;
 
     if (!user || !user.passwordHash) {
       throw new AuthException(
