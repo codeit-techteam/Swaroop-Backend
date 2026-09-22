@@ -21,6 +21,7 @@ import { ADMIN_CORE_ROLES } from '../admin/common/admin-roles.js';
 import {
   CmsBannerQueryDto,
   CreateCmsBannerDto,
+  CreateCmsMediaUploadDto,
   UpdateCmsBannerDto,
 } from './cms.dto.js';
 import { CmsService } from './cms.service.js';
@@ -44,6 +45,17 @@ export class AdminCmsController {
     return successResponse(
       await this.cms.create(dto, user.id),
       'Banner created',
+    );
+  }
+
+  @Post('media-upload')
+  @ApiOperation({
+    summary: 'Signed upload URL for a banner creative (requires object storage)',
+  })
+  async mediaUpload(@Body() dto: CreateCmsMediaUploadDto) {
+    return successResponse(
+      await this.cms.createMediaUpload(dto),
+      'Upload URL created',
     );
   }
 

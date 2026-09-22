@@ -80,4 +80,36 @@ export class StorageService {
     }
     return false;
   }
+
+  getPublicBaseUrl(): string {
+    const storage = this.configService.get<AppConfig['storage']>('storage', {
+      infer: true,
+    });
+    return storage?.publicUrl?.replace(/\/$/, '') ?? '';
+  }
+
+  /**
+   * Resolve a stored media key to a browser-loadable URL.
+   * HTTPS / data URLs pass through. Object keys use the public CDN base
+   * when configured, otherwise a short-lived signed GET URL.
+   */
+  async resolveMediaUrl(
+    mediaKey?: string | null,
+  ): Promise<string | null> {
+    if (!mediaKey) return null;
+    if (/^(https?:|data:|blob:)/i.test(mediaKey)) return mediaKey;
+
+    const publicBase = this.getPublicBaseUrl();
+    if (publicBase) {
+      return `${publicBase}/${mediaKey.replace(/^\//, '')}`;
+    }
+
+    if (!this.isConfigured()) return null;
+
+    return this.getSignedUrl({
+      key: mediaKey,
+      operation: 'get',
+      expiresInSeconds: 3600,
+    });
+  }
 }

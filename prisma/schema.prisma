@@ -657,8 +657,10 @@ enum CmsBannerPlatform {
   ALL
   CUSTOMER_APP
   CUSTOMER_WEB
+  CUSTOMER_ALL
   SELLER_APP
   SELLER_WEB
+  SELLER_ALL
   ADMIN_WEB
 }
 
@@ -2865,22 +2867,24 @@ model Notification {
 }
 
 model CmsBanner {
-  id           String             @id @default(uuid()) @db.Uuid
-  title        String
-  subtitle     String?
-  placement    CmsBannerPlacement @default(HOME_HERO)
-  platform     CmsBannerPlatform  @default(ALL)
-  status       CmsBannerStatus    @default(DRAFT)
-  displayOrder Int                @default(0) @map("display_order")
-  startAt      DateTime?          @map("start_at")
-  endAt        DateTime?          @map("end_at")
-  mediaKey     String?            @map("media_key")
-  targetRoute  String?            @map("target_route")
-  createdById  String?            @map("created_by_id") @db.Uuid
-  metadata     Json?
-  createdAt    DateTime           @default(now()) @map("created_at")
-  updatedAt    DateTime           @updatedAt @map("updated_at")
-  deletedAt    DateTime?          @map("deleted_at")
+  id               String             @id @default(uuid()) @db.Uuid
+  title            String
+  subtitle         String?
+  placement        CmsBannerPlacement @default(HOME_HERO)
+  platform         CmsBannerPlatform  @default(ALL)
+  status           CmsBannerStatus    @default(DRAFT)
+  displayOrder     Int                @default(0) @map("display_order")
+  startAt          DateTime?          @map("start_at")
+  endAt            DateTime?          @map("end_at")
+  mediaKey         String?            @map("media_key")
+  targetRoute      String?            @map("target_route")
+  impressionCount  Int                @default(0) @map("impression_count")
+  clickCount       Int                @default(0) @map("click_count")
+  createdById      String?            @map("created_by_id") @db.Uuid
+  metadata         Json?
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  deletedAt        DateTime?          @map("deleted_at")
 
   createdBy User? @relation("CmsBannerCreatedBy", fields: [createdById], references: [id])
 

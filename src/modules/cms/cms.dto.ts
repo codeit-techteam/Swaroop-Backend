@@ -62,11 +62,12 @@ export class CreateCmsBannerDto {
   endAt?: string;
 
   @ApiPropertyOptional({
-    description: 'Optional object storage key. R2 is not required.',
+    description:
+      'Object storage key or public HTTPS image URL. R2 is not required for URL-based creatives.',
   })
   @IsOptional()
   @IsString()
-  @MaxLength(500)
+  @MaxLength(2048)
   mediaKey?: string;
 
   @ApiPropertyOptional()
@@ -82,6 +83,36 @@ export class CreateCmsBannerDto {
 }
 
 export class UpdateCmsBannerDto extends PartialType(CreateCmsBannerDto) {}
+
+export enum CmsBannerEventType {
+  IMPRESSION = 'IMPRESSION',
+  CLICK = 'CLICK',
+}
+
+export class TrackCmsBannerDto {
+  @ApiProperty({ enum: CmsBannerEventType })
+  @IsEnum(CmsBannerEventType)
+  event!: CmsBannerEventType;
+}
+
+export class CreateCmsMediaUploadDto {
+  @ApiProperty({ example: 'campaign-hero.jpg' })
+  @IsString()
+  @MaxLength(180)
+  fileName!: string;
+
+  @ApiProperty({ example: 'image/jpeg' })
+  @IsString()
+  @MaxLength(100)
+  contentType!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  fileSizeBytes?: number;
+}
 
 export class CmsBannerQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: CmsBannerStatus })
