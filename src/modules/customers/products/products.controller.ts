@@ -1,4 +1,11 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
 import { successResponse } from '../../../common/utils/response.util.js';
@@ -27,7 +34,7 @@ export class ProductsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get product detail' })
+  @ApiOperation({ summary: 'Get product detail (blind + documents)' })
   async findOne(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id') id: string,
@@ -35,6 +42,35 @@ export class ProductsController {
     return successResponse(
       await this.productsService.findOne(user.id, id),
       'Product retrieved',
+    );
+  }
+
+  @Get(':id/documents')
+  @ApiOperation({
+    summary: 'List customer-visible product documents (no seller identity)',
+  })
+  async listDocuments(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return successResponse(
+      await this.productsService.listDocuments(user.id, id),
+      'Product documents retrieved',
+    );
+  }
+
+  @Get(':id/documents/:documentId/url')
+  @ApiOperation({
+    summary: 'Short-lived signed URL for a verified product document',
+  })
+  async documentUrl(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+  ) {
+    return successResponse(
+      await this.productsService.documentUrl(user.id, id, documentId),
+      'Document URL',
     );
   }
 

@@ -26,6 +26,7 @@ import {
 } from '../common/document-number.js';
 import { DocumentStateService } from '../common/document-state.service.js';
 import { assertFileSize, assertMime } from '../common/document-validation.js';
+import { PRODUCT_DOCUMENT_MIME_TYPES } from '../common/product-document.helpers.js';
 
 export type CreateDocumentInput = {
   organizationId?: string | null;
@@ -45,6 +46,8 @@ export type CreateDocumentInput = {
   purchaseOrderId?: string;
   customerProfileId?: string;
   sellerProfileId?: string;
+  /** When set, storage keys use products/{productId}/... (no seller identity). */
+  productId?: string;
   /**
    * When true, signed PUT URL is required (throws STORAGE_NOT_CONFIGURED).
    * When false/undefined, create succeeds without R2; uploadUrl only if configured.
@@ -130,7 +133,19 @@ export class DocumentsCoreService {
   }
 
   async create(input: CreateDocumentInput) {
-    assertMime(input.mimeType);
+    if (input.productId) {
+      if (
+        !(PRODUCT_DOCUMENT_MIME_TYPES as readonly string[]).includes(
+          input.mimeType,
+        )
+      ) {
+        throw new BadRequestException(
+          `Unsupported mime type. Allowed: ${PRODUCT_DOCUMENT_MIME_TYPES.join(', ')}`,
+        );
+      }
+    } else {
+      assertMime(input.mimeType);
+    }
     assertFileSize(input.fileSizeBytes, this.storage.getMaxDocumentSizeBytes());
 
     const documentId = randomUUID();
@@ -142,6 +157,7 @@ export class DocumentsCoreService {
         category: input.category,
         customerProfileId: input.customerProfileId ?? undefined,
         sellerProfileId: input.sellerProfileId ?? undefined,
+        productId: input.productId ?? undefined,
         paymentId: input.paymentId,
         dispatchId: input.dispatchId,
         deliveryId: input.deliveryId,
@@ -267,10 +283,22 @@ export class DocumentsCoreService {
     input: ReplaceDocumentInput,
     ownership?: OwnershipFilter,
   ) {
-    assertMime(input.mimeType);
+    const existing = await this.requireDocument(id, ownership);
+    if (existing.ownerType === EntityOwnerType.PRODUCT) {
+      if (
+        !(PRODUCT_DOCUMENT_MIME_TYPES as readonly string[]).includes(
+          input.mimeType,
+        )
+      ) {
+        throw new BadRequestException(
+          `Unsupported mime type. Allowed: ${PRODUCT_DOCUMENT_MIME_TYPES.join(', ')}`,
+        );
+      }
+    } else {
+      assertMime(input.mimeType);
+    }
     assertFileSize(input.fileSizeBytes, this.storage.getMaxDocumentSizeBytes());
 
-    const existing = await this.requireDocument(id, ownership);
     const nextVersion = existing.version + 1;
     const storageKey =
       input.storageKey ??
@@ -278,6 +306,11 @@ export class DocumentsCoreService {
         documentId: existing.id,
         fileName: input.fileName,
         category: existing.category,
+        documentVersion: nextVersion,
+        productId:
+          existing.ownerType === EntityOwnerType.PRODUCT
+            ? existing.ownerId
+            : undefined,
         customerProfileId:
           existing.ownerType === EntityOwnerType.CUSTOMER
             ? existing.ownerId

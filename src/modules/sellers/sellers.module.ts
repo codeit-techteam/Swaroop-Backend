@@ -23,6 +23,8 @@ import { PricingController } from './pricing/pricing.controller.js';
 import { PricingService } from './pricing/pricing.service.js';
 import { ProductsController } from './products/products.controller.js';
 import { ProductsService } from './products/products.service.js';
+import { ProductDocumentsController } from './products/product-documents.controller.js';
+import { ProductDocumentsService } from './products/product-documents.service.js';
 import { ProfileController } from './profile/profile.controller.js';
 import { ProfileService } from './profile/profile.service.js';
 import { PurchaseRequestsController } from './purchase-requests/purchase-requests.controller.js';
@@ -36,6 +38,7 @@ import { PurchaseRequestsService } from './purchase-requests/purchase-requests.s
     CompanyController,
     DocumentsController,
     ProductsController,
+    ProductDocumentsController,
     InventoryController,
     OffersController,
     PricingController,
@@ -51,6 +54,7 @@ import { PurchaseRequestsService } from './purchase-requests/purchase-requests.s
     CompanyService,
     DocumentsService,
     ProductsService,
+    ProductDocumentsService,
     InventoryService,
     OffersService,
     PricingService,
@@ -66,6 +70,7 @@ import { PurchaseRequestsService } from './purchase-requests/purchase-requests.s
     DocumentsService,
     DashboardService,
     ProductsService,
+    ProductDocumentsService,
     InventoryService,
     OffersService,
     PricingService,

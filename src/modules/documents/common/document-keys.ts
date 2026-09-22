@@ -69,12 +69,30 @@ export function buildPurchaseOrderDocumentKey(
   return `purchase-orders/${purchaseOrderId}/documents/${documentId}/${buildCollisionSafeLeaf(fileName, documentId)}`;
 }
 
+/**
+ * Product document keys never include seller identity.
+ * Path: products/{productId}/documents/{documentId}/version-{n}.{ext}
+ */
+export function buildProductDocumentKey(
+  productId: string,
+  documentId: string,
+  fileName: string,
+  version = 1,
+): string {
+  const ext =
+    sanitizeFileName(fileName).split('.').pop()?.toLowerCase() || 'bin';
+  const safeExt = /^[a-z0-9]{1,8}$/.test(ext) ? ext : 'bin';
+  return `products/${productId}/documents/${documentId}/version-${version}.${safeExt}`;
+}
+
 export type BuildStorageKeyInput = {
   documentId: string;
   fileName: string;
   category: DocumentCategory;
   customerProfileId?: string;
   sellerProfileId?: string;
+  productId?: string;
+  documentVersion?: number;
   paymentId?: string;
   dispatchId?: string;
   deliveryId?: string;
@@ -88,6 +106,14 @@ export type BuildStorageKeyInput = {
 export function buildStorageKey(input: BuildStorageKeyInput): string {
   const { documentId, fileName, category } = input;
 
+  if (input.productId) {
+    return buildProductDocumentKey(
+      input.productId,
+      documentId,
+      fileName,
+      input.documentVersion ?? 1,
+    );
+  }
   if (input.paymentId) {
     return buildPaymentProofKey(input.paymentId, documentId, fileName);
   }

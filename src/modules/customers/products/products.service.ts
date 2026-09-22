@@ -6,6 +6,7 @@ import {
   resolveSearch,
   skipTake,
 } from '../../master-data/common/pagination.js';
+import { ProductDocumentsQueryService } from '../../documents/services/product-documents-query.service.js';
 import {
   toBlindOffer,
   toBlindProduct,
@@ -24,6 +25,7 @@ export class ProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly customerContext: CustomerContextService,
+    private readonly productDocuments: ProductDocumentsQueryService,
   ) {}
 
   private async ctx(userId: string) {
@@ -95,7 +97,61 @@ export class ProductsService {
       include: productInclude,
     });
     if (!product) throw new NotFoundException('Product not found');
-    return toBlindProduct(product);
+    const blind = toBlindProduct(product);
+    const documents = await this.productDocuments.listCustomerVisible(
+      product.id,
+      product.offers?.[0]?.id ?? null,
+    );
+    return { ...blind, documents };
+  }
+
+  async listDocuments(userId: string, productId: string) {
+    await this.ctx(userId);
+    const product = await this.prisma.product.findFirst({
+      where: {
+        deletedAt: null,
+        status: ProductStatus.ACTIVE,
+        grade: customerGradeWhere,
+        OR: [
+          { id: productId },
+          { code: { equals: productId, mode: 'insensitive' } },
+        ],
+      },
+      include: {
+        offers: {
+          where: {
+            deletedAt: null,
+            status: 'ACTIVE',
+          },
+          take: 1,
+          select: { id: true },
+          orderBy: { basePrice: 'asc' },
+        },
+      },
+    });
+    if (!product) throw new NotFoundException('PRODUCT_NOT_FOUND');
+    return this.productDocuments.listCustomerVisible(
+      product.id,
+      product.offers?.[0]?.id ?? null,
+    );
+  }
+
+  async documentUrl(userId: string, productId: string, documentId: string) {
+    await this.ctx(userId);
+    const product = await this.prisma.product.findFirst({
+      where: {
+        deletedAt: null,
+        status: ProductStatus.ACTIVE,
+        grade: customerGradeWhere,
+        OR: [
+          { id: productId },
+          { code: { equals: productId, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('PRODUCT_NOT_FOUND');
+    return this.productDocuments.customerDownloadUrl(product.id, documentId);
   }
 
   async listOffers(
