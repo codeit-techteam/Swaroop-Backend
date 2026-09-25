@@ -67,6 +67,21 @@ export class DocumentsController {
     );
   }
 
+  @Post(':id/confirm')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Confirm R2 upload and submit document for admin review',
+  })
+  async confirm(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return successResponse(
+      await this.documentsService.submitForReview(user.id, id),
+      'Document submitted for admin review',
+    );
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get document' })
   async get(

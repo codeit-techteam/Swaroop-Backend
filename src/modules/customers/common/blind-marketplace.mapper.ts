@@ -19,11 +19,44 @@ export function anonymousSupplierRef(organizationId: string): string {
   return `SUP-${hash.slice(0, 8).toUpperCase()}`;
 }
 
+/** Blind-safe ETA when offer.deliveryTerms is missing. */
+export function estimateLeadTime(locationHint?: string | null): string {
+  const hint = (locationHint ?? '').toLowerCase();
+  if (
+    hint.includes('mumbai') ||
+    hint.includes('pune') ||
+    hint.includes('nashik') ||
+    hint.includes('gujarat') ||
+    hint.includes('ahmedabad')
+  ) {
+    return '2–3 Business Days';
+  }
+  if (
+    hint.includes('chennai') ||
+    hint.includes('kolkata') ||
+    hint.includes('howrah') ||
+    hint.includes('delhi') ||
+    hint.includes('hyderabad') ||
+    hint.includes('bangalore') ||
+    hint.includes('bengaluru')
+  ) {
+    return '3–5 Business Days';
+  }
+  return '4–6 Business Days';
+}
+
+function warehouseHintFromSpecs(technicalSpecs: unknown): string | null {
+  if (!technicalSpecs || typeof technicalSpecs !== 'object') return null;
+  const label = (technicalSpecs as Record<string, unknown>).warehouseLabel;
+  return typeof label === 'string' ? label : null;
+}
+
 export function toBlindProduct(product: {
   id: string;
   code: string;
   name: string;
   brand: string | null;
+  manufacturer?: string | null;
   description: string | null;
   technicalSpecs: unknown;
   mfi: string | null;
@@ -55,14 +88,23 @@ export function toBlindProduct(product: {
     currency?: string;
     deliveryTerms?: string | null;
     organizationId?: string;
+    priceTiers?: Array<{
+      minQty: unknown;
+      maxQty: unknown;
+      price: unknown;
+      currency?: string;
+      paymentMethod?: string | null;
+    }>;
   }>;
 }) {
   const offer = product.offers?.[0];
+  const warehouseHint = warehouseHintFromSpecs(product.technicalSpecs);
   return {
     id: product.id,
     code: product.code,
     name: product.name,
-    brand: product.brand,
+    brand: product.brand ?? product.manufacturer ?? null,
+    manufacturer: product.manufacturer ?? product.brand ?? null,
     description: product.description,
     technicalSpecs: product.technicalSpecs,
     mfi: product.mfi,
@@ -95,7 +137,15 @@ export function toBlindProduct(product: {
           unit: offer.unit ?? product.unit,
           moq: offer.moq,
           quantityAvailable: offer.quantity,
-          leadTime: offer.deliveryTerms ?? null,
+          leadTime:
+            offer.deliveryTerms?.trim() ||
+            estimateLeadTime(warehouseHint ?? product.countryOfOrigin),
+          priceTiers: (offer.priceTiers ?? []).map((t) => ({
+            minQty: t.minQty,
+            maxQty: t.maxQty,
+            price: t.price,
+            currency: t.currency ?? offer.currency ?? 'INR',
+          })),
         }
       : null,
     supplier: {
@@ -119,6 +169,7 @@ export function toBlindOffer(offer: {
   validUntil: Date | null;
   status: string;
   organizationId: string;
+  metadata?: unknown;
   product?: {
     id: string;
     code: string;
@@ -145,6 +196,18 @@ export function toBlindOffer(offer: {
     paymentMethod: string | null;
   }>;
 }) {
+  const metadata =
+    offer.metadata && typeof offer.metadata === 'object'
+      ? (offer.metadata as Record<string, unknown>)
+      : {};
+  const gstRaw = metadata.gstPercent;
+  const gstPercent =
+    typeof gstRaw === 'number'
+      ? gstRaw
+      : typeof gstRaw === 'string'
+        ? Number(gstRaw)
+        : undefined;
+
   return {
     id: offer.id,
     referenceNumber: offer.referenceNumber,
@@ -159,6 +222,8 @@ export function toBlindOffer(offer: {
     validFrom: offer.validFrom,
     validUntil: offer.validUntil,
     status: offer.status,
+    gstPercent:
+      gstPercent != null && Number.isFinite(gstPercent) ? gstPercent : 18,
     packaging: offer.product?.packaging ?? null,
     region:
       offer.warehouse?.state || offer.warehouse?.city

@@ -118,10 +118,37 @@ export class VehicleService {
     });
   }
 
-  async list(params: { organizationId?: string; skip: number; take: number }) {
+  async list(params: {
+    organizationId?: string;
+    skip: number;
+    take: number;
+    type?: VehicleType;
+    status?: VehicleOperationalStatus;
+    search?: string;
+  }) {
     const where: Prisma.VehicleWhereInput = {
       ...(params.organizationId
         ? { organizationId: params.organizationId }
+        : {}),
+      ...(params.type ? { type: params.type } : {}),
+      ...(params.status ? { status: params.status } : {}),
+      ...(params.search
+        ? {
+            OR: [
+              {
+                numberPlate: {
+                  contains: params.search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                transporterName: {
+                  contains: params.search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
         : {}),
     };
     const [items, total] = await Promise.all([

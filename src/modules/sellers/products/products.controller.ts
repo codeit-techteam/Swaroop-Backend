@@ -19,6 +19,7 @@ import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
+  CreateMarketplaceListingDto,
   CreateProductDto,
   CreateProductMediaDto,
   ProductQueryDto,
@@ -34,6 +35,37 @@ import { ProductsService } from './products.service.js';
 @Roles(RoleCode.SELLER)
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
+
+  @Post('listings')
+  @ApiOperation({
+    summary:
+      'Create marketplace listing (product + inventory + offer). Publish to make customer-visible.',
+  })
+  async createListing(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: CreateMarketplaceListingDto,
+  ) {
+    return successResponse(
+      await this.productsService.createListing(user.id, dto),
+      'Marketplace listing created',
+    );
+  }
+
+  @Patch('listings/:id')
+  @ApiOperation({
+    summary:
+      'Update marketplace listing (product + stock + price + MOQ + bulk tiers)',
+  })
+  async updateListing(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateMarketplaceListingDto,
+  ) {
+    return successResponse(
+      await this.productsService.updateListing(user.id, id, dto),
+      'Marketplace listing updated',
+    );
+  }
 
   @Post()
   @ApiOperation({ summary: 'Create seller product' })

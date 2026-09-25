@@ -18,10 +18,6 @@ import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
-  paginationMeta,
-  skipTake,
-} from '../../master-data/common/pagination.js';
-import {
   AssignVehicleDto,
   CreateDispatchDto,
   CreateDriverDto,
@@ -35,7 +31,15 @@ import {
   UpdateVehicleDto,
   UploadPodDto,
   UpsertEwayBillDto,
+  VehicleSlotAvailabilityQueryDto,
+  VehicleSlotListQueryDto,
+  VehicleSlotSummaryQueryDto,
 } from '../dto/logistics.dto.js';
+import {
+  paginationMeta,
+  resolveSearch,
+  skipTake,
+} from '../../master-data/common/pagination.js';
 import { LogisticsActorService } from '../services/logistics-actor.service.js';
 import { DispatchService } from '../services/dispatch.service.js';
 import { ShipmentService } from '../services/shipment.service.js';
@@ -76,6 +80,16 @@ export class SellerLogisticsController {
 
   // --- Dispatches ---
 
+  @Get('dispatches/summary')
+  @ApiOperation({ summary: 'Seller dispatch KPI counts for Dispatch tabs' })
+  async dispatchSummary(@CurrentUser() user: AuthenticatedUser) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.summary.forSellerDispatches(seller.organizationId),
+      'Dispatch summary',
+    );
+  }
+
   @Get('dispatches')
   @ApiOperation({ summary: 'List seller dispatches' })
   async listDispatches(
@@ -89,6 +103,8 @@ export class SellerLogisticsController {
       skip,
       take,
       status: query.dispatchStatus,
+      tab: query.tab,
+      search: resolveSearch(query),
     });
     return successResponse(
       items.map((d) => this.dispatches.toSellerView(d)),
@@ -128,6 +144,19 @@ export class SellerLogisticsController {
       this.dispatches.toSellerView(dispatch),
       'Dispatch retrieved',
     );
+  }
+
+  @Get('dispatches/:id/timeline')
+  @ApiOperation({ summary: 'Get seller dispatch timeline events' })
+  async getDispatchTimeline(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    const events = await this.dispatches.listTimeline(id, {
+      sellerOrgId: seller.organizationId,
+    });
+    return successResponse(events, 'Dispatch timeline retrieved');
   }
 
   @Post('dispatches/:id/assign-vehicle')
@@ -449,6 +478,9 @@ export class SellerLogisticsController {
       organizationId: seller.organizationId,
       skip,
       take,
+      type: query.vehicleType,
+      status: query.vehicleStatus,
+      search: resolveSearch(query),
     });
     return successResponse(
       items.map((v) => this.vehicles.toSellerView(v)),
@@ -562,11 +594,115 @@ export class SellerLogisticsController {
 
   // --- Vehicle slots ---
 
+  @Get('vehicle-slots/summary')
+  @ApiOperation({ summary: 'Seller vehicle slot KPI summary for a date' })
+  async slotSummary(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: VehicleSlotSummaryQueryDto,
+  ) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.slots.summary(seller.organizationId, query.date),
+      'Vehicle slot summary',
+    );
+  }
+
+  @Get('vehicle-slots/availability')
+  @ApiOperation({ summary: 'Loading bay / time-window availability' })
+  async slotAvailability(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: VehicleSlotAvailabilityQueryDto,
+  ) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.slots.availability({
+        sellerOrgId: seller.organizationId,
+        warehouseId: query.warehouseId,
+        date: query.date,
+        loadingBayId: query.loadingBayId,
+        vehicleId: query.vehicleId,
+        vehicleType: query.vehicleType,
+      }),
+      'Vehicle slot availability',
+    );
+  }
+
+  @Get('vehicle-slots/export')
+  @ApiOperation({ summary: 'Export seller vehicle slots (JSON rows for CSV)' })
+  async exportSlots(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: VehicleSlotListQueryDto,
+  ) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    const { items } = await this.slots.list({
+      sellerOrgId: seller.organizationId,
+      skip: 0,
+      take: 5000,
+      status: query.status ?? query.slotStatus,
+      warehouseId: query.warehouseId,
+      date: query.date,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      vehicleType: query.vehicleType,
+      carrier: query.carrier,
+      orderId: query.orderId,
+      dispatchId: query.dispatchId,
+      search: resolveSearch(query),
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
+    });
+    return successResponse(
+      items.map((s) => this.slots.toView(s)),
+      'Vehicle slots export',
+    );
+  }
+
+  @Get('logistics/warehouses')
+  @ApiOperation({ summary: 'List warehouses available for logistics booking' })
+  async listLogisticsWarehouses(@CurrentUser() user: AuthenticatedUser) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.slots.listWarehouses(seller.organizationId),
+      'Warehouses retrieved',
+    );
+  }
+
+  @Get('logistics/loading-bays')
+  @ApiOperation({ summary: 'List loading bays for a warehouse' })
+  async listLoadingBays(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('warehouseId') warehouseId: string,
+  ) {
+    await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.slots.listLoadingBays(warehouseId),
+      'Loading bays retrieved',
+    );
+  }
+
+  @Get('vehicle-slots/eligible-dispatches')
+  @ApiOperation({
+    summary: 'Dispatches eligible for vehicle slot booking',
+  })
+  async eligibleDispatches(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('search') search?: string,
+  ) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.slots.listEligibleDispatches(
+        seller.organizationId,
+        search,
+      ),
+      'Eligible dispatches retrieved',
+    );
+  }
+
   @Get('vehicle-slots')
   @ApiOperation({ summary: 'List seller vehicle slots' })
   async listSlots(
     @CurrentUser() user: AuthenticatedUser,
-    @Query() query: LogisticsListQueryDto,
+    @Query() query: VehicleSlotListQueryDto,
   ) {
     const seller = await this.actors.requireSellerOrg(user.id);
     const { skip, take, page, limit } = skipTake(query.page, query.limit);
@@ -574,7 +710,18 @@ export class SellerLogisticsController {
       sellerOrgId: seller.organizationId,
       skip,
       take,
-      status: query.slotStatus,
+      status: query.status ?? query.slotStatus,
+      warehouseId: query.warehouseId,
+      date: query.date,
+      dateFrom: query.dateFrom,
+      dateTo: query.dateTo,
+      vehicleType: query.vehicleType,
+      carrier: query.carrier,
+      orderId: query.orderId,
+      dispatchId: query.dispatchId,
+      search: resolveSearch(query),
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
     });
     return successResponse(
       items.map((s) => this.slots.toView(s)),
@@ -598,6 +745,7 @@ export class SellerLogisticsController {
     const slot = await this.slots.create(body, {
       userId: user.id,
       role: 'SELLER',
+      sellerOrgId: seller.organizationId,
     });
     return successResponse(this.slots.toView(slot), 'Vehicle slot requested');
   }

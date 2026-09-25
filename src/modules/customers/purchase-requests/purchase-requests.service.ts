@@ -18,6 +18,7 @@ import {
   PrEventsService,
   ProcurementException,
   PrStateService,
+  PurchaseRequestMatchingService,
 } from '../../procurement/index.js';
 import {
   paginationMeta,
@@ -115,6 +116,7 @@ export class PurchaseRequestsService {
     private readonly negotiationService: NegotiationService,
     private readonly commercialAcceptance: CommercialAcceptanceService,
     private readonly creditEligibility: CreditEligibilityService,
+    private readonly matching: PurchaseRequestMatchingService,
   ) {}
 
   private async ctx(userId: string) {
@@ -162,15 +164,29 @@ export class PurchaseRequestsService {
     if (!PENDING_STATUSES.has(pr.status) || !this.isExpired(pr)) {
       return pr;
     }
-    const updated = await this.prisma.purchaseRequest.update({
-      where: { id: pr.id },
+    const result = await this.prisma.purchaseRequest.updateMany({
+      where: {
+        id: pr.id,
+        status: { in: [...PENDING_STATUSES] },
+      },
       data: { status: PurchaseRequestStatus.EXPIRED },
+    });
+    if (result.count === 0) {
+      const fresh = await this.prisma.purchaseRequest.findFirst({
+        where: { id: pr.id },
+        include: prInclude,
+      });
+      return fresh ?? pr;
+    }
+    const updated = await this.prisma.purchaseRequest.findFirstOrThrow({
+      where: { id: pr.id },
       include: prInclude,
     });
     await this.prEvents.record(this.prisma, {
       purchaseRequestId: pr.id,
       eventType: 'PURCHASE_REQUEST_EXPIRED',
       actorRole: NegotiationActorRole.SYSTEM,
+      metadata: { source: 'lazy_read_path' },
     });
     return updated;
   }
@@ -417,6 +433,21 @@ export class PurchaseRequestsService {
           },
         });
 
+        // Create seller match row(s) for blind inbox visibility.
+        const primaryOfferId = rows[0]?.item.offerId;
+        const primaryQty = Number(rows[0]?.item.quantity ?? 0);
+        await this.matching.matchPurchaseRequest({
+          purchaseRequestId: pr.id,
+          explicitOfferId: primaryOfferId,
+          productId: rows[0]?.item.productId,
+          gradeId: rows[0]?.item.gradeId,
+          quantity: primaryQty,
+          responseDeadline: deadline,
+          multiSeller: false,
+          tx,
+          actorUserId: userId,
+        });
+
         prs.push(pr);
       }
 
@@ -575,14 +606,21 @@ export class PurchaseRequestsService {
           matchStrategy: quote.matchStrategy,
         },
       });
-      await this.prEvents.record(tx, {
+
+      // Explicit offer → that seller only; marketplace strategies fan out.
+      const multiSeller =
+        quote.matchStrategy === 'PRODUCT_BEST_PRICE' ||
+        quote.matchStrategy === 'GRADE_BEST_PRICE';
+      await this.matching.matchPurchaseRequest({
         purchaseRequestId: pr.id,
-        eventType: 'SENT_TO_SELLER',
-        actorRole: NegotiationActorRole.SYSTEM,
-        metadata: {
-          sellerOrgId: quote.sellerOrgId,
-          responseDeadline: deadline.toISOString(),
-        },
+        explicitOfferId: multiSeller ? null : quote.offerId,
+        productId: match.offer.productId,
+        gradeId: match.offer.gradeId,
+        quantity: Number(amounts.quantity),
+        responseDeadline: deadline,
+        multiSeller,
+        tx,
+        actorUserId: userId,
       });
 
       return pr;

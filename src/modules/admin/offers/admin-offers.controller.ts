@@ -37,10 +37,28 @@ export class AdminOffersController {
     return successResponse(items, 'Offers retrieved', meta);
   }
 
+  @Get('summary')
+  @ApiOperation({ summary: 'Platform-wide offer KPI summary' })
+  async summary() {
+    return successResponse(
+      await this.offers.summary(),
+      'Admin offer summary retrieved',
+    );
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Offer detail' })
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return successResponse(await this.offers.findOne(id), 'Offer retrieved');
+  }
+
+  @Get(':id/history')
+  @ApiOperation({ summary: 'Offer audit history' })
+  async history(@Param('id', ParseUUIDPipe) id: string) {
+    return successResponse(
+      await this.offers.history(id),
+      'Offer history retrieved',
+    );
   }
 
   @Post(':id/approve')

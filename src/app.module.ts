@@ -33,6 +33,7 @@ import { SettlementsModule } from './modules/settlements/index.js';
 import { LogisticsModule } from './modules/logistics/index.js';
 import { CmsModule } from './modules/cms/index.js';
 import { ShipmentsModule } from './modules/shipments/index.js';
+import { SupportModule } from './modules/support/index.js';
 import { UsersModule } from './modules/users/index.js';
 import { StorageModule } from './storage/storage.module.js';
 
@@ -118,6 +119,7 @@ import { StorageModule } from './storage/storage.module.js';
     DocumentsModule,
     NotificationsModule,
     SettlementsModule,
+    SupportModule,
     AuditModule,
   ],
   providers: [

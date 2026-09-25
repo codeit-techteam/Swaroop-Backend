@@ -52,6 +52,8 @@ export class CloudflareR2Provider implements ObjectStorageProvider {
     this.client = new S3Client({
       region: storage?.region || 'auto',
       endpoint: storage!.endpoint,
+      // R2 does not support virtual-hosted-style DNS for all buckets.
+      forcePathStyle: true,
       credentials: {
         accessKeyId: storage!.accessKeyId,
         secretAccessKey: storage!.secretAccessKey,

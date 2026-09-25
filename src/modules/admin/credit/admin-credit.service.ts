@@ -26,9 +26,15 @@ import { generateUniqueCreditRef } from '../../payments/common/credit-number.js'
 import { cmp, toDecimal } from '../../payments/common/money.util.js';
 import { PLATFORM_CREDIT_METHODS } from '../../payments/common/platform-credit.js';
 import {
+  ACTIONABLE_CREDIT_APPLICATION_STATUSES,
+  CREDIT_APPLICATION_EVENT,
+  TERMINAL_CREDIT_APPLICATION_STATUSES,
+} from '../../payments/common/credit-workflow.js';
+import {
   CreditLedgerService,
   utilizationPercentage,
 } from '../../payments/services/credit-ledger.service.js';
+import { CreditTimelineService } from '../../payments/services/credit-timeline.service.js';
 import { DocumentsCoreService } from '../../documents/services/documents-core.service.js';
 import { NotificationService } from '../../notifications/notification.service.js';
 import { AdminAuditService } from '../common/admin-audit.service.js';
@@ -38,9 +44,14 @@ import type {
   AdminCreditAdjustLimitDto,
   AdminCreditApplicationsQueryDto,
   AdminCreditApproveDto,
+  AdminCreditArrangementDto,
   AdminCreditAuditQueryDto,
+  AdminCreditDocumentRejectDto,
+  AdminCreditDocumentVerifyDto,
   AdminCreditDocumentsQueryDto,
+  AdminCreditInsuranceReviewDto,
   AdminCreditInsuranceUpdateDto,
+  AdminCreditPartialApproveDto,
   AdminCreditRejectDto,
   AdminCreditRepaymentsQueryDto,
   AdminCreditRequestDocumentDto,
@@ -70,9 +81,11 @@ const CREDIT_DOC_CATEGORIES: DocumentCategory[] = [
 
 const CREDIT_METHODS = PLATFORM_CREDIT_METHODS;
 
-const OPEN_APPLICATION: CreditApplicationStatus[] = [
+const OPEN_APPLICATION = ACTIONABLE_CREDIT_APPLICATION_STATUSES;
+
+const START_REVIEW_FROM: CreditApplicationStatus[] = [
   CreditApplicationStatus.PENDING,
-  CreditApplicationStatus.UNDER_REVIEW,
+  CreditApplicationStatus.DOCUMENTS_UNDER_REVIEW,
   CreditApplicationStatus.DOCUMENTS_REQUIRED,
 ];
 
@@ -93,14 +106,11 @@ export class AdminCreditService {
     private readonly documents: DocumentsCoreService,
     private readonly notifications: NotificationService,
     private readonly storage: StorageService,
+    private readonly timeline: CreditTimelineService,
   ) {}
 
   async summary() {
-    const actionable: CreditApplicationStatus[] = [
-      CreditApplicationStatus.PENDING,
-      CreditApplicationStatus.UNDER_REVIEW,
-      CreditApplicationStatus.DOCUMENTS_REQUIRED,
-    ];
+    const actionable = ACTIONABLE_CREDIT_APPLICATION_STATUSES;
 
     const [
       totalCustomers,
@@ -284,12 +294,17 @@ export class AdminCreditService {
     });
     if (!row) throw new NotFoundException('Credit application not found');
 
-    const [documents, audit] = await Promise.all([
+    const [documents, audit, timeline] = await Promise.all([
       this.prisma.document.findMany({
         where: {
           deletedAt: null,
-          organizationId: row.customerProfile.organization.id,
-          category: { in: CREDIT_DOC_CATEGORIES },
+          OR: [
+            {
+              organizationId: row.customerProfile.organization.id,
+              category: { in: CREDIT_DOC_CATEGORIES },
+            },
+            { ownerType: EntityOwnerType.CREDIT, ownerId: id },
+          ],
         },
         orderBy: { createdAt: 'desc' },
         take: 50,
@@ -312,12 +327,27 @@ export class AdminCreditService {
         take: 50,
         include: { actor: { select: ADMIN_SELECT } },
       }),
+      this.timeline.list(id),
     ]);
 
     return {
       ...mapApplication(row, { documentCount: documents.length }),
+      submittedAt: row.submittedAt,
+      approvedTenureDays: row.approvedTenureDays,
+      customerMessage: row.customerMessage,
+      insuranceStatus: row.insuranceStatus,
+      arrangementStatus: row.arrangementStatus,
+      insurancePartner: row.insurancePartner,
+      insuranceReference: row.insuranceReference,
+      insuredAmount:
+        row.insuredAmount != null
+          ? toDecimal(row.insuredAmount).toFixed(2)
+          : null,
+      effectiveAt: row.effectiveAt,
+      expiresAt: row.expiresAt,
       documents: documents.map((doc) => mapDocument(doc)),
       audit: audit.map((item) => mapAuditEvent(item)),
+      timeline,
       storage: {
         configured: this.storage.isConfigured(),
         pending: !this.storage.isConfigured(),
@@ -325,12 +355,14 @@ export class AdminCreditService {
     };
   }
 
+  async getTimeline(id: string) {
+    await this.requireApplication(id);
+    return this.timeline.list(id);
+  }
+
   async startReview(id: string, actorUserId: string) {
     const application = await this.requireApplication(id);
-    if (
-      application.status !== CreditApplicationStatus.PENDING &&
-      application.status !== CreditApplicationStatus.DOCUMENTS_REQUIRED
-    ) {
+    if (!START_REVIEW_FROM.includes(application.status)) {
       throw new BadRequestException(
         `Cannot start review from ${application.status}`,
       );
@@ -366,13 +398,22 @@ export class AdminCreditService {
     });
 
     await this.audit.log({
-      action: 'CREDIT_REVIEW_STARTED',
+      action: CREDIT_APPLICATION_EVENT.REVIEW_STARTED,
       actorUserId,
       organizationId: application.customerProfile.organizationId,
       entityType: EntityOwnerType.CREDIT,
       entityId: id,
       previousData: { status: application.status },
       newData: { status: CreditApplicationStatus.UNDER_REVIEW },
+    });
+
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.REVIEW_STARTED,
+      description: 'Credit review started',
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
     });
 
     return this.getApplication(updated.id);
@@ -397,12 +438,23 @@ export class AdminCreditService {
           status: CreditApplicationStatus.DOCUMENTS_REQUIRED,
           assignedAdminId: actorUserId,
           notes: dto.message ?? application.notes,
+          customerMessage: dto.message ?? application.customerMessage,
         },
       });
       await tx.customerProfile.update({
         where: { id: application.customerProfileId },
         data: { creditStatus: CreditStatus.DOCUMENTS_REQUIRED },
       });
+    });
+
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.ADDITIONAL_DOCUMENTS_REQUESTED,
+      description: dto.message?.trim() || 'Additional documents requested',
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
+      metadata: { documentTypes: dto.documentTypes ?? [] },
     });
 
     await this.audit.log({
@@ -435,17 +487,37 @@ export class AdminCreditService {
   }
 
   async approve(id: string, actorUserId: string, dto: AdminCreditApproveDto) {
+    return this.decideApproval(id, actorUserId, dto, false);
+  }
+
+  async partialApprove(
+    id: string,
+    actorUserId: string,
+    dto: AdminCreditPartialApproveDto,
+  ) {
+    return this.decideApproval(id, actorUserId, dto, true);
+  }
+
+  private async decideApproval(
+    id: string,
+    actorUserId: string,
+    dto: AdminCreditApproveDto,
+    partial: boolean,
+  ) {
     const application = await this.requireApplication(id);
-    if (
-      application.status === CreditApplicationStatus.APPROVED ||
-      application.status === CreditApplicationStatus.CANCELLED
-    ) {
+    if (TERMINAL_CREDIT_APPLICATION_STATUSES.includes(application.status)) {
       throw new BadRequestException(
         `Cannot approve application in ${application.status}`,
       );
     }
 
     const approvedLimit = toDecimal(dto.approvedLimit);
+    if (approvedLimit.lessThanOrEqualTo(0)) {
+      throw new BadRequestException('Approved limit must be greater than zero');
+    }
+    const nextStatus = partial
+      ? CreditApplicationStatus.PARTIALLY_APPROVED
+      : CreditApplicationStatus.APPROVED;
     const termDays =
       dto.creditTermDays ?? application.requestedTenureDays ?? 30;
 
@@ -492,12 +564,17 @@ export class AdminCreditService {
       await tx.creditApplication.update({
         where: { id },
         data: {
-          status: CreditApplicationStatus.APPROVED,
+          status: nextStatus,
           creditProfileId: profile.id,
           assignedAdminId: actorUserId,
           decidedAt: new Date(),
           decisionReason: dto.reason,
+          customerMessage: dto.customerMessage ?? application.customerMessage,
           approvedLimit,
+          approvedTenureDays: termDays,
+          effectiveAt: new Date(),
+          expiresAt: dto.reviewAt ? new Date(dto.reviewAt) : undefined,
+          arrangementStatus: 'COMPLETED',
         },
       });
       await tx.customerProfile.update({
@@ -522,14 +599,37 @@ export class AdminCreditService {
     });
 
     await this.audit.log({
-      action: 'CREDIT_APPLICATION_APPROVED',
+      action: partial
+        ? 'CREDIT_APPLICATION_PARTIALLY_APPROVED'
+        : 'CREDIT_APPLICATION_APPROVED',
       actorUserId,
       organizationId: application.customerProfile.organizationId,
       entityType: EntityOwnerType.CREDIT,
       entityId: id,
       previousData: { status: application.status },
       newData: {
-        status: CreditApplicationStatus.APPROVED,
+        status: nextStatus,
+        approvedLimit: approvedLimit.toFixed(2),
+        creditTermDays: termDays,
+      },
+    });
+
+    const customerBody =
+      dto.customerMessage?.trim() ||
+      (partial
+        ? `A partial credit limit of ${approvedLimit.toFixed(2)} has been approved.`
+        : `Your credit limit of ${approvedLimit.toFixed(2)} has been approved.`);
+
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: partial
+        ? CREDIT_APPLICATION_EVENT.PARTIALLY_APPROVED
+        : CREDIT_APPLICATION_EVENT.APPROVED,
+      description: customerBody,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
+      metadata: {
         approvedLimit: approvedLimit.toFixed(2),
         creditTermDays: termDays,
       },
@@ -538,8 +638,10 @@ export class AdminCreditService {
     await this.notifications.create({
       userId: application.customerProfile.userId,
       organizationId: application.customerProfile.organizationId,
-      title: 'PetroTrade credit approved',
-      body: `Your credit limit of ${approvedLimit.toFixed(2)} has been approved.`,
+      title: partial
+        ? 'PetroTrade credit partially approved'
+        : 'PetroTrade credit approved',
+      body: customerBody,
       entityType: EntityOwnerType.CREDIT,
       entityId: id,
     });
@@ -549,14 +651,16 @@ export class AdminCreditService {
 
   async reject(id: string, actorUserId: string, dto: AdminCreditRejectDto) {
     const application = await this.requireApplication(id);
-    if (
-      application.status === CreditApplicationStatus.APPROVED ||
-      application.status === CreditApplicationStatus.CANCELLED
-    ) {
+    if (TERMINAL_CREDIT_APPLICATION_STATUSES.includes(application.status)) {
       throw new BadRequestException(
         `Cannot reject application in ${application.status}`,
       );
     }
+    const reason = dto.reason?.trim();
+    if (!reason) {
+      throw new BadRequestException('Rejection reason is required');
+    }
+    const customerMessage = dto.customerMessage?.trim() || reason;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.creditApplication.update({
@@ -565,7 +669,8 @@ export class AdminCreditService {
           status: CreditApplicationStatus.REJECTED,
           assignedAdminId: actorUserId,
           decidedAt: new Date(),
-          decisionReason: dto.reason,
+          decisionReason: reason,
+          customerMessage,
         },
       });
       await tx.customerProfile.update({
@@ -592,19 +697,308 @@ export class AdminCreditService {
       entityType: EntityOwnerType.CREDIT,
       entityId: id,
       previousData: { status: application.status },
-      newData: { status: CreditApplicationStatus.REJECTED, reason: dto.reason },
+      newData: { status: CreditApplicationStatus.REJECTED, reason },
+    });
+
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.REJECTED,
+      description: customerMessage,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
     });
 
     await this.notifications.create({
       userId: application.customerProfile.userId,
       organizationId: application.customerProfile.organizationId,
       title: 'Credit application rejected',
-      body: dto.reason,
+      body: customerMessage,
       entityType: EntityOwnerType.CREDIT,
       entityId: id,
     });
 
     return this.getApplication(id);
+  }
+
+  async sendInsuranceReview(
+    id: string,
+    actorUserId: string,
+    dto: AdminCreditInsuranceReviewDto,
+  ) {
+    const application = await this.requireApplication(id);
+    if (!OPEN_APPLICATION.includes(application.status)) {
+      throw new BadRequestException(
+        `Cannot send ${application.status} application to insurance review`,
+      );
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.creditApplication.update({
+        where: { id },
+        data: {
+          status: CreditApplicationStatus.INSURANCE_REVIEW,
+          assignedAdminId: actorUserId,
+          insuranceStatus: 'IN_REVIEW',
+          insurancePartner:
+            dto.insurancePartner ?? application.insurancePartner,
+          insuranceReference:
+            dto.insuranceReference ?? application.insuranceReference,
+          insuredAmount:
+            dto.insuredAmount != null
+              ? toDecimal(dto.insuredAmount)
+              : undefined,
+          customerMessage: dto.customerMessage ?? application.customerMessage,
+          notes: dto.notes ?? application.notes,
+        },
+      });
+      await tx.customerProfile.update({
+        where: { id: application.customerProfileId },
+        data: { creditStatus: CreditStatus.UNDER_REVIEW },
+      });
+    });
+
+    await this.audit.log({
+      action: CREDIT_APPLICATION_EVENT.INSURANCE_REVIEW_STARTED,
+      actorUserId,
+      organizationId: application.customerProfile.organizationId,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+      previousData: { status: application.status },
+      newData: {
+        status: CreditApplicationStatus.INSURANCE_REVIEW,
+        insurancePartner: dto.insurancePartner ?? null,
+        insuranceReference: dto.insuranceReference ?? null,
+      },
+    });
+
+    const customerBody =
+      dto.customerMessage?.trim() ||
+      'Your application is being reviewed by our credit insurance partner.';
+
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.INSURANCE_REVIEW_STARTED,
+      description: customerBody,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
+    });
+
+    await this.notifications.create({
+      userId: application.customerProfile.userId,
+      organizationId: application.customerProfile.organizationId,
+      title: 'Credit application update',
+      body: customerBody,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+    });
+
+    return this.getApplication(id);
+  }
+
+  async markArrangementPending(
+    id: string,
+    actorUserId: string,
+    dto: AdminCreditArrangementDto,
+  ) {
+    const application = await this.requireApplication(id);
+    if (!OPEN_APPLICATION.includes(application.status)) {
+      throw new BadRequestException(
+        `Cannot move ${application.status} application to credit arrangement`,
+      );
+    }
+
+    const insuredAmount =
+      dto.insuredAmount != null ? toDecimal(dto.insuredAmount) : undefined;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.creditApplication.update({
+        where: { id },
+        data: {
+          status: CreditApplicationStatus.CREDIT_ARRANGEMENT_PENDING,
+          assignedAdminId: actorUserId,
+          arrangementStatus: 'IN_PROGRESS',
+          insuranceStatus:
+            dto.insuranceReference || dto.insurancePartner
+              ? 'COMPLETED'
+              : (application.insuranceStatus ?? 'NOT_STARTED'),
+          insurancePartner:
+            dto.insurancePartner ?? application.insurancePartner,
+          insuranceReference:
+            dto.insuranceReference ?? application.insuranceReference,
+          insuredAmount,
+          customerMessage: dto.customerMessage ?? application.customerMessage,
+          notes: dto.notes ?? application.notes,
+        },
+      });
+
+      const creditProfile = await tx.customerCreditProfile.findUnique({
+        where: { customerProfileId: application.customerProfileId },
+        select: { id: true },
+      });
+      if (creditProfile && (dto.insurancePartner || dto.insuranceReference)) {
+        await tx.creditInsurance.upsert({
+          where: { creditProfileId: creditProfile.id },
+          update: {
+            providerName: dto.insurancePartner,
+            policyNumber: dto.insuranceReference,
+            coverageAmount: insuredAmount,
+            status: CreditInsuranceStatus.PENDING,
+            notes: dto.notes,
+          },
+          create: {
+            creditProfileId: creditProfile.id,
+            customerProfileId: application.customerProfileId,
+            providerName: dto.insurancePartner,
+            policyNumber: dto.insuranceReference,
+            coverageAmount: insuredAmount,
+            status: CreditInsuranceStatus.PENDING,
+            claimStatus: CreditInsuranceClaimStatus.NONE,
+            notes: dto.notes,
+          },
+        });
+      }
+    });
+
+    await this.audit.log({
+      action: CREDIT_APPLICATION_EVENT.ARRANGEMENT_PENDING,
+      actorUserId,
+      organizationId: application.customerProfile.organizationId,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+      previousData: { status: application.status },
+      newData: { status: CreditApplicationStatus.CREDIT_ARRANGEMENT_PENDING },
+    });
+
+    const customerBody =
+      dto.customerMessage?.trim() ||
+      'Your credit arrangement is being finalised.';
+
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.ARRANGEMENT_PENDING,
+      description: customerBody,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
+    });
+
+    await this.notifications.create({
+      userId: application.customerProfile.userId,
+      organizationId: application.customerProfile.organizationId,
+      title: 'Credit application update',
+      body: customerBody,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+    });
+
+    return this.getApplication(id);
+  }
+
+  async verifyApplicationDocument(
+    id: string,
+    documentId: string,
+    actorUserId: string,
+    dto: AdminCreditDocumentVerifyDto,
+  ) {
+    const application = await this.requireApplication(id);
+    await this.requireApplicationDocument(application, documentId);
+    const result = await this.documents.approve(documentId, actorUserId, {
+      notes: dto.notes,
+    });
+
+    await this.audit.log({
+      action: CREDIT_APPLICATION_EVENT.DOCUMENT_VERIFIED,
+      actorUserId,
+      organizationId: application.customerProfile.organizationId,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+      newData: { documentId },
+    });
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.DOCUMENT_VERIFIED,
+      description: `${result.fileName} verified`,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
+      metadata: { documentId },
+    });
+
+    return result;
+  }
+
+  async rejectApplicationDocument(
+    id: string,
+    documentId: string,
+    actorUserId: string,
+    dto: AdminCreditDocumentRejectDto,
+  ) {
+    const application = await this.requireApplication(id);
+    await this.requireApplicationDocument(application, documentId);
+    const reason = dto.reason?.trim();
+    if (!reason) {
+      throw new BadRequestException('Rejection reason is required');
+    }
+    const result = await this.documents.reject(documentId, actorUserId, {
+      reason,
+    });
+
+    await this.audit.log({
+      action: CREDIT_APPLICATION_EVENT.DOCUMENT_REJECTED,
+      actorUserId,
+      organizationId: application.customerProfile.organizationId,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+      newData: { documentId, reason },
+    });
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.DOCUMENT_REJECTED,
+      description: `${result.fileName} rejected: ${reason}`,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
+      metadata: { documentId, reason },
+    });
+
+    await this.notifications.create({
+      userId: application.customerProfile.userId,
+      organizationId: application.customerProfile.organizationId,
+      title: 'Credit document rejected',
+      body: `${result.fileName} was rejected: ${reason}. Please upload a replacement.`,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+    });
+
+    return result;
+  }
+
+  private async requireApplicationDocument(
+    application: { id: string; customerProfile: { organizationId: string } },
+    documentId: string,
+  ) {
+    const doc = await this.prisma.document.findFirst({
+      where: {
+        id: documentId,
+        deletedAt: null,
+        OR: [
+          { ownerType: EntityOwnerType.CREDIT, ownerId: application.id },
+          {
+            organizationId: application.customerProfile.organizationId,
+            category: { in: CREDIT_DOC_CATEGORIES },
+          },
+        ],
+      },
+      select: { id: true },
+    });
+    if (!doc) {
+      throw new NotFoundException(
+        'Document not found for this credit application',
+      );
+    }
+    return doc;
   }
 
   async listAccounts(query: AdminCreditAccountsQueryDto) {

@@ -23,6 +23,7 @@ import type {
   UpdateCmsBannerDto,
 } from './cms.dto.js';
 import {
+  asMetadata,
   publicPlatformsFor,
   toPublicBanner,
   type CmsAudience,
@@ -240,9 +241,18 @@ export class CmsService {
     ]);
 
     const publicItems = await Promise.all(
-      items.map(async (item) =>
-        toPublicBanner(item, await this.storage.resolveMediaUrl(item.mediaKey)),
-      ),
+      items.map(async (item) => {
+        const meta = asMetadata(item.metadata);
+        const mobileKey =
+          typeof meta.mobileImage === 'string' ? meta.mobileImage : null;
+        const [mediaUrl, mobileMediaUrl] = await Promise.all([
+          this.storage.resolveMediaUrl(item.mediaKey),
+          mobileKey && mobileKey !== item.mediaKey
+            ? this.storage.resolveMediaUrl(mobileKey)
+            : Promise.resolve(null),
+        ]);
+        return toPublicBanner(item, mediaUrl, mobileMediaUrl);
+      }),
     );
 
     return { items: publicItems, meta: paginationMeta(page, limit, total) };

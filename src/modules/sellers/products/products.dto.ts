@@ -2,8 +2,10 @@ import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -172,3 +174,105 @@ export class UpdateProductStatusDto {
 }
 
 export class CreateProductMediaDto extends ProductMediaInputDto {}
+
+export class ListingPriceTierDto {
+  @ApiProperty({ example: 1 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  minQty!: number;
+
+  @ApiPropertyOptional({ example: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  maxQty?: number | null;
+
+  @ApiProperty({ example: 94500 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  price!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  label?: string;
+}
+
+/**
+ * Production marketplace listing: product + inventory + offer in one call.
+ * Used by Seller Web "Add Product / Grade".
+ */
+export class CreateMarketplaceListingDto extends CreateProductDto {
+  @ApiPropertyOptional({ description: 'Application / end-use' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  application?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  polymerType?: string;
+
+  @ApiPropertyOptional({ description: 'Warehouse display name (resolved or created)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  warehouseName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @ApiProperty({ example: 850, description: 'Available stock quantity' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  availableStock!: number;
+
+  @ApiPropertyOptional({ example: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  reservedStock?: number;
+
+  @ApiProperty({ example: 12 })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  moq!: number;
+
+  @ApiProperty({ example: 94500, description: 'Selling price ₹/MT' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  sellingPrice!: number;
+
+  @ApiPropertyOptional({ type: [ListingPriceTierDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ListingPriceTierDto)
+  priceTiers?: ListingPriceTierDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+
+  @ApiPropertyOptional({
+    default: true,
+    description: 'Publish + activate product/offer for marketplace visibility',
+  })
+  @IsOptional()
+  @IsBoolean()
+  publishToMarketplace?: boolean;
+}

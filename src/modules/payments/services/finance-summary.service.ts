@@ -59,23 +59,29 @@ export class FinanceSummaryService {
   }
 
   async forSeller(sellerOrgId: string) {
-    const [piCounts, paymentCounts, settlementCounts] = await Promise.all([
-      this.prisma.proformaInvoice.groupBy({
-        by: ['status'],
-        where: { sellerOrgId, deletedAt: null },
-        _count: { _all: true },
-      }),
-      this.prisma.payment.groupBy({
-        by: ['status'],
-        where: { sellerOrgId },
-        _count: { _all: true },
-      }),
-      this.prisma.settlement.groupBy({
-        by: ['status'],
-        where: { organizationId: sellerOrgId },
-        _count: { _all: true },
-      }),
-    ]);
+    const [piCounts, paymentCounts, settlementCounts, settlementAmounts] =
+      await Promise.all([
+        this.prisma.proformaInvoice.groupBy({
+          by: ['status'],
+          where: { sellerOrgId, deletedAt: null },
+          _count: { _all: true },
+        }),
+        this.prisma.payment.groupBy({
+          by: ['status'],
+          where: { sellerOrgId },
+          _count: { _all: true },
+        }),
+        this.prisma.settlement.groupBy({
+          by: ['status'],
+          where: { organizationId: sellerOrgId },
+          _count: { _all: true },
+          _sum: { netAmount: true, grossAmount: true },
+        }),
+        this.prisma.settlement.aggregate({
+          where: { organizationId: sellerOrgId },
+          _sum: { grossAmount: true, netAmount: true },
+        }),
+      ]);
 
     const verifiedPaid = await this.prisma.payment.aggregate({
       where: {
@@ -86,6 +92,25 @@ export class FinanceSummaryService {
       },
       _sum: { paidAmount: true },
     });
+
+    const outstandingStatuses: SettlementStatus[] = [
+      SettlementStatus.PENDING,
+      SettlementStatus.PROCESSING,
+      SettlementStatus.READY,
+      SettlementStatus.ON_HOLD,
+    ];
+    const settledAmount = settlementCounts
+      .filter((r) => r.status === SettlementStatus.RELEASED)
+      .reduce(
+        (sum, r) => sum.plus(toDecimal(r._sum.netAmount)),
+        toDecimal(0),
+      );
+    const pendingSettlementAmount = settlementCounts
+      .filter((r) => outstandingStatuses.includes(r.status))
+      .reduce(
+        (sum, r) => sum.plus(toDecimal(r._sum.netAmount)),
+        toDecimal(0),
+      );
 
     return {
       role: 'SELLER' as const,
@@ -99,6 +124,10 @@ export class FinanceSummaryService {
         settlementCounts.map((r) => [r.status, r._count._all]),
       ),
       verifiedPaidAmount: toDecimal(verifiedPaid._sum.paidAmount).toFixed(2),
+      totalSales: toDecimal(settlementAmounts._sum.grossAmount).toFixed(2),
+      settledAmount: settledAmount.toFixed(2),
+      pendingSettlementAmount: pendingSettlementAmount.toFixed(2),
+      outstandingSettlementAmount: pendingSettlementAmount.toFixed(2),
     };
   }
 

@@ -27,6 +27,15 @@ const offerInclude = {
   grade: {
     select: { id: true, code: true, name: true, displayName: true },
   },
+  warehouse: {
+    select: { id: true, code: true, name: true, city: true, state: true },
+  },
+  inventory: {
+    select: { id: true, availableQty: true, reservedQty: true },
+  },
+  _count: {
+    select: { purchaseRequestItems: true },
+  },
 } satisfies Prisma.OfferInclude;
 
 function serializeOffer(offer: {
@@ -167,5 +176,85 @@ export class AdminOffersService {
       'OFFER_SUSPENDED',
       dto,
     );
+  }
+
+  async summary() {
+    const now = new Date();
+    const expiringUntil = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    const base = { deletedAt: null };
+
+    const [
+      active,
+      draft,
+      paused,
+      expired,
+      pendingReview,
+      rejected,
+      closed,
+      expiringSoon,
+      soldOut,
+      total,
+    ] = await Promise.all([
+      this.prisma.offer.count({ where: { ...base, status: OfferStatus.ACTIVE } }),
+      this.prisma.offer.count({ where: { ...base, status: OfferStatus.DRAFT } }),
+      this.prisma.offer.count({ where: { ...base, status: OfferStatus.PAUSED } }),
+      this.prisma.offer.count({ where: { ...base, status: OfferStatus.EXPIRED } }),
+      this.prisma.offer.count({
+        where: { ...base, status: OfferStatus.PENDING_REVIEW },
+      }),
+      this.prisma.offer.count({
+        where: { ...base, status: OfferStatus.REJECTED },
+      }),
+      this.prisma.offer.count({ where: { ...base, status: OfferStatus.CLOSED } }),
+      this.prisma.offer.count({
+        where: {
+          ...base,
+          status: OfferStatus.ACTIVE,
+          validUntil: { gt: now, lte: expiringUntil },
+        },
+      }),
+      this.prisma.offer.count({
+        where: {
+          ...base,
+          status: OfferStatus.ACTIVE,
+          quantity: { lte: 0 },
+        },
+      }),
+      this.prisma.offer.count({ where: base }),
+    ]);
+
+    return {
+      total,
+      active,
+      draft,
+      paused,
+      expired,
+      pendingReview,
+      rejected,
+      closed,
+      expiringSoon,
+      soldOut,
+    };
+  }
+
+  async history(id: string) {
+    await this.findOne(id);
+    return this.prisma.auditLog.findMany({
+      where: {
+        entityType: EntityOwnerType.OFFER,
+        entityId: id,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        action: true,
+        actorUserId: true,
+        previousData: true,
+        newData: true,
+        metadata: true,
+        createdAt: true,
+      },
+    });
   }
 }

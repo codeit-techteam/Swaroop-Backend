@@ -12,6 +12,7 @@ import {
   Prisma,
   ProductStatus,
   PurchaseRequestResponseType,
+  PurchaseRequestSellerMatchStatus,
   PurchaseRequestStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
@@ -21,6 +22,7 @@ import {
   PrEventsService,
   ProcurementException,
   PrStateService,
+  PurchaseRequestMatchingService,
 } from '../../procurement/index.js';
 import {
   paginationMeta,
@@ -39,6 +41,16 @@ import type {
   RejectPurchaseRequestDto,
   RespondPurchaseRequestDto,
 } from './purchase-requests.dto.js';
+
+/** Seller-visible match statuses (never REMOVED — competing sellers must not see the PR). */
+const SELLER_VISIBLE_MATCH_STATUSES: PurchaseRequestSellerMatchStatus[] = [
+  PurchaseRequestSellerMatchStatus.MATCHED,
+  PurchaseRequestSellerMatchStatus.VIEWED,
+  PurchaseRequestSellerMatchStatus.ACCEPTED,
+  PurchaseRequestSellerMatchStatus.COUNTER_OFFERED,
+  PurchaseRequestSellerMatchStatus.REJECTED,
+  PurchaseRequestSellerMatchStatus.EXPIRED,
+];
 
 const prInclude = {
   items: {
@@ -88,6 +100,7 @@ export class PurchaseRequestsService {
     private readonly prEvents: PrEventsService,
     private readonly negotiationService: NegotiationService,
     private readonly commercialAcceptance: CommercialAcceptanceService,
+    private readonly matching: PurchaseRequestMatchingService,
   ) {}
 
   private async ctx(userId: string) {
@@ -95,19 +108,24 @@ export class PurchaseRequestsService {
   }
 
   private inboxWhere(ctx: SellerContext): Prisma.PurchaseRequestWhereInput {
+    // Blind inbox: PR is visible if this seller org owns a match row OR
+    // (legacy) is the assigned sellerOrgId. REMOVED matches stay hidden.
     return {
       deletedAt: null,
       OR: [
-        { sellerOrgId: ctx.organizationId },
         {
-          sellerOrgId: null,
-          status: {
-            in: [
-              PurchaseRequestStatus.SOURCING,
-              PurchaseRequestStatus.SUBMITTED,
-              PurchaseRequestStatus.UNDER_REVIEW,
-            ],
+          sellerMatches: {
+            some: {
+              sellerOrgId: ctx.organizationId,
+              status: { in: SELLER_VISIBLE_MATCH_STATUSES },
+            },
           },
+        },
+        {
+          AND: [
+            { sellerOrgId: ctx.organizationId },
+            { sellerMatches: { none: {} } },
+          ],
         },
       ],
     };
@@ -196,6 +214,11 @@ export class PurchaseRequestsService {
     if (Number.isFinite(available) && quantity > available) {
       throw new ProcurementException('INSUFFICIENT_AVAILABILITY');
     }
+
+    await this.matching.assertInventorySufficient(tx, {
+      offerId: offer.id,
+      quantity,
+    });
   }
 
   async findAll(userId: string, query: PurchaseRequestQueryDto) {
@@ -218,6 +241,56 @@ export class PurchaseRequestsService {
                   destinationRegion: {
                     contains: query.search.trim(),
                     mode: 'insensitive',
+                  },
+                },
+                {
+                  items: {
+                    some: {
+                      OR: [
+                        {
+                          grade: {
+                            OR: [
+                              {
+                                name: {
+                                  contains: query.search.trim(),
+                                  mode: 'insensitive',
+                                },
+                              },
+                              {
+                                displayName: {
+                                  contains: query.search.trim(),
+                                  mode: 'insensitive',
+                                },
+                              },
+                              {
+                                code: {
+                                  contains: query.search.trim(),
+                                  mode: 'insensitive',
+                                },
+                              },
+                            ],
+                          },
+                        },
+                        {
+                          product: {
+                            OR: [
+                              {
+                                name: {
+                                  contains: query.search.trim(),
+                                  mode: 'insensitive',
+                                },
+                              },
+                              {
+                                code: {
+                                  contains: query.search.trim(),
+                                  mode: 'insensitive',
+                                },
+                              },
+                            ],
+                          },
+                        },
+                      ],
+                    },
                   },
                 },
               ],
@@ -249,6 +322,14 @@ export class PurchaseRequestsService {
   async findOne(userId: string, id: string) {
     const { ctx, pr } = await this.loadOwned(userId, id);
 
+    if (process.env.NODE_ENV !== 'production') {
+      // Dev-only auth trace — never log tokens/secrets.
+      // eslint-disable-next-line no-console
+      console.debug(
+        `[PurchaseRequest] Authenticated user: ${userId} Role: SELLER SellerOrg: ${ctx.organizationId} Request ID: ${id}`,
+      );
+    }
+
     let viewed = pr;
     if (!pr.viewedBySellerAt) {
       viewed = await this.prisma.purchaseRequest.update({
@@ -261,6 +342,7 @@ export class PurchaseRequestsService {
         eventType: 'PURCHASE_REQUEST_VIEWED_BY_SELLER',
         actorRole: NegotiationActorRole.SELLER,
         actorUserId: userId,
+        metadata: { sellerOrgId: ctx.organizationId },
       });
       await this.audit.log({
         action: 'PR_VIEWED',
@@ -270,6 +352,11 @@ export class PurchaseRequestsService {
         entityId: id,
       });
     }
+
+    await this.matching.markSellerViewed(this.prisma, {
+      purchaseRequestId: id,
+      sellerOrgId: ctx.organizationId,
+    });
 
     return this.blind(viewed);
   }
@@ -533,11 +620,17 @@ export class PurchaseRequestsService {
         const assigned = await tx.purchaseRequest.update({
           where: { id },
           data: {
-            sellerOrgId: locked.sellerOrgId ?? ctx.organizationId,
+            // Winning seller becomes the commercial counterparty.
+            sellerOrgId: ctx.organizationId,
             viewedBySellerAt: locked.viewedBySellerAt ?? new Date(),
             sellerRespondedAt: new Date(),
           },
           include: prInclude,
+        });
+
+        await this.matching.markSellerAccepted(tx, {
+          purchaseRequestId: id,
+          sellerOrgId: ctx.organizationId,
         });
 
         await this.prEvents.record(tx, {
@@ -545,6 +638,7 @@ export class PurchaseRequestsService {
           eventType: 'SELLER_ACCEPTED',
           actorRole: NegotiationActorRole.SELLER,
           actorUserId: userId,
+          metadata: { sellerOrgId: ctx.organizationId },
         });
 
         const commercial = await this.commercialAcceptance.acceptCommercially(
@@ -626,12 +720,20 @@ export class PurchaseRequestsService {
           include: prInclude,
         });
 
+        await this.matching.markSellerRejected(tx, {
+          purchaseRequestId: id,
+          sellerOrgId: ctx.organizationId,
+        });
+
         await this.prEvents.record(tx, {
           purchaseRequestId: id,
           eventType: 'SELLER_REJECTED',
           actorRole: NegotiationActorRole.SELLER,
           actorUserId: userId,
-          metadata: { rejectionReason: dto.rejectionReason },
+          metadata: {
+            rejectionReason: dto.rejectionReason,
+            sellerOrgId: ctx.organizationId,
+          },
         });
 
         return {
@@ -658,6 +760,8 @@ export class PurchaseRequestsService {
             'counterQuantity is required when PR has no items',
           );
         }
+
+        await this.revalidateOfferTerms(tx, locked, quantity);
 
         const response = await tx.purchaseRequestResponse.create({
           data: {
@@ -716,6 +820,12 @@ export class PurchaseRequestsService {
           include: prInclude,
         });
 
+        await this.matching.markSellerCountered(tx, {
+          purchaseRequestId: id,
+          sellerOrgId: ctx.organizationId,
+          counterPrice: Number(dto.counterPrice!),
+        });
+
         await this.prEvents.record(tx, {
           purchaseRequestId: id,
           eventType: 'SELLER_COUNTER_OFFERED',
@@ -726,6 +836,7 @@ export class PurchaseRequestsService {
             roundNumber: counter.roundNumber,
             unitPrice: Number(counter.unitPrice),
             quantity: Number(counter.quantity),
+            sellerOrgId: ctx.organizationId,
           },
         });
 

@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../../../database/prisma.service.js';
 import { SellerAuditService } from '../common/seller-audit.service.js';
 import { SellerContextService } from '../common/seller-context.service.js';
+import { OnboardingDocumentsService } from './onboarding-documents.service.js';
 import type {
   CreateOnboardingDto,
   UpdateOnboardingDto,
@@ -33,6 +34,7 @@ export class OnboardingService {
     private readonly prisma: PrismaService,
     private readonly sellerContext: SellerContextService,
     private readonly audit: SellerAuditService,
+    private readonly onboardingDocuments: OnboardingDocumentsService,
   ) {}
 
   async create(
@@ -165,6 +167,11 @@ export class OnboardingService {
     }
     if (!hasValue(address, 'line1') || !hasValue(address, 'city')) {
       missing.push('address.line1/city');
+    }
+    const missingDocuments =
+      await this.onboardingDocuments.missingRequiredLabels(userId);
+    for (const name of missingDocuments) {
+      missing.push(`documents.${name}`);
     }
     if (missing.length) {
       throw new BadRequestException(

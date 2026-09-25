@@ -19,13 +19,19 @@ import {
 import { PrismaService } from '../../../database/prisma.service.js';
 import { FinanceException } from '../common/finance.errors.js';
 import { toDecimal } from '../common/money.util.js';
-import { FinanceListQueryDto } from '../dto/finance.dto.js';
+import {
+  FinanceListQueryDto,
+  SettlementListQueryDto,
+} from '../dto/finance.dto.js';
 import { DispatchGateService } from '../services/dispatch-gate.service.js';
 import { FinanceSummaryService } from '../services/finance-summary.service.js';
 import { PaymentService } from '../services/payment.service.js';
 import { ProformaInvoiceService } from '../services/proforma-invoice.service.js';
 import { SettlementService } from '../services/settlement.service.js';
 import { FinanceActorService } from '../services/finance-actor.service.js';
+import { anonymousBuyerRef } from '../../sellers/common/seller-context.service.js';
+import { BLIND_BUYER_DISPLAY_NAME } from '../../sellers/common/blind-buyer.js';
+import { resolveSearch } from '../../master-data/common/pagination.js';
 
 @ApiTags('Seller Finance')
 @Controller({ path: 'seller', version: '1' })
@@ -110,6 +116,7 @@ export class SellerFinanceController {
             select: {
               id: true,
               referenceNumber: true,
+              destinationRegion: true,
               items: {
                 take: 1,
                 include: {
@@ -130,7 +137,7 @@ export class SellerFinanceController {
             where: { deletedAt: null },
             orderBy: { createdAt: 'desc' },
             take: 1,
-            select: { status: true },
+            select: { status: true, plannedDispatchDate: true },
           },
           shipments: {
             where: { deletedAt: null },
@@ -178,6 +185,14 @@ export class SellerFinanceController {
           paymentStatus: po.payments[0]?.status ?? null,
           dispatchStatus: po.dispatches[0]?.status ?? null,
           shipmentStatus: po.shipments[0]?.status ?? null,
+          expectedDispatchDate:
+            po.dispatches[0]?.plannedDispatchDate?.toISOString() ?? null,
+          deliveryRegion:
+            po.purchaseRequest?.destinationRegion ?? 'Assigned Destination',
+          buyer: {
+            displayName: BLIND_BUYER_DISPLAY_NAME,
+            reference: anonymousBuyerRef(po.customerOrgId),
+          },
           // Blind marketplace: seller never receives credit underwriting
           creditStatus: null,
         };
@@ -207,11 +222,21 @@ export class SellerFinanceController {
     );
   }
 
+  @Get('settlements/summary')
+  @ApiOperation({ summary: 'Seller settlement amount summary (read-only)' })
+  async settlementsSummary(@CurrentUser() user: AuthenticatedUser) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.settlements.summaryForSeller(seller.organizationId),
+      'Settlement summary',
+    );
+  }
+
   @Get('settlements')
   @ApiOperation({ summary: 'List seller settlements (read-only)' })
   async listSettlements(
     @CurrentUser() user: AuthenticatedUser,
-    @Query() query: FinanceListQueryDto,
+    @Query() query: SettlementListQueryDto,
   ) {
     const seller = await this.actors.requireSellerOrg(user.id);
     const { skip, take, page, limit } = skipTake(query.page, query.limit);
@@ -219,11 +244,41 @@ export class SellerFinanceController {
       organizationId: seller.organizationId,
       skip,
       take,
+      status: query.status,
+      search: resolveSearch(query),
+      sortBy: query.sortBy,
+      sortOrder: query.sortOrder,
     });
     return successResponse(
       items,
       'Settlements retrieved',
       paginationMeta(page, limit, total),
+    );
+  }
+
+  @Get('settlements/:id')
+  @ApiOperation({ summary: 'Seller settlement detail (read-only)' })
+  async getSettlement(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.settlements.findOneForSeller(id, seller.organizationId),
+      'Settlement retrieved',
+    );
+  }
+
+  @Get('settlements/:id/timeline')
+  @ApiOperation({ summary: 'Seller settlement timeline (read-only)' })
+  async getSettlementTimeline(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const seller = await this.actors.requireSellerOrg(user.id);
+    return successResponse(
+      await this.settlements.timelineForSeller(id, seller.organizationId),
+      'Settlement timeline',
     );
   }
 

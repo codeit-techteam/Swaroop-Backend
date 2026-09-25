@@ -7,6 +7,7 @@ import { CustomerFinanceController } from './controllers/customer-finance.contro
 import { SellerFinanceController } from './controllers/seller-finance.controller.js';
 import { CreditEligibilityService } from './services/credit-eligibility.service.js';
 import { CreditLedgerService } from './services/credit-ledger.service.js';
+import { CreditTimelineService } from './services/credit-timeline.service.js';
 import { ManualCreditInsuranceProvider } from './services/credit-insurance.provider.js';
 import { DispatchGateService } from './services/dispatch-gate.service.js';
 import { FinanceActorService } from './services/finance-actor.service.js';
@@ -28,6 +29,7 @@ const financeProviders = [
   FinanceActorService,
   CreditEligibilityService,
   CreditLedgerService,
+  CreditTimelineService,
   ManualCreditInsuranceProvider,
   PaymentScheduleService,
   ProformaInvoiceService,
@@ -59,6 +61,7 @@ const financeProviders = [
     DispatchGateService,
     CreditEligibilityService,
     CreditLedgerService,
+    CreditTimelineService,
     TransactionService,
   ],
 })

@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsNumber,
   IsObject,
   IsOptional,
@@ -123,11 +124,31 @@ export class ReserveInventoryDto {
   referenceId?: string;
 }
 
+/** Frontend-friendly stock status aliases (maps onto InventoryStatus). */
+export const STOCK_STATUS_FILTERS = [
+  'IN_STOCK',
+  'LOW_STOCK',
+  'OUT_OF_STOCK',
+  'AVAILABLE',
+  'LOW',
+] as const;
+
+export type StockStatusFilter = (typeof STOCK_STATUS_FILTERS)[number];
+
 export class InventoryQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: InventoryStatus })
   @IsOptional()
   @IsEnum(InventoryStatus)
   status?: InventoryStatus;
+
+  @ApiPropertyOptional({
+    enum: STOCK_STATUS_FILTERS,
+    description:
+      'Alias for status: IN_STOCK/AVAILABLE, LOW_STOCK/LOW, OUT_OF_STOCK',
+  })
+  @IsOptional()
+  @IsIn([...STOCK_STATUS_FILTERS])
+  stockStatus?: StockStatusFilter;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -138,4 +159,13 @@ export class InventoryQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   warehouseId?: string;
+}
+
+export class LatestMovementsQueryDto {
+  @ApiPropertyOptional({ default: 1, minimum: 1, maximum: 20 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  limit?: number = 1;
 }

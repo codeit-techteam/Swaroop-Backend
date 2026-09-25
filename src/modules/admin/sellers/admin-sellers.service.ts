@@ -11,6 +11,7 @@ import {
   SellerStatus,
   UserStatus,
   VerificationStatus,
+  DocumentStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { NotificationService } from '../../notifications/notification.service.js';
@@ -115,7 +116,54 @@ export class AdminSellersService {
       include: sellerInclude,
     });
     if (!seller) throw new NotFoundException('Seller not found');
-    return seller;
+
+    const onboardingDocuments = await this.prisma.document.findMany({
+      where: {
+        deletedAt: null,
+        ownerType: EntityOwnerType.SELLER,
+        ownerId: id,
+        status: { notIn: [DocumentStatus.ARCHIVED, DocumentStatus.REPLACED] },
+      },
+      orderBy: [{ category: 'asc' }, { createdAt: 'desc' }],
+      select: {
+        id: true,
+        category: true,
+        fileName: true,
+        originalFileName: true,
+        mimeType: true,
+        fileSizeBytes: true,
+        status: true,
+        storageProvider: true,
+        storageKey: true,
+        metadata: true,
+        createdAt: true,
+        updatedAt: true,
+        rejectionReason: true,
+      },
+    });
+
+    return {
+      ...seller,
+      onboardingDocuments: onboardingDocuments
+        .filter((doc) => {
+          const meta =
+            doc.metadata && typeof doc.metadata === 'object'
+              ? (doc.metadata as Record<string, unknown>)
+              : {};
+          return meta.purpose === 'SELLER_ONBOARDING' && meta.r2Confirmed === true;
+        })
+        .map((doc) => ({
+          ...doc,
+          fileSizeBytes:
+            doc.fileSizeBytes != null ? doc.fileSizeBytes.toString() : null,
+          slot:
+            doc.metadata &&
+            typeof doc.metadata === 'object' &&
+            typeof (doc.metadata as Record<string, unknown>).slot === 'string'
+              ? ((doc.metadata as Record<string, unknown>).slot as string)
+              : null,
+        })),
+    };
   }
 
   async approve(id: string, actorUserId: string, dto: AdminSellerActionDto) {

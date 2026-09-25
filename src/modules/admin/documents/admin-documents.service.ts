@@ -64,7 +64,11 @@ export class AdminDocumentsService {
     ]);
 
     return {
-      items: items.map((d) => this.documents.mapDocument(d)),
+      items: items.map((d) => ({
+        ...this.documents.mapDocument(d),
+        organization: d.organization,
+        uploadedBy: d.uploadedBy,
+      })),
       meta: paginationMeta(page, limit, total),
     };
   }
@@ -113,6 +117,27 @@ export class AdminDocumentsService {
       notes: dto.notes,
       reason: dto.reason,
     });
+
+    // Clear review flags so seller panel shows a clean verified state.
+    const meta =
+      existing.metadata &&
+      typeof existing.metadata === 'object' &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+    if (meta.awaitingAdminReview || meta.r2Confirmed === false) {
+      await this.prisma.document.update({
+        where: { id },
+        data: {
+          metadata: {
+            ...meta,
+            awaitingAdminReview: false,
+            r2Confirmed: true,
+            approvedVia: 'admin',
+          } as Prisma.InputJsonValue,
+        },
+      });
+    }
 
     await this.audit.log({
       action: 'DOCUMENT_APPROVED',

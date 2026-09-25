@@ -101,6 +101,16 @@ const productInclude = {
       basePrice: true,
       currency: true,
       deliveryTerms: true,
+      priceTiers: {
+        orderBy: { minQty: 'asc' as const },
+        select: {
+          minQty: true,
+          maxQty: true,
+          price: true,
+          currency: true,
+          paymentMethod: true,
+        },
+      },
     },
   },
 } satisfies Prisma.ProductInclude;

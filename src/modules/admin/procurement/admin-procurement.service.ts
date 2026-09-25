@@ -60,6 +60,20 @@ const adminPrInclude = {
       offer: { select: { id: true, referenceNumber: true } },
     },
   },
+  sellerMatches: {
+    orderBy: { matchedAt: 'asc' as const },
+    include: {
+      sellerOrg: { select: orgSelect },
+      offer: {
+        select: {
+          id: true,
+          referenceNumber: true,
+          basePrice: true,
+          currency: true,
+        },
+      },
+    },
+  },
   counterOffers: {
     orderBy: [{ roundNumber: 'asc' as const }, { createdAt: 'asc' as const }],
   },
@@ -419,6 +433,27 @@ export class AdminProcurementService {
           }
         : null,
       items: pr.items,
+      matchedSellers: (pr.sellerMatches ?? []).map((match) => ({
+        id: match.id,
+        status: match.status,
+        matchedAt: match.matchedAt,
+        responseDeadline: match.responseDeadline,
+        viewedAt: match.viewedAt,
+        respondedAt: match.respondedAt,
+        matchStrategy: match.matchStrategy,
+        sellerOfferPrice: match.sellerOfferPrice,
+        sellerCounterPrice: match.sellerCounterPrice,
+        sellerOrg: match.sellerOrg
+          ? {
+              id: match.sellerOrg.id,
+              name: match.sellerOrg.name,
+              code: match.sellerOrg.code,
+              type: match.sellerOrg.type,
+              legalName: match.sellerOrg.legalName,
+            }
+          : null,
+        offer: match.offer,
+      })),
       counterOffers: this.negotiation.toAdminNegotiation(pr.counterOffers),
       purchaseOrder: pr.purchaseOrders?.[0] ?? null,
       eventCount: pr.events?.length ?? 0,

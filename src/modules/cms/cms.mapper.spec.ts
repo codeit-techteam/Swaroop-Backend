@@ -47,6 +47,7 @@ describe('cms mapper', () => {
     });
 
     expect(banner.mediaUrl).toBe('https://cdn.example.com/hero.jpg');
+    expect(banner.mobileMediaUrl).toBe('https://cdn.example.com/hero.jpg');
     expect(banner.ctaText).toBe('Browse grades');
     expect(banner.ctaAction).toBe('OPEN_MARKETPLACE');
     expect(banner.badge).toBe('PROMO');

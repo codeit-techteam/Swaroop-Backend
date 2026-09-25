@@ -19,3 +19,9 @@ export const ADMIN_COMPLIANCE_ROLES = [
   RoleCode.SUPER_ADMIN,
   RoleCode.COMPLIANCE_MANAGER,
 ] as const;
+
+export const ADMIN_SUPPORT_ROLES = [
+  RoleCode.ADMIN,
+  RoleCode.SUPER_ADMIN,
+  RoleCode.OPERATIONS_MANAGER,
+] as const;

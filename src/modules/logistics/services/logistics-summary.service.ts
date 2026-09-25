@@ -6,10 +6,51 @@ import {
   VehicleSlotStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import {
+  SELLER_DISPATCH_TAB_STATUSES,
+  type SellerDispatchTab,
+} from '../common/dispatch-tab.util.js';
 
 @Injectable()
 export class LogisticsSummaryService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async forSellerDispatches(sellerOrgId: string) {
+    const base = { sellerOrgId, deletedAt: null as null };
+    const count = (statuses: DispatchStatus[]) =>
+      this.prisma.dispatch.count({
+        where: { ...base, status: { in: statuses } },
+      });
+
+    const [all, readyForDispatch, scheduled, loading, dispatched] =
+      await Promise.all([
+        this.prisma.dispatch.count({
+          where: {
+            ...base,
+            status: { not: DispatchStatus.CANCELLED },
+          },
+        }),
+        count(SELLER_DISPATCH_TAB_STATUSES.ready),
+        count(SELLER_DISPATCH_TAB_STATUSES.scheduled),
+        count(SELLER_DISPATCH_TAB_STATUSES.loading),
+        count(SELLER_DISPATCH_TAB_STATUSES.dispatched),
+      ]);
+
+    return {
+      all,
+      readyForDispatch,
+      scheduled,
+      loading,
+      dispatched,
+      byTab: {
+        all,
+        ready: readyForDispatch,
+        scheduled,
+        loading,
+        dispatched,
+      } satisfies Record<'all' | SellerDispatchTab, number>,
+    };
+  }
 
   async forSeller(sellerOrgId: string) {
     const [

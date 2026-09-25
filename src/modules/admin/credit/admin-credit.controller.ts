@@ -22,9 +22,14 @@ import {
   AdminCreditAdjustLimitDto,
   AdminCreditApplicationsQueryDto,
   AdminCreditApproveDto,
+  AdminCreditArrangementDto,
   AdminCreditAuditQueryDto,
+  AdminCreditDocumentRejectDto,
+  AdminCreditDocumentVerifyDto,
   AdminCreditDocumentsQueryDto,
+  AdminCreditInsuranceReviewDto,
   AdminCreditInsuranceUpdateDto,
+  AdminCreditPartialApproveDto,
   AdminCreditRejectDto,
   AdminCreditRepaymentsQueryDto,
   AdminCreditRequestDocumentDto,
@@ -104,6 +109,23 @@ export class AdminCreditController {
     );
   }
 
+  @Post('applications/:id/partial-approve')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Approve a lower limit than requested (creates an active credit account)',
+  })
+  async partialApprove(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreditPartialApproveDto,
+  ) {
+    return successResponse(
+      await this.credit.partialApprove(id, user.id, dto),
+      'Credit application partially approved',
+    );
+  }
+
   @Post('applications/:id/reject')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Reject credit application' })
@@ -115,6 +137,73 @@ export class AdminCreditController {
     return successResponse(
       await this.credit.reject(id, user.id, dto),
       'Credit application rejected',
+    );
+  }
+
+  @Post('applications/:id/send-insurance-review')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Send application to the credit insurance partner' })
+  async sendInsuranceReview(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreditInsuranceReviewDto,
+  ) {
+    return successResponse(
+      await this.credit.sendInsuranceReview(id, user.id, dto),
+      'Credit application sent for insurance review',
+    );
+  }
+
+  @Post('applications/:id/mark-arrangement-pending')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Move application into credit arrangement' })
+  async markArrangementPending(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreditArrangementDto,
+  ) {
+    return successResponse(
+      await this.credit.markArrangementPending(id, user.id, dto),
+      'Credit arrangement pending',
+    );
+  }
+
+  @Get('applications/:id/timeline')
+  @ApiOperation({ summary: 'Full credit application timeline' })
+  async applicationTimeline(@Param('id', ParseUUIDPipe) id: string) {
+    return successResponse(
+      await this.credit.getTimeline(id),
+      'Credit application timeline retrieved',
+    );
+  }
+
+  @Post('applications/:id/documents/:documentId/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Verify a credit application document' })
+  async verifyDocument(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Body() dto: AdminCreditDocumentVerifyDto,
+  ) {
+    return successResponse(
+      await this.credit.verifyApplicationDocument(id, documentId, user.id, dto),
+      'Credit document verified',
+    );
+  }
+
+  @Post('applications/:id/documents/:documentId/reject')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reject a credit application document' })
+  async rejectDocument(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Body() dto: AdminCreditDocumentRejectDto,
+  ) {
+    return successResponse(
+      await this.credit.rejectApplicationDocument(id, documentId, user.id, dto),
+      'Credit document rejected',
     );
   }
 

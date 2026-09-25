@@ -33,8 +33,10 @@ Milestones:
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/seller/logistics/summary` | Counts |
-| GET/POST | `/seller/dispatches` | Create: `{ purchaseOrderId, quantity, ... }` |
-| GET | `/seller/dispatches/:id` | Blind buyer |
+| GET | `/seller/dispatches/summary` | Tab KPI counts (all / ready / scheduled / loading / dispatched) |
+| GET/POST | `/seller/dispatches` | List supports `tab`, `search`, `dispatchStatus`, pagination. Create: `{ purchaseOrderId, quantity, ... }` |
+| GET | `/seller/dispatches/:id` | Blind buyer + vehicle/slot/warehouse/grade |
+| GET | `/seller/dispatches/:id/timeline` | LogisticsEvent audit timeline |
 | POST | `/seller/dispatches/:id/assign-vehicle` | `{ vehicleId, driverId? }` |
 | GET/POST | `/seller/dispatches/:id/eway-bill` | Manual number + optional `documentKey` |
 | POST | `/seller/dispatches/:id/start-loading` | → LOADING |
@@ -50,7 +52,14 @@ Milestones:
 | POST | `/seller/deliveries/:id/mark-delivered` | Updates PO.deliveredQuantity |
 | POST | `/seller/deliveries/:id/upload-pod` | R2 key metadata only |
 | CRUD | `/seller/vehicles`, `/seller/drivers` | Org-scoped |
-| GET/POST | `/seller/vehicle-slots` | |
+| GET | `/seller/vehicle-slots` | Filters: status, warehouseId, date, vehicleType, carrier, orderId, search |
+| GET | `/seller/vehicle-slots/summary` | Today KPI totals + available capacity |
+| GET | `/seller/vehicle-slots/availability` | Bay/time window availability |
+| GET | `/seller/vehicle-slots/eligible-dispatches` | Payment-cleared dispatches without active slot |
+| GET | `/seller/vehicle-slots/export` | Filtered export rows |
+| GET | `/seller/logistics/warehouses` | Seller + platform hub warehouses |
+| GET | `/seller/logistics/loading-bays?warehouseId=` | Bay labels for a warehouse |
+| POST | `/seller/vehicle-slots` | Transactional book (dispatch + vehicle + bay/time) |
 | POST | `/seller/vehicle-slots/:id/cancel` | |
 
 ### Create dispatch

@@ -21,6 +21,7 @@ import {
   AdjustInventoryDto,
   CreateInventoryDto,
   InventoryQueryDto,
+  LatestMovementsQueryDto,
   ReserveInventoryDto,
   UpdateInventoryDto,
 } from './inventory.dto.js';
@@ -75,6 +76,29 @@ export class InventoryController {
     return successResponse(
       await this.inventoryService.summary(user.id),
       'Inventory summary retrieved',
+    );
+  }
+
+  @Get('warehouses')
+  @ApiOperation({
+    summary: 'List warehouses that hold inventory for this seller',
+  })
+  async warehouses(@CurrentUser() user: AuthenticatedUser) {
+    return successResponse(
+      await this.inventoryService.listWarehouses(user.id),
+      'Seller inventory warehouses retrieved',
+    );
+  }
+
+  @Get('movements/latest')
+  @ApiOperation({ summary: 'Latest stock movements for seller inventory' })
+  async latestMovements(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: LatestMovementsQueryDto,
+  ) {
+    return successResponse(
+      await this.inventoryService.latestMovements(user.id, query.limit ?? 1),
+      'Latest inventory movements retrieved',
     );
   }
 

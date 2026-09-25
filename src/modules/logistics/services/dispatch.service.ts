@@ -20,6 +20,7 @@ import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import { LogisticsException } from '../common/logistics.errors.js';
 import { LogisticsEventsService } from '../common/logistics-events.service.js';
 import { DispatchStateService } from '../common/dispatch-state.service.js';
+import { statusesForSellerDispatchTab } from '../common/dispatch-tab.util.js';
 import {
   toAdminDispatch,
   toSellerDispatch,
@@ -41,10 +42,67 @@ export type CreateDispatchInput = {
 };
 
 const DISPATCH_INCLUDE = {
-  purchaseOrder: { select: { referenceNumber: true, status: true } },
+  purchaseOrder: {
+    select: {
+      referenceNumber: true,
+      status: true,
+      metadata: true,
+      purchaseRequest: {
+        select: {
+          items: {
+            take: 1,
+            orderBy: { createdAt: 'asc' as const },
+            select: {
+              unit: true,
+              grade: {
+                select: {
+                  id: true,
+                  code: true,
+                  name: true,
+                  displayName: true,
+                },
+              },
+              product: {
+                select: { id: true, code: true, name: true },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  vehicle: true,
+  driver: true,
   ewayBills: { orderBy: { createdAt: 'desc' as const } },
   shipments: { select: { id: true } },
+  slots: {
+    orderBy: [{ slotDate: 'desc' as const }, { createdAt: 'desc' as const }],
+    take: 3,
+    include: {
+      warehouse: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          city: true,
+          state: true,
+        },
+      },
+    },
+  },
 } satisfies Prisma.DispatchInclude;
+
+type DispatchWithRelations = Prisma.DispatchGetPayload<{
+  include: typeof DISPATCH_INCLUDE;
+}> & {
+  originWarehouse?: {
+    id: string;
+    code: string;
+    name: string;
+    city?: string | null;
+    state?: string | null;
+  } | null;
+};
 
 @Injectable()
 export class DispatchService {
@@ -242,12 +300,61 @@ export class DispatchService {
     skip: number;
     take: number;
     status?: DispatchStatus;
+    statuses?: DispatchStatus[];
+    tab?: string;
+    search?: string;
   }) {
+    const tabStatuses = statusesForSellerDispatchTab(params.tab);
+    const statusIn =
+      params.statuses ??
+      (params.status ? [params.status] : undefined) ??
+      tabStatuses;
+
+    const search = params.search?.trim();
     const where: Prisma.DispatchWhereInput = {
       deletedAt: null,
       ...(params.sellerOrgId ? { sellerOrgId: params.sellerOrgId } : {}),
       ...(params.customerOrgId ? { customerOrgId: params.customerOrgId } : {}),
-      ...(params.status ? { status: params.status } : {}),
+      ...(statusIn?.length
+        ? { status: statusIn.length === 1 ? statusIn[0] : { in: statusIn } }
+        : {
+            // "All" tab excludes cancelled so KPI totals match the table.
+            status: { not: DispatchStatus.CANCELLED },
+          }),
+      ...(search
+        ? {
+            OR: [
+              {
+                dispatchNumber: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+              {
+                purchaseOrder: {
+                  referenceNumber: {
+                    contains: search,
+                    mode: 'insensitive',
+                  },
+                },
+              },
+              {
+                vehicle: {
+                  numberPlate: {
+                    contains: search,
+                    mode: 'insensitive',
+                  },
+                },
+              },
+              {
+                destinationRegion: {
+                  contains: search,
+                  mode: 'insensitive',
+                },
+              },
+            ],
+          }
+        : {}),
     };
     const [items, total] = await Promise.all([
       this.prisma.dispatch.findMany({
@@ -259,7 +366,10 @@ export class DispatchService {
       }),
       this.prisma.dispatch.count({ where }),
     ]);
-    return { items, total };
+    return {
+      items: await this.attachOriginWarehouses(items),
+      total,
+    };
   }
 
   async get(
@@ -278,7 +388,58 @@ export class DispatchService {
     if (!dispatch) {
       throw new LogisticsException('DISPATCH_NOT_FOUND');
     }
-    return dispatch;
+    const [enriched] = await this.attachOriginWarehouses([dispatch]);
+    return enriched!;
+  }
+
+  async listTimeline(
+    dispatchId: string,
+    opts?: { sellerOrgId?: string },
+  ) {
+    await this.get(dispatchId, { sellerOrgId: opts?.sellerOrgId });
+    const events = await this.prisma.logisticsEvent.findMany({
+      where: { dispatchId },
+      orderBy: { createdAt: 'asc' },
+    });
+    return events.map((e) => ({
+      id: e.id,
+      eventType: e.eventType,
+      actorRole: e.actorRole,
+      occurredAt: e.createdAt,
+      metadata: e.metadata,
+    }));
+  }
+
+  private async attachOriginWarehouses<
+    T extends { originWarehouseId: string | null },
+  >(items: T[]): Promise<Array<T & { originWarehouse: DispatchWithRelations['originWarehouse'] }>> {
+    const ids = [
+      ...new Set(
+        items
+          .map((item) => item.originWarehouseId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    if (ids.length === 0) {
+      return items.map((item) => ({ ...item, originWarehouse: null }));
+    }
+    const warehouses = await this.prisma.warehouse.findMany({
+      where: { id: { in: ids } },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        city: true,
+        state: true,
+      },
+    });
+    const byId = new Map(warehouses.map((w) => [w.id, w]));
+    return items.map((item) => ({
+      ...item,
+      originWarehouse: item.originWarehouseId
+        ? (byId.get(item.originWarehouseId) ?? null)
+        : null,
+    }));
   }
 
   async assignVehicle(

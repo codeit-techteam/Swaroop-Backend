@@ -201,8 +201,12 @@ export class ProductDocumentsService {
       fileType: dto.fileType,
       metadata,
       status,
-      requireUploadUrl: false,
+      requireUploadUrl: this.storage.isConfigured(),
     });
+
+    if (this.storage.isConfigured() && !result.uploadUrl) {
+      throw new BadRequestException('STORAGE_UPLOAD_FAILED');
+    }
 
     await this.audit.log({
       action: 'DOCUMENT_UPLOADED',

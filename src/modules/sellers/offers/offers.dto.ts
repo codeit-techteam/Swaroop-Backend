@@ -1,9 +1,11 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsArray,
   IsDateString,
   IsEnum,
+  IsInt,
   IsNumber,
   IsObject,
   IsOptional,
@@ -120,6 +122,16 @@ export class CreateOfferDto {
   @MaxLength(500)
   deliveryTerms?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Offer validity in hours from server time. When set, backend calculates validFrom/validUntil and ignores client clocks.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  validityHours?: number;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
@@ -149,7 +161,17 @@ export class CreateOfferDto {
   priceTiers?: OfferPriceTierInputDto[];
 }
 
-export class UpdateOfferDto extends PartialType(CreateOfferDto) {}
+export class UpdateOfferDto extends PartialType(CreateOfferDto) {
+  @ApiPropertyOptional({
+    description:
+      'Optimistic concurrency token. When provided, must match the current offer version.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  version?: number;
+}
 
 export class OfferQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: OfferStatus })
@@ -166,4 +188,23 @@ export class OfferQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   gradeId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+}
+
+export class BulkOfferIdsDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsUUID('4', { each: true })
+  offerIds!: string[];
+}
+
+export class SetCurrentLocationDto {
+  @ApiProperty({ description: 'Warehouse id used as the seller operating location' })
+  @IsUUID()
+  warehouseId!: string;
 }

@@ -72,7 +72,10 @@ Customers **cannot** verify payments (403).
 | GET | `/seller/proforma-invoices` |
 | GET | `/seller/proforma-invoices/:id` |
 | GET | `/seller/payments` |
-| GET | `/seller/settlements` |
+| GET | `/seller/settlements` | Query: `page`, `limit`, `search`, `status`, `sortBy`, `sortOrder` |
+| GET | `/seller/settlements/summary` | Amount KPIs (total sales, settled, pending, next) |
+| GET | `/seller/settlements/:id` | Detail + deduction breakdown + related PO/invoice |
+| GET | `/seller/settlements/:id/timeline` | Status history + related finance events |
 | GET | `/seller/finance/purchase-orders/:id/dispatch-clearance` |
 
 ## Admin (`ADMIN` \| `SUPER_ADMIN` \| `FINANCE_MANAGER`)

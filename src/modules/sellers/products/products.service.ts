@@ -4,8 +4,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CurrencyCode,
   EntityOwnerType,
   GradeStatus,
+  InventoryStatus,
+  OfferStatus,
   Prisma,
   ProductStatus,
   SellerStatus,
@@ -18,10 +21,12 @@ import {
 import { handlePrismaUnique } from '../../master-data/common/prisma-helpers.js';
 import { SellerAuditService } from '../common/seller-audit.service.js';
 import {
+  nextReference,
   SellerContext,
   SellerContextService,
 } from '../common/seller-context.service.js';
 import type {
+  CreateMarketplaceListingDto,
   CreateProductDto,
   CreateProductMediaDto,
   ProductQueryDto,
@@ -37,9 +42,52 @@ const productInclude = {
       name: true,
       displayName: true,
       status: true,
+      category: { select: { id: true, code: true, name: true } },
     },
   },
   media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' as const } },
+  inventory: {
+    where: { deletedAt: null },
+    orderBy: { updatedAt: 'desc' as const },
+    take: 5,
+    select: {
+      id: true,
+      availableQty: true,
+      reservedQty: true,
+      allocatedQty: true,
+      unit: true,
+      status: true,
+      warehouseId: true,
+      warehouse: { select: { id: true, name: true, city: true, code: true } },
+    },
+  },
+  offers: {
+    where: { deletedAt: null },
+    orderBy: { updatedAt: 'desc' as const },
+    take: 5,
+    select: {
+      id: true,
+      basePrice: true,
+      moq: true,
+      quantity: true,
+      unit: true,
+      status: true,
+      currency: true,
+      deliveryTerms: true,
+      warehouseId: true,
+      inventoryId: true,
+      priceTiers: {
+        orderBy: { minQty: 'asc' as const },
+        select: {
+          id: true,
+          minQty: true,
+          maxQty: true,
+          price: true,
+          currency: true,
+        },
+      },
+    },
+  },
 } satisfies Prisma.ProductInclude;
 
 @Injectable()
@@ -136,6 +184,217 @@ export class ProductsService {
     } catch (error) {
       handlePrismaUnique(error, 'Product code already exists for this seller');
     }
+  }
+
+  /**
+   * Production listing: Product + Inventory + Offer (+ optional marketplace publish).
+   * Customers only see ACTIVE product + ACTIVE offer; documents attach after create.
+   */
+  async createListing(userId: string, dto: CreateMarketplaceListingDto) {
+    const ctx = await this.ctx(userId);
+    await this.assertActiveGrade(dto.gradeId);
+
+    const warehouse = await this.resolveListingWarehouse(ctx, dto);
+    const publish = dto.publishToMarketplace !== false;
+    if (publish && ctx.status !== SellerStatus.APPROVED) {
+      throw new BadRequestException(
+        'Only APPROVED sellers can publish listings to the marketplace',
+      );
+    }
+
+    const technicalSpecs: Record<string, unknown> = {
+      ...(dto.technicalSpecs ?? {}),
+      ...(dto.application ? { application: dto.application } : {}),
+      ...(dto.polymerType ? { polymerType: dto.polymerType } : {}),
+      ...(dto.warehouseName || warehouse.name
+        ? { warehouseLabel: dto.warehouseName ?? warehouse.name }
+        : {}),
+      ...(Array.isArray((dto.technicalSpecs as { applications?: unknown })?.applications)
+        ? {}
+        : dto.application
+          ? { applications: [dto.application] }
+          : {}),
+    };
+
+    const productStatus = publish
+      ? ProductStatus.ACTIVE
+      : ProductStatus.DRAFT;
+    const offerStatus = publish ? OfferStatus.ACTIVE : OfferStatus.DRAFT;
+    const stock = Number(dto.availableStock ?? 0);
+    const unit = dto.unit ?? 'MT';
+
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        const product = await tx.product.create({
+          data: {
+            organizationId: ctx.organizationId,
+            sellerProfileId: ctx.sellerProfileId,
+            gradeId: dto.gradeId,
+            code: dto.code.trim().toUpperCase(),
+            name: dto.name.trim(),
+            brand: dto.brand ?? dto.manufacturer,
+            manufacturer: dto.manufacturer,
+            description: dto.description ?? dto.notes,
+            technicalSpecs: technicalSpecs as Prisma.InputJsonValue,
+            mfi: dto.mfi,
+            density: dto.density,
+            packaging: dto.packaging,
+            unit,
+            countryOfOrigin: dto.countryOfOrigin,
+            supplyOrigin: dto.supplyOrigin ?? dto.countryOfOrigin,
+            status: productStatus,
+            metadata: {
+              ...(dto.metadata ?? {}),
+              notes: dto.notes ?? null,
+              reservedStock: dto.reservedStock ?? 0,
+            } as Prisma.InputJsonValue,
+          },
+        });
+
+        const inventory = await tx.inventory.create({
+          data: {
+            organizationId: ctx.organizationId,
+            productId: product.id,
+            warehouseId: warehouse.id,
+            availableQty: stock,
+            reservedQty: dto.reservedStock ?? 0,
+            unit,
+            status:
+              stock > 0
+                ? InventoryStatus.AVAILABLE
+                : InventoryStatus.OUT_OF_STOCK,
+          },
+        });
+
+        const offer = await tx.offer.create({
+          data: {
+            referenceNumber: nextReference('OFFER'),
+            organizationId: ctx.organizationId,
+            sellerProfileId: ctx.sellerProfileId,
+            productId: product.id,
+            gradeId: product.gradeId,
+            inventoryId: inventory.id,
+            warehouseId: warehouse.id,
+            quantity: stock,
+            moq: dto.moq,
+            unit,
+            basePrice: dto.sellingPrice,
+            currency: CurrencyCode.INR,
+            pricingBasis: 'EXW',
+            deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
+            status: offerStatus,
+            visibility: 'MARKETPLACE',
+            createdById: userId,
+            priceTiers: dto.priceTiers?.length
+              ? {
+                  create: dto.priceTiers.map((t) => ({
+                    minQty: t.minQty,
+                    maxQty: t.maxQty ?? undefined,
+                    price: t.price,
+                    currency: CurrencyCode.INR,
+                  })),
+                }
+              : undefined,
+          },
+        });
+
+        return { productId: product.id, offerId: offer.id, inventoryId: inventory.id };
+      });
+
+      await this.audit.log({
+        action: 'PRODUCT_CREATED',
+        actorUserId: userId,
+        organizationId: ctx.organizationId,
+        entityType: EntityOwnerType.PRODUCT,
+        entityId: result.productId,
+        newData: {
+          listing: true,
+          offerId: result.offerId,
+          status: productStatus,
+          published: publish,
+        },
+      });
+
+      const product = await this.assertOwnedProduct(ctx, result.productId);
+      return {
+        ...this.serialize(product),
+        offerId: result.offerId,
+        inventoryId: result.inventoryId,
+        warehouseId: warehouse.id,
+        published: publish,
+      };
+    } catch (error) {
+      handlePrismaUnique(error, 'Product code already exists for this seller');
+    }
+  }
+
+  private async resolveListingWarehouse(
+    ctx: SellerContext,
+    dto: CreateMarketplaceListingDto,
+  ) {
+    if (dto.warehouseId) {
+      const warehouse = await this.prisma.warehouse.findFirst({
+        where: {
+          id: dto.warehouseId,
+          deletedAt: null,
+          OR: [
+            { organizationId: ctx.organizationId },
+            { organizationId: null, isPlatformHub: true },
+          ],
+        },
+      });
+      if (!warehouse) {
+        throw new BadRequestException('Warehouse not found or not accessible');
+      }
+      return warehouse;
+    }
+
+    const name = dto.warehouseName?.trim();
+    if (name) {
+      const existing = await this.prisma.warehouse.findFirst({
+        where: {
+          deletedAt: null,
+          name: { equals: name, mode: 'insensitive' },
+          OR: [
+            { organizationId: ctx.organizationId },
+            { organizationId: null, isPlatformHub: true },
+          ],
+        },
+      });
+      if (existing) return existing;
+
+      const codeBase = name
+        .toUpperCase()
+        .replace(/[^A-Z0-9]+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 24);
+      const code = `WH-${codeBase || 'SELLER'}-${Date.now().toString(36).toUpperCase()}`;
+      return this.prisma.warehouse.create({
+        data: {
+          organizationId: ctx.organizationId,
+          code,
+          name,
+          country: 'IN',
+          isPlatformHub: false,
+          isActive: true,
+        },
+      });
+    }
+
+    const hub = await this.prisma.warehouse.findFirst({
+      where: {
+        deletedAt: null,
+        isPlatformHub: true,
+        OR: [{ organizationId: null }, { organizationId: ctx.organizationId }],
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!hub) {
+      throw new BadRequestException(
+        'No warehouse available. Provide warehouseName or seed a platform hub.',
+      );
+    }
+    return hub;
   }
 
   async findAll(userId: string, query: ProductQueryDto) {
@@ -377,6 +636,174 @@ export class ProductsService {
     return this.serialize(updated);
   }
 
+
+  /**
+   * Update listing commercial fields: product specs, stock, price, MOQ, tiers.
+   * Keeps inventory + marketplace offer quantity/price in sync.
+   */
+  async updateListing(userId: string, id: string, dto: CreateMarketplaceListingDto) {
+    const ctx = await this.ctx(userId);
+    const existing = await this.assertOwnedProduct(ctx, id);
+    if (dto.gradeId && dto.gradeId !== existing.gradeId) {
+      await this.assertActiveGrade(dto.gradeId);
+    }
+
+    const warehouse = await this.resolveListingWarehouse(ctx, dto);
+    const stock = Number(dto.availableStock ?? 0);
+    const unit = dto.unit ?? existing.unit ?? 'MT';
+    const technicalSpecs: Record<string, unknown> = {
+      ...(typeof existing.technicalSpecs === 'object' && existing.technicalSpecs
+        ? (existing.technicalSpecs as Record<string, unknown>)
+        : {}),
+      ...(dto.technicalSpecs ?? {}),
+      ...(dto.application ? { application: dto.application } : {}),
+      ...(dto.polymerType ? { polymerType: dto.polymerType } : {}),
+      warehouseLabel: dto.warehouseName ?? warehouse.name,
+      ...(dto.application ? { applications: [dto.application] } : {}),
+    };
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.product.update({
+        where: { id },
+        data: {
+          gradeId: dto.gradeId ?? undefined,
+          code: dto.code?.trim().toUpperCase(),
+          name: dto.name?.trim(),
+          brand: dto.brand ?? dto.manufacturer,
+          manufacturer: dto.manufacturer,
+          description: dto.description ?? dto.notes,
+          technicalSpecs: technicalSpecs as Prisma.InputJsonValue,
+          mfi: dto.mfi,
+          density: dto.density,
+          packaging: dto.packaging,
+          unit,
+          countryOfOrigin: dto.countryOfOrigin,
+          supplyOrigin: dto.supplyOrigin ?? dto.countryOfOrigin,
+          metadata: {
+            ...((existing.metadata as Record<string, unknown>) ?? {}),
+            notes: dto.notes ?? null,
+            reservedStock: dto.reservedStock ?? 0,
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      const inventory =
+        existing.inventory?.[0] ??
+        (await tx.inventory.findFirst({
+          where: { productId: id, organizationId: ctx.organizationId, deletedAt: null },
+        }));
+
+      let inventoryId = inventory?.id;
+      if (inventoryId) {
+        await tx.inventory.update({
+          where: { id: inventoryId },
+          data: {
+            warehouseId: warehouse.id,
+            availableQty: stock,
+            reservedQty: dto.reservedStock ?? 0,
+            unit,
+            status:
+              stock > 0
+                ? InventoryStatus.AVAILABLE
+                : InventoryStatus.OUT_OF_STOCK,
+          },
+        });
+      } else {
+        const created = await tx.inventory.create({
+          data: {
+            organizationId: ctx.organizationId,
+            productId: id,
+            warehouseId: warehouse.id,
+            availableQty: stock,
+            reservedQty: dto.reservedStock ?? 0,
+            unit,
+            status:
+              stock > 0
+                ? InventoryStatus.AVAILABLE
+                : InventoryStatus.OUT_OF_STOCK,
+          },
+        });
+        inventoryId = created.id;
+      }
+
+      const offer =
+        existing.offers?.[0] ??
+        (await tx.offer.findFirst({
+          where: { productId: id, organizationId: ctx.organizationId, deletedAt: null },
+          orderBy: { updatedAt: 'desc' },
+        }));
+
+      if (offer) {
+        await tx.offerPriceTier.deleteMany({ where: { offerId: offer.id } });
+        await tx.offer.update({
+          where: { id: offer.id },
+          data: {
+            inventoryId,
+            warehouseId: warehouse.id,
+            quantity: stock,
+            moq: dto.moq,
+            unit,
+            basePrice: dto.sellingPrice,
+            deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
+            priceTiers: dto.priceTiers?.length
+              ? {
+                  create: dto.priceTiers.map((t) => ({
+                    minQty: t.minQty,
+                    maxQty: t.maxQty ?? undefined,
+                    price: t.price,
+                    currency: CurrencyCode.INR,
+                  })),
+                }
+              : undefined,
+          },
+        });
+      } else {
+        await tx.offer.create({
+          data: {
+            referenceNumber: nextReference('OFFER'),
+            organizationId: ctx.organizationId,
+            sellerProfileId: ctx.sellerProfileId,
+            productId: id,
+            gradeId: existing.gradeId,
+            inventoryId,
+            warehouseId: warehouse.id,
+            quantity: stock,
+            moq: dto.moq,
+            unit,
+            basePrice: dto.sellingPrice,
+            currency: CurrencyCode.INR,
+            pricingBasis: 'EXW',
+            deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
+            status: OfferStatus.ACTIVE,
+            visibility: 'MARKETPLACE',
+            createdById: userId,
+            priceTiers: dto.priceTiers?.length
+              ? {
+                  create: dto.priceTiers.map((t) => ({
+                    minQty: t.minQty,
+                    maxQty: t.maxQty ?? undefined,
+                    price: t.price,
+                    currency: CurrencyCode.INR,
+                  })),
+                }
+              : undefined,
+          },
+        });
+      }
+    });
+
+    await this.audit.log({
+      action: 'PRODUCT_UPDATED',
+      actorUserId: userId,
+      organizationId: ctx.organizationId,
+      entityType: EntityOwnerType.PRODUCT,
+      entityId: id,
+      newData: { listingUpdate: true, availableStock: stock, sellingPrice: dto.sellingPrice },
+    });
+
+    return this.serialize(await this.assertOwnedProduct(ctx, id));
+  }
+
   async softDelete(userId: string, id: string) {
     const ctx = await this.ctx(userId);
     await this.assertOwnedProduct(ctx, id);
@@ -463,4 +890,30 @@ export class ProductsService {
         media.fileSizeBytes != null ? Number(media.fileSizeBytes) : null,
     };
   }
+}
+
+/** Blind-marketplace safe ETA label from warehouse geography. */
+export function estimateDeliveryTerms(locationHint?: string | null): string {
+  const hint = (locationHint ?? '').toLowerCase();
+  if (
+    hint.includes('mumbai') ||
+    hint.includes('pune') ||
+    hint.includes('nashik') ||
+    hint.includes('gujarat') ||
+    hint.includes('ahmedabad')
+  ) {
+    return '2–3 Business Days';
+  }
+  if (
+    hint.includes('chennai') ||
+    hint.includes('kolkata') ||
+    hint.includes('howrah') ||
+    hint.includes('delhi') ||
+    hint.includes('hyderabad') ||
+    hint.includes('bangalore') ||
+    hint.includes('bengaluru')
+  ) {
+    return '3–5 Business Days';
+  }
+  return '4–6 Business Days';
 }

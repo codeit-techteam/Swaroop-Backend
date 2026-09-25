@@ -12,10 +12,12 @@ const ALLOWED: Record<DocumentStatus, DocumentStatus[]> = {
     DocumentStatus.VERIFIED,
     DocumentStatus.REJECTED,
     DocumentStatus.ARCHIVED,
+    DocumentStatus.UNDER_REVIEW,
   ],
   [DocumentStatus.VERIFIED]: [
     DocumentStatus.EXPIRED,
     DocumentStatus.REPLACED,
+    DocumentStatus.UNDER_REVIEW,
     DocumentStatus.ARCHIVED,
   ],
   [DocumentStatus.REJECTED]: [
@@ -23,7 +25,11 @@ const ALLOWED: Record<DocumentStatus, DocumentStatus[]> = {
     DocumentStatus.ARCHIVED,
     DocumentStatus.UNDER_REVIEW,
   ],
-  [DocumentStatus.EXPIRED]: [DocumentStatus.ARCHIVED, DocumentStatus.REPLACED],
+  [DocumentStatus.EXPIRED]: [
+    DocumentStatus.ARCHIVED,
+    DocumentStatus.REPLACED,
+    DocumentStatus.UNDER_REVIEW,
+  ],
   [DocumentStatus.REPLACED]: [DocumentStatus.ARCHIVED],
   [DocumentStatus.ARCHIVED]: [],
 };

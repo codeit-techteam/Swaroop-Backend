@@ -3,6 +3,7 @@ import {
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -385,6 +386,11 @@ export class CreateVehicleSlotDto {
   @IsUUID()
   vehicleId?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  driverId?: string;
+
   @ApiProperty({ example: '2026-09-15' })
   @IsDateString()
   slotDate!: string;
@@ -401,13 +407,13 @@ export class CreateVehicleSlotDto {
   @MaxLength(16)
   endTime?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: '10:00–11:00' })
   @IsOptional()
   @IsString()
   @MaxLength(64)
   timeSlot?: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ example: 'Bay 03' })
   @IsOptional()
   @IsString()
   @MaxLength(64)
@@ -421,11 +427,106 @@ export class CreateVehicleSlotDto {
   quantityMt?: number;
 }
 
+export class VehicleSlotListQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ enum: VehicleSlotStatus })
+  @IsOptional()
+  @IsEnum(VehicleSlotStatus)
+  slotStatus?: VehicleSlotStatus;
+
+  @ApiPropertyOptional({ enum: VehicleSlotStatus })
+  @IsOptional()
+  @IsEnum(VehicleSlotStatus)
+  status?: VehicleSlotStatus;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  warehouseId?: string;
+
+  @ApiPropertyOptional({ example: '2026-09-25' })
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  dateFrom?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  dateTo?: string;
+
+  @ApiPropertyOptional({ enum: VehicleType })
+  @IsOptional()
+  @IsEnum(VehicleType)
+  vehicleType?: VehicleType;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  carrier?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  orderId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  dispatchId?: string;
+}
+
+export class VehicleSlotAvailabilityQueryDto {
+  @ApiProperty()
+  @IsUUID()
+  warehouseId!: string;
+
+  @ApiProperty({ example: '2026-09-25' })
+  @IsDateString()
+  date!: string;
+
+  @ApiPropertyOptional({ description: 'Loading bay label, e.g. Bay 03' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  loadingBayId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  vehicleId?: string;
+
+  @ApiPropertyOptional({ enum: VehicleType })
+  @IsOptional()
+  @IsEnum(VehicleType)
+  vehicleType?: VehicleType;
+}
+
+export class VehicleSlotSummaryQueryDto {
+  @ApiPropertyOptional({ example: '2026-09-25' })
+  @IsOptional()
+  @IsDateString()
+  date?: string;
+}
+
 export class LogisticsListQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: DispatchStatus })
   @IsOptional()
   @IsEnum(DispatchStatus)
   dispatchStatus?: DispatchStatus;
+
+  @ApiPropertyOptional({
+    enum: ['ready', 'scheduled', 'loading', 'dispatched'],
+    description: 'Seller Dispatch UI tab filter (status group)',
+  })
+  @IsOptional()
+  @IsIn(['ready', 'scheduled', 'loading', 'dispatched'])
+  tab?: 'ready' | 'scheduled' | 'loading' | 'dispatched';
 
   @ApiPropertyOptional({ enum: ShipmentStatus })
   @IsOptional()
@@ -441,4 +542,14 @@ export class LogisticsListQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(VehicleSlotStatus)
   slotStatus?: VehicleSlotStatus;
+
+  @ApiPropertyOptional({ enum: VehicleType })
+  @IsOptional()
+  @IsEnum(VehicleType)
+  vehicleType?: VehicleType;
+
+  @ApiPropertyOptional({ enum: VehicleOperationalStatus })
+  @IsOptional()
+  @IsEnum(VehicleOperationalStatus)
+  vehicleStatus?: VehicleOperationalStatus;
 }

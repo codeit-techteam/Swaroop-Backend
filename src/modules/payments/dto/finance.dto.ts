@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsNumber,
   IsOptional,
   IsString,
@@ -12,6 +13,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   PaymentRail,
   PaymentStatus,
+  SettlementStatus,
 } from '../../../generated/prisma/client.js';
 import { PaginationQueryDto } from '../../master-data/common/pagination.js';
 
@@ -92,4 +94,24 @@ export class FinanceListQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(PaymentStatus)
   status?: PaymentStatus;
+}
+
+export class SettlementListQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ enum: SettlementStatus })
+  @IsOptional()
+  @IsEnum(SettlementStatus)
+  status?: SettlementStatus;
+
+  @ApiPropertyOptional({
+    enum: ['createdAt', 'settlementDate', 'grossAmount', 'netAmount', 'status'],
+  })
+  @IsOptional()
+  @IsIn(['createdAt', 'settlementDate', 'grossAmount', 'netAmount', 'status'])
+  sortBy?: 'createdAt' | 'settlementDate' | 'grossAmount' | 'netAmount' | 'status' =
+    'createdAt';
+
+  @ApiPropertyOptional({ enum: ['asc', 'desc'] })
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  override sortOrder?: 'asc' | 'desc' = 'desc';
 }

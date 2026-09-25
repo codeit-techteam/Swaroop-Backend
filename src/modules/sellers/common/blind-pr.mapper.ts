@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
 import type { NegotiationActorRole } from '../../../generated/prisma/client.js';
 import {
   CREDIT_SOURCE,
   isPlatformCredit,
   sellerPlatformCreditStatus,
 } from '../../payments/common/platform-credit.js';
+import { anonymousBuyer } from './blind-buyer.js';
 
 /**
  * Strip buyer identity for blind marketplace seller views.
@@ -64,14 +64,7 @@ export function toBlindPurchaseRequest(
     referenceNumber: pr.referenceNumber,
     status: pr.status,
     priority: pr.priority,
-    buyer: {
-      displayName: 'ANONYMOUS BUYER',
-      reference: `BUYER-${createHash('sha256')
-        .update(pr.customerOrgId)
-        .digest('hex')
-        .slice(0, 8)
-        .toUpperCase()}`,
-    },
+    buyer: anonymousBuyer(pr.customerOrgId),
     paymentMethod: pr.paymentMethod,
     platformCredit: isPlatformCredit(pr.paymentMethod)
       ? {

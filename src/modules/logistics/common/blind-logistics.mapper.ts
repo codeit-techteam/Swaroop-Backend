@@ -9,6 +9,7 @@ import type {
   Vehicle,
   VehicleSlot,
 } from '../../../generated/prisma/client.js';
+import { BLIND_BUYER_DISPLAY_NAME } from '../../sellers/common/blind-buyer.js';
 import { toQty } from './quantity.util.js';
 
 function buyerRef(customerOrgId: string): string {
@@ -29,8 +30,90 @@ function dec(v: unknown): string | null {
 type DispatchRow = Dispatch & {
   ewayBills?: EWayBill[];
   shipments?: Shipment[];
-  purchaseOrder?: { referenceNumber: string; status: string } | null;
+  vehicle?: Vehicle | null;
+  driver?: Driver | null;
+  originWarehouse?: {
+    id: string;
+    code: string;
+    name: string;
+    city?: string | null;
+    state?: string | null;
+  } | null;
+  slots?: Array<{
+    id: string;
+    slotNumber: string | null;
+    slotDate: Date;
+    startTime: string | null;
+    endTime: string | null;
+    timeSlot: string | null;
+    loadingBay: string | null;
+    status: string;
+    warehouse?: {
+      id: string;
+      code: string;
+      name: string;
+      city?: string | null;
+    } | null;
+  }>;
+  purchaseOrder?: {
+    referenceNumber: string;
+    status: string;
+    metadata?: unknown;
+    purchaseRequest?: {
+      items?: Array<{
+        unit?: string | null;
+        grade?: {
+          id: string;
+          code: string | null;
+          name: string;
+          displayName?: string | null;
+        } | null;
+        product?: {
+          id: string;
+          code: string | null;
+          name: string;
+        } | null;
+      }>;
+    } | null;
+  } | null;
 };
+
+function resolveGradeName(po: DispatchRow['purchaseOrder']): string | null {
+  const item = po?.purchaseRequest?.items?.[0];
+  if (item?.grade) {
+    return item.grade.displayName ?? item.grade.name;
+  }
+  const meta = po?.metadata as
+    | {
+        commercialSnapshot?: {
+          gradeName?: string | null;
+          productName?: string | null;
+        };
+      }
+    | null
+    | undefined;
+  return (
+    meta?.commercialSnapshot?.gradeName ??
+    meta?.commercialSnapshot?.productName ??
+    item?.product?.name ??
+    null
+  );
+}
+
+function formatSlotLabel(slot: {
+  slotDate: Date;
+  startTime: string | null;
+  endTime: string | null;
+  timeSlot: string | null;
+}): string {
+  const date = slot.slotDate.toISOString().slice(0, 10);
+  if (slot.timeSlot) return `${date} · ${slot.timeSlot}`;
+  if (slot.startTime && slot.endTime) {
+    return `${date} · ${slot.startTime} - ${slot.endTime}`;
+  }
+  if (slot.startTime) return `${date} · ${slot.startTime}`;
+  return date;
+}
 
 type ShipmentRow = Shipment & {
   trackingEvents?: ShipmentTrackingEvent[];
@@ -107,6 +190,19 @@ export function toCustomerDelivery(d: DeliveryRow | Delivery) {
 }
 
 export function toSellerDispatch(d: DispatchRow) {
+  const activeSlot =
+    (d.slots ?? []).find(
+      (s) => s.status !== 'CANCELLED' && s.status !== 'MISSED',
+    ) ??
+    d.slots?.[0] ??
+    null;
+  const warehouse = d.originWarehouse ?? activeSlot?.warehouse ?? null;
+  const loadingLocation = warehouse
+    ? [warehouse.name, warehouse.city].filter(Boolean).join(', ')
+    : null;
+  const gradeName = resolveGradeName(d.purchaseOrder);
+  const eway = d.ewayBills?.[0] ?? null;
+
   return {
     id: d.id,
     dispatchNumber: d.dispatchNumber,
@@ -115,18 +211,44 @@ export function toSellerDispatch(d: DispatchRow) {
     status: d.status,
     quantity: dec(d.quantity),
     unit: d.unit,
+    gradeName,
     plannedDispatchDate: d.plannedDispatchDate,
     actualDispatchDate: d.actualDispatchDate,
     loadingStartedAt: d.loadingStartedAt,
     loadingCompletedAt: d.loadingCompletedAt,
     originWarehouseId: d.originWarehouseId,
+    loadingLocation,
+    warehouseName: warehouse?.name ?? null,
+    warehouseCode: warehouse?.code ?? null,
     destinationRegion: d.destinationRegion,
     vehicleId: d.vehicleId,
-    driverId: d.driverId,
+    vehicleNumber: d.vehicle?.numberPlate ?? null,
+    vehicleType: d.vehicle?.type ?? null,
+    transporterName: d.vehicle?.transporterName ?? null,
+    driverId: d.driverId ?? d.vehicle?.driverId ?? null,
+    driverName: d.driver?.name ?? d.vehicle?.driverName ?? null,
+    driverPhone: d.driver?.phone ?? d.vehicle?.driverPhone ?? null,
+    vehicleSlotId: activeSlot?.id ?? null,
+    slot: activeSlot
+      ? {
+          id: activeSlot.id,
+          slotNumber: activeSlot.slotNumber,
+          slotDate: activeSlot.slotDate,
+          startTime: activeSlot.startTime,
+          endTime: activeSlot.endTime,
+          timeSlot: activeSlot.timeSlot,
+          loadingBay: activeSlot.loadingBay,
+          status: activeSlot.status,
+          label: formatSlotLabel(activeSlot),
+        }
+      : null,
+    slotLabel: activeSlot ? formatSlotLabel(activeSlot) : null,
     buyer: {
-      displayName: 'ANONYMOUS BUYER',
+      displayName: BLIND_BUYER_DISPLAY_NAME,
       reference: buyerRef(d.customerOrgId),
     },
+    ewayBillNumber: eway?.ewayBillNumber ?? null,
+    ewayBillStatus: eway?.status ?? null,
     ewayBills: (d.ewayBills ?? []).map(toSellerEwayBill),
     shipmentId: d.shipments?.[0]?.id ?? null,
     createdAt: d.createdAt,
@@ -168,7 +290,7 @@ export function toSellerShipment(s: ShipmentRow) {
     destinationRegion:
       (s.destinationSnapshot as { region?: string } | null)?.region ?? null,
     buyer: {
-      displayName: 'ANONYMOUS BUYER',
+      displayName: BLIND_BUYER_DISPLAY_NAME,
       reference: buyerRef(s.customerOrgId),
     },
     trackingEvents: (s.trackingEvents ?? []).map((e) => ({
@@ -216,7 +338,7 @@ export function toSellerDelivery(d: DeliveryRow) {
     exceptionReason: d.exceptionReason,
     exceptionNote: d.exceptionNote,
     buyer: {
-      displayName: 'ANONYMOUS BUYER',
+      displayName: BLIND_BUYER_DISPLAY_NAME,
       reference: buyerRef(d.customerOrgId),
     },
     createdAt: d.createdAt,
@@ -260,23 +382,115 @@ export function toSellerDriver(d: Driver) {
   };
 }
 
-export function toSellerVehicleSlot(s: VehicleSlot) {
+type VehicleSlotRow = VehicleSlot & {
+  warehouse?: {
+    id: string;
+    code: string;
+    name: string;
+    city?: string | null;
+    state?: string | null;
+  } | null;
+  vehicle?: {
+    id: string;
+    numberPlate: string;
+    type: string;
+    transporterName?: string | null;
+    driverName?: string | null;
+    driverPhone?: string | null;
+    driverId?: string | null;
+    capacityMt?: unknown;
+    status?: string;
+    driver?: {
+      id: string;
+      name: string;
+      phone?: string | null;
+      status?: string;
+      licenseExpiry?: Date | null;
+    } | null;
+  } | null;
+  dispatch?: {
+    id: string;
+    dispatchNumber: string;
+    purchaseOrderId: string;
+    customerOrgId: string;
+    status: string;
+    quantity: unknown;
+    unit: string;
+    originWarehouseId?: string | null;
+    destinationRegion?: string | null;
+    purchaseOrder?: { referenceNumber: string; status: string } | null;
+    driver?: { id: string; name: string; phone?: string | null } | null;
+  } | null;
+  shipment?: {
+    id: string;
+    referenceNumber: string;
+    status: string;
+  } | null;
+  metadata?: unknown;
+};
+
+export function toSellerVehicleSlot(s: VehicleSlot | VehicleSlotRow) {
+  const row = s as VehicleSlotRow;
+  const meta =
+    row.metadata && typeof row.metadata === 'object'
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const driverFromVehicle = row.vehicle?.driver;
+  const driverFromDispatch = row.dispatch?.driver;
+  const driverName =
+    driverFromVehicle?.name ??
+    row.vehicle?.driverName ??
+    driverFromDispatch?.name ??
+    null;
+  const driverPhone =
+    driverFromVehicle?.phone ??
+    row.vehicle?.driverPhone ??
+    driverFromDispatch?.phone ??
+    null;
+  const driverId =
+    driverFromVehicle?.id ??
+    row.vehicle?.driverId ??
+    driverFromDispatch?.id ??
+    (typeof meta.driverId === 'string' ? meta.driverId : null);
+
   return {
-    id: s.id,
-    slotNumber: s.slotNumber,
-    warehouseId: s.warehouseId,
-    dispatchId: s.dispatchId,
-    vehicleId: s.vehicleId,
-    shipmentId: s.shipmentId,
-    slotDate: s.slotDate,
-    startTime: s.startTime,
-    endTime: s.endTime,
-    timeSlot: s.timeSlot,
-    loadingBay: s.loadingBay,
-    status: s.status,
-    quantityMt: dec(s.quantityMt),
-    createdAt: s.createdAt,
-    updatedAt: s.updatedAt,
+    id: row.id,
+    slotNumber: row.slotNumber,
+    warehouseId: row.warehouseId,
+    warehouseName: row.warehouse?.name ?? null,
+    warehouseCode: row.warehouse?.code ?? null,
+    warehouseCity: row.warehouse?.city ?? null,
+    dispatchId: row.dispatchId,
+    dispatchNumber: row.dispatch?.dispatchNumber ?? null,
+    orderId: row.dispatch?.purchaseOrderId ?? null,
+    purchaseOrderReference:
+      row.dispatch?.purchaseOrder?.referenceNumber ?? null,
+    vehicleId: row.vehicleId,
+    vehicleNumber: row.vehicle?.numberPlate ?? null,
+    vehicleType: row.vehicle?.type ?? null,
+    carrier: row.vehicle?.transporterName ?? null,
+    driverId,
+    driverName,
+    driverPhone,
+    shipmentId: row.shipmentId,
+    shipmentNumber: row.shipment?.referenceNumber ?? null,
+    slotDate: row.slotDate,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    timeSlot: row.timeSlot,
+    loadingBay: row.loadingBay,
+    status: row.status,
+    quantityMt: dec(row.quantityMt),
+    unit: row.dispatch?.unit ?? 'MT',
+    destinationRegion: row.dispatch?.destinationRegion ?? null,
+    buyer: row.dispatch
+      ? {
+          displayName: 'Anonymous Buyer',
+          reference: buyerRef(row.dispatch.customerOrgId),
+        }
+      : null,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
   };
 }
 

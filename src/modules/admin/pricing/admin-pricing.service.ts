@@ -93,6 +93,24 @@ export class AdminPricingService {
               referenceNumber: true,
               basePrice: true,
               organizationId: true,
+              organization: {
+                select: { id: true, name: true, legalName: true },
+              },
+            },
+          },
+          purchaseRequest: {
+            select: {
+              id: true,
+              referenceNumber: true,
+              status: true,
+              customerOrgId: true,
+              sellerOrgId: true,
+              customerOrg: {
+                select: { id: true, name: true, legalName: true },
+              },
+              sellerOrg: {
+                select: { id: true, name: true, legalName: true },
+              },
             },
           },
         },
@@ -111,6 +129,27 @@ export class AdminPricingService {
               basePrice: r.offer.basePrice.toString(),
             }
           : null,
+        // Admin is NOT blind — include real customer/seller org identity.
+        customer: r.purchaseRequest?.customerOrg
+          ? {
+              id: r.purchaseRequest.customerOrg.id,
+              name: r.purchaseRequest.customerOrg.name,
+              legalName: r.purchaseRequest.customerOrg.legalName,
+            }
+          : null,
+        seller: r.purchaseRequest?.sellerOrg
+          ? {
+              id: r.purchaseRequest.sellerOrg.id,
+              name: r.purchaseRequest.sellerOrg.name,
+              legalName: r.purchaseRequest.sellerOrg.legalName,
+            }
+          : r.offer?.organization
+            ? {
+                id: r.offer.organization.id,
+                name: r.offer.organization.name,
+                legalName: r.offer.organization.legalName,
+              }
+            : null,
       })),
       meta: paginationMeta(page, limit, total),
     };
@@ -134,6 +173,22 @@ export class AdminPricingService {
               basePrice: true,
               organizationId: true,
               status: true,
+              organization: {
+                select: { id: true, name: true, legalName: true },
+              },
+            },
+          },
+          purchaseRequest: {
+            select: {
+              id: true,
+              referenceNumber: true,
+              status: true,
+              customerOrg: {
+                select: { id: true, name: true, legalName: true },
+              },
+              sellerOrg: {
+                select: { id: true, name: true, legalName: true },
+              },
             },
           },
         },
@@ -152,6 +207,9 @@ export class AdminPricingService {
               basePrice: r.offer.basePrice.toString(),
             }
           : null,
+        customer: r.purchaseRequest?.customerOrg ?? null,
+        seller:
+          r.purchaseRequest?.sellerOrg ?? r.offer?.organization ?? null,
       })),
       meta: paginationMeta(page, limit, total),
     };

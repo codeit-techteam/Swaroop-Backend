@@ -137,9 +137,110 @@ export class AdminCreditApproveDto {
   @IsString()
   @MaxLength(2000)
   reason?: string;
+
+  @ApiPropertyOptional({
+    description: 'Customer-facing message. Internal notes go in `reason`.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  customerMessage?: string;
 }
 
+/** Same payload as approve; results in PARTIALLY_APPROVED. */
+export class AdminCreditPartialApproveDto extends AdminCreditApproveDto {}
+
 export class AdminCreditRejectDto {
+  @ApiProperty()
+  @IsString()
+  @MinLength(3)
+  @MaxLength(2000)
+  reason!: string;
+
+  @ApiPropertyOptional({
+    description: 'Customer-facing message. Defaults to `reason`.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  customerMessage?: string;
+}
+
+export class AdminCreditInsuranceReviewDto {
+  @ApiPropertyOptional({ example: 'ICICI Lombard' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  insurancePartner?: string;
+
+  @ApiPropertyOptional({ example: 'REF-99213' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  insuranceReference?: string;
+
+  @ApiPropertyOptional({ example: 2500000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  insuredAmount?: number;
+
+  @ApiPropertyOptional({ description: 'Customer-facing message' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  customerMessage?: string;
+
+  @ApiPropertyOptional({ description: 'Internal notes' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+}
+
+export class AdminCreditArrangementDto {
+  @ApiPropertyOptional({ example: 'ICICI Lombard' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  insurancePartner?: string;
+
+  @ApiPropertyOptional({ example: 'POL-2026-0031' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  insuranceReference?: string;
+
+  @ApiPropertyOptional({ example: 2500000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  insuredAmount?: number;
+
+  @ApiPropertyOptional({ description: 'Customer-facing message' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  customerMessage?: string;
+
+  @ApiPropertyOptional({ description: 'Internal notes' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+}
+
+export class AdminCreditDocumentVerifyDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+}
+
+export class AdminCreditDocumentRejectDto {
   @ApiProperty()
   @IsString()
   @MinLength(3)

@@ -231,6 +231,17 @@ enum CounterOfferStatus {
   EXPIRED
 }
 
+/// Seller-specific visibility row for a single master PurchaseRequest (blind marketplace).
+enum PurchaseRequestSellerMatchStatus {
+  MATCHED
+  VIEWED
+  ACCEPTED
+  REJECTED
+  COUNTER_OFFERED
+  EXPIRED
+  REMOVED
+}
+
 enum Priority {
   LOW
   NORMAL
@@ -502,6 +513,7 @@ enum DocumentCategory {
   KYC
   GST
   PAN
+  AADHAAR
   BANK
   MSME
   ISO
@@ -581,11 +593,17 @@ enum CreditStatus {
 }
 
 enum CreditApplicationStatus {
+  DRAFT
   PENDING
+  DOCUMENTS_UNDER_REVIEW
   UNDER_REVIEW
   DOCUMENTS_REQUIRED
+  INSURANCE_REVIEW
+  CREDIT_ARRANGEMENT_PENDING
   APPROVED
+  PARTIALLY_APPROVED
   REJECTED
+  EXPIRED
   CANCELLED
 }
 
@@ -733,6 +751,7 @@ model User {
   assignedCreditApplications CreditApplication[]   @relation("CreditApplicationAssignee")
   assignedCreditProfiles  CustomerCreditProfile[]  @relation("CreditProfileAssignee")
   creditTransactions      CreditTransaction[]      @relation("CreditTransactionActor")
+  creditApplicationEvents CreditApplicationEvent[] @relation("CreditApplicationEventActor")
   createdCmsBanners       CmsBanner[]              @relation("CmsBannerCreatedBy")
   assignedProcurements    ProcurementAssignment[]
   procurementActivities   ProcurementActivity[]
@@ -743,6 +762,8 @@ model User {
   authSessions            AuthSession[]
   otpVerifications        OtpVerification[]
   passwordResetTokens     PasswordResetToken[]
+  supportTicketsRequested SupportTicket[]         @relation("SupportTicketRequester")
+  supportTicketsAssigned  SupportTicket[]         @relation("SupportTicketAssignee")
 
   @@index([status])
   @@index([createdAt])
@@ -786,6 +807,7 @@ model Organization {
   carts               Cart[]
   purchaseRequests    PurchaseRequest[]    @relation("PrCustomerOrg")
   sellerPurchaseReqs  PurchaseRequest[]    @relation("PrSellerOrg")
+  sellerPrMatches     PurchaseRequestSellerMatch[] @relation("PrSellerMatchOrg")
   procurements        ProcurementCase[]
   customerOrders      Order[]              @relation("OrderCustomerOrg")
   sellerOrders        Order[]              @relation("OrderSellerOrg")
@@ -805,6 +827,7 @@ model Organization {
   auditLogs           AuditLog[]
   checkoutQuotesAsCustomer CheckoutQuote[] @relation("CheckoutQuoteCustomerOrg")
   checkoutQuotesAsSeller   CheckoutQuote[] @relation("CheckoutQuoteSellerOrg")
+  supportTickets           SupportTicket[]
 
   @@index([type])
   @@index([status])
@@ -1030,19 +1053,50 @@ model CreditApplication {
   decidedAt           DateTime?                @map("decided_at")
   decisionReason      String?                  @map("decision_reason")
   approvedLimit       Decimal?                 @map("approved_limit") @db.Decimal(18, 2)
+  approvedTenureDays  Int?                     @map("approved_tenure_days")
+  submittedAt         DateTime?                @map("submitted_at")
+  effectiveAt         DateTime?                @map("effective_at")
+  expiresAt           DateTime?                @map("expires_at")
+  /// Customer-facing message from credit management. Never store internal notes here.
+  customerMessage     String?                  @map("customer_message")
+  insuranceStatus     String?                  @default("NOT_STARTED") @map("insurance_status")
+  arrangementStatus   String?                  @default("NOT_STARTED") @map("arrangement_status")
+  insurancePartner    String?                  @map("insurance_partner")
+  insuranceReference  String?                  @map("insurance_reference")
+  insuredAmount       Decimal?                 @map("insured_amount") @db.Decimal(18, 2)
   notes               String?
   metadata            Json?
   createdAt           DateTime                 @default(now()) @map("created_at")
   updatedAt           DateTime                 @updatedAt @map("updated_at")
 
-  customerProfile CustomerProfile        @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
-  creditProfile   CustomerCreditProfile? @relation(fields: [creditProfileId], references: [id])
-  assignedAdmin   User?                  @relation("CreditApplicationAssignee", fields: [assignedAdminId], references: [id])
+  customerProfile CustomerProfile          @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  creditProfile   CustomerCreditProfile?   @relation(fields: [creditProfileId], references: [id])
+  assignedAdmin   User?                    @relation("CreditApplicationAssignee", fields: [assignedAdminId], references: [id])
+  events          CreditApplicationEvent[]
 
   @@index([customerProfileId, status])
   @@index([status, createdAt])
   @@index([assignedAdminId])
   @@map("credit_applications")
+}
+
+model CreditApplicationEvent {
+  id                  String   @id @default(uuid()) @db.Uuid
+  creditApplicationId String   @map("credit_application_id") @db.Uuid
+  eventType           String   @map("event_type")
+  actorUserId         String?  @map("actor_user_id") @db.Uuid
+  actorRole           String?  @map("actor_role")
+  customerVisible     Boolean  @default(false) @map("customer_visible")
+  description         String
+  metadata            Json?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  creditApplication CreditApplication @relation(fields: [creditApplicationId], references: [id], onDelete: Cascade)
+  actor             User?             @relation("CreditApplicationEventActor", fields: [actorUserId], references: [id])
+
+  @@index([creditApplicationId, createdAt])
+  @@index([eventType, createdAt])
+  @@map("credit_application_events")
 }
 
 model CreditTransaction {
@@ -1763,6 +1817,7 @@ model Offer {
   validUntil      DateTime?    @map("valid_until")
   status          OfferStatus  @default(DRAFT)
   visibility      String?      @default("MARKETPLACE")
+  version         Int          @default(1)
   createdById     String?      @map("created_by_id") @db.Uuid
   metadata        Json?
   createdAt       DateTime     @default(now()) @map("created_at")
@@ -1781,6 +1836,7 @@ model Offer {
   quotations           SupplierQuotation[]
   cartItems            CartItem[]
   purchaseRequestItems PurchaseRequestItem[]
+  purchaseRequestMatches PurchaseRequestSellerMatch[]
   orderItems           OrderItem[]
   checkoutQuotes       CheckoutQuote[]
 
@@ -1788,7 +1844,10 @@ model Offer {
   @@index([sellerProfileId])
   @@index([productId])
   @@index([gradeId])
+  @@index([warehouseId])
   @@index([status, validUntil])
+  @@index([status, validFrom, validUntil])
+  @@index([referenceNumber])
   @@map("offers")
 }
 
@@ -1876,6 +1935,7 @@ model PurchaseRequest {
   counterOffers   CounterOffer[]
   events          PurchaseRequestEvent[]
   priceRevisions  PriceRevision[]
+  sellerMatches   PurchaseRequestSellerMatch[]
   procurementCase ProcurementCase?
   purchaseOrders  PurchaseOrder[]
   orders          Order[]
@@ -1889,6 +1949,38 @@ model PurchaseRequest {
   @@index([responseDeadline])
   @@index([quoteId])
   @@map("purchase_requests")
+}
+
+/// One master PR can be matched to many eligible sellers without duplicating the PR.
+/// Each seller only sees their own match row (blind marketplace).
+model PurchaseRequestSellerMatch {
+  id                   String                          @id @default(uuid()) @db.Uuid
+  purchaseRequestId    String                          @map("purchase_request_id") @db.Uuid
+  sellerOrgId          String                          @map("seller_org_id") @db.Uuid
+  offerId              String?                         @map("offer_id") @db.Uuid
+  matchStrategy        String?                         @map("match_strategy")
+  status               PurchaseRequestSellerMatchStatus @default(MATCHED)
+  matchedAt            DateTime                        @default(now()) @map("matched_at")
+  responseDeadline     DateTime?                       @map("response_deadline")
+  viewedAt             DateTime?                       @map("viewed_at")
+  respondedAt          DateTime?                       @map("responded_at")
+  sellerOfferPrice     Decimal?                        @map("seller_offer_price") @db.Decimal(18, 4)
+  sellerCounterPrice   Decimal?                        @map("seller_counter_price") @db.Decimal(18, 4)
+  sellerRequestedPrice Decimal?                        @map("seller_requested_price") @db.Decimal(18, 4)
+  metadata             Json?
+  createdAt            DateTime                        @default(now()) @map("created_at")
+  updatedAt            DateTime                        @updatedAt @map("updated_at")
+
+  purchaseRequest PurchaseRequest @relation(fields: [purchaseRequestId], references: [id], onDelete: Cascade)
+  sellerOrg       Organization    @relation("PrSellerMatchOrg", fields: [sellerOrgId], references: [id])
+  offer           Offer?          @relation(fields: [offerId], references: [id])
+
+  @@unique([purchaseRequestId, sellerOrgId])
+  @@index([sellerOrgId, status])
+  @@index([purchaseRequestId, status])
+  @@index([responseDeadline])
+  @@index([status, responseDeadline])
+  @@map("purchase_request_seller_matches")
 }
 
 model CounterOffer {
@@ -3110,4 +3202,101 @@ model PasswordResetToken {
   @@index([userId])
   @@index([expiresAt])
   @@map("password_reset_tokens")
+}
+
+// =============================================================================
+// SUPPORT TICKETS
+// =============================================================================
+
+enum SupportRequesterType {
+  CUSTOMER
+  SELLER
+}
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum SupportTicketCategory {
+  PAYMENT
+  ORDERS
+  SHIPMENT
+  INVOICE
+  GST
+  TECHNICAL
+  MARKETPLACE
+  CREDIT
+  INVENTORY
+  DISPATCH
+  COMPLIANCE
+  ACCOUNT
+  OTHERS
+}
+
+enum SupportMessageSender {
+  REQUESTER
+  AGENT
+  SYSTEM
+}
+
+model SupportTicket {
+  id               String                 @id @default(uuid()) @db.Uuid
+  ticketNumber     String                 @unique @map("ticket_number")
+  requesterType    SupportRequesterType   @map("requester_type")
+  requesterUserId  String                 @map("requester_user_id") @db.Uuid
+  organizationId   String                 @map("organization_id") @db.Uuid
+  category         SupportTicketCategory
+  priority         SupportTicketPriority  @default(MEDIUM)
+  status           SupportTicketStatus    @default(OPEN)
+  subject          String
+  description      String                 @db.Text
+  relatedOrderId   String?                @map("related_order_id")
+  attachmentName   String?                @map("attachment_name")
+  assignedToName   String?                @map("assigned_to_name")
+  assignedToUserId String?                @map("assigned_to_user_id") @db.Uuid
+  resolvedAt       DateTime?              @map("resolved_at")
+  closedAt         DateTime?              @map("closed_at")
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+
+  requesterUser  User                    @relation("SupportTicketRequester", fields: [requesterUserId], references: [id], onDelete: Cascade)
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  assignedToUser User?                   @relation("SupportTicketAssignee", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  messages       SupportTicketMessage[]
+
+  @@index([requesterUserId])
+  @@index([organizationId])
+  @@index([requesterType])
+  @@index([status])
+  @@index([category])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("support_tickets")
+}
+
+model SupportTicketMessage {
+  id             String               @id @default(uuid()) @db.Uuid
+  ticketId       String               @map("ticket_id") @db.Uuid
+  sender         SupportMessageSender
+  senderName     String               @map("sender_name")
+  body           String               @db.Text
+  attachmentName String?              @map("attachment_name")
+  createdAt      DateTime             @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+  @@index([createdAt])
+  @@map("support_ticket_messages")
 }

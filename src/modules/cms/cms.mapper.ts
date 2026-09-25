@@ -17,6 +17,8 @@ export type PublicCmsBanner = {
   endAt: Date | null;
   mediaKey: string | null;
   mediaUrl: string | null;
+  /** Optional mobile creative (from metadata.mobileImage), falls back to mediaUrl. */
+  mobileMediaUrl: string | null;
   targetRoute: string | null;
   ctaText: string;
   ctaAction: string;
@@ -123,10 +125,16 @@ export function toPublicBanner(
     | 'metadata'
   >,
   mediaUrl?: string | null,
+  mobileMediaUrl?: string | null,
 ): PublicCmsBanner {
   const meta = asMetadata(row.metadata);
   const imageUrl =
     mediaUrl ?? (isDirectMediaUrl(row.mediaKey) ? row.mediaKey : null);
+  const mobileMeta = metaString(meta, 'mobileImage');
+  const mobileUrl =
+    mobileMediaUrl ??
+    (isDirectMediaUrl(mobileMeta) ? mobileMeta : null) ??
+    imageUrl;
 
   return {
     id: row.id,
@@ -139,6 +147,7 @@ export function toPublicBanner(
     endAt: row.endAt,
     mediaKey: row.mediaKey,
     mediaUrl: imageUrl,
+    mobileMediaUrl: mobileUrl,
     targetRoute: row.targetRoute,
     ctaText: metaString(meta, 'ctaText') ?? (row.targetRoute ? 'Open' : 'View'),
     ctaAction: metaString(meta, 'ctaAction') ?? 'NO_ACTION',

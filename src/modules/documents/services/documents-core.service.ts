@@ -278,6 +278,57 @@ export class DocumentsCoreService {
     return this.mapDocument(doc);
   }
 
+  /**
+   * Mark a freshly uploaded file as ready for admin review.
+   * Verifies the object exists in storage when configured.
+   */
+  async submitForReview(id: string, ownership?: OwnershipFilter) {
+    const existing = await this.requireDocument(id, ownership);
+    if (existing.status === DocumentStatus.UNDER_REVIEW) {
+      return this.mapDocument(existing);
+    }
+    if (existing.status === DocumentStatus.VERIFIED) {
+      return this.mapDocument(existing);
+    }
+
+    this.state.assertTransition(existing.status, DocumentStatus.UNDER_REVIEW);
+
+    if (this.storage.isConfigured()) {
+      const stored = await this.storage.exists(existing.storageKey);
+      if (!stored) {
+        throw new BadRequestException(
+          'File is not in storage yet. Finish the upload, then submit for review.',
+        );
+      }
+    }
+
+    const meta =
+      existing.metadata &&
+      typeof existing.metadata === 'object' &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+
+    const updated = await this.prisma.document.update({
+      where: { id },
+      data: {
+        status: DocumentStatus.UNDER_REVIEW,
+        approvedById: null,
+        approvedAt: null,
+        rejectedById: null,
+        rejectedAt: null,
+        rejectionReason: null,
+        metadata: {
+          ...meta,
+          r2Confirmed: true,
+          r2ConfirmedAt: new Date().toISOString(),
+          awaitingAdminReview: true,
+        } as Prisma.InputJsonValue,
+      },
+    });
+    return this.mapDocument(updated);
+  }
+
   async replace(
     id: string,
     input: ReplaceDocumentInput,
@@ -323,6 +374,26 @@ export class DocumentsCoreService {
 
     const storageProvider = this.resolveStorageProvider();
 
+    this.state.assertTransition(existing.status, DocumentStatus.UNDER_REVIEW);
+
+    const existingMeta =
+      existing.metadata &&
+      typeof existing.metadata === 'object' &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+    const nextMeta = {
+      ...existingMeta,
+      ...(input.metadata &&
+      typeof input.metadata === 'object' &&
+      !Array.isArray(input.metadata)
+        ? (input.metadata as Record<string, unknown>)
+        : {}),
+      r2Confirmed: Boolean(input.storageKey),
+      replacedAt: new Date().toISOString(),
+      awaitingAdminReview: true,
+    };
+
     const updated = await this.prisma.$transaction(async (tx) => {
       await tx.documentVersion.create({
         data: {
@@ -352,7 +423,7 @@ export class DocumentsCoreService {
           rejectedAt: null,
           rejectionReason: null,
           verificationNotes: null,
-          metadata: input.metadata as Prisma.InputJsonValue | undefined,
+          metadata: nextMeta as Prisma.InputJsonValue,
         },
       });
     });
