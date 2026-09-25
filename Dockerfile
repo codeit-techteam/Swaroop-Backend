@@ -2,13 +2,14 @@
 
 FROM node:22-bookworm-slim AS base
 WORKDIR /app
-ENV NODE_ENV=production
 
 FROM base AS deps
 RUN apt-get update -y && apt-get install -y openssl ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
+# Install with devDependencies so Nest/TS can compile in the build stage.
+# NODE_ENV=production is only set on the final runner image.
 RUN npm ci
 
 FROM deps AS build
