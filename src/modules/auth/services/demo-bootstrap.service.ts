@@ -3,6 +3,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import {
+  CmsBannerPlacement,
+  CmsBannerPlatform,
+  CmsBannerStatus,
   CustomerStatus,
   GradeParentGroup,
   GradeStatus,
@@ -62,6 +65,7 @@ export class DemoBootstrapService implements OnModuleInit {
     if (process.env.ENSURE_DEMO_USERS === 'false') return;
     try {
       await this.ensureDemoAccounts();
+      await this.ensureDefaultCustomerHeroBanner();
     } catch (error) {
       this.logger.error(
         'Failed to ensure demo accounts on startup',
@@ -121,6 +125,59 @@ export class DemoBootstrapService implements OnModuleInit {
     this.logger.log(
       `Demo accounts ensured (${DEMO_ADMIN_EMAIL} / ${DEMO_PASSWORD})`,
     );
+  }
+
+  /**
+   * Idempotent default Customer WEBAPP / APP home hero (navy grid + dual CTAs).
+   * Editable later via Admin → Content → Banners; does not overwrite custom banners.
+   */
+  async ensureDefaultCustomerHeroBanner(): Promise<void> {
+    const existing = await this.prisma.cmsBanner.findFirst({
+      where: {
+        deletedAt: null,
+        placement: CmsBannerPlacement.HOME_HERO,
+        status: { in: [CmsBannerStatus.ACTIVE, CmsBannerStatus.DRAFT] },
+      },
+      select: { id: true },
+    });
+    if (existing) return;
+
+    const now = new Date();
+    const endAt = new Date(now);
+    endAt.setFullYear(endAt.getFullYear() + 5);
+
+    await this.prisma.cmsBanner.create({
+      data: {
+        title: 'Source Petrochemicals with Confidence',
+        subtitle:
+          'Discover verified grades, compare market prices and procure directly through a secure blind marketplace.',
+        placement: CmsBannerPlacement.HOME_HERO,
+        platform: CmsBannerPlatform.CUSTOMER_ALL,
+        status: CmsBannerStatus.ACTIVE,
+        displayOrder: 0,
+        startAt: now,
+        endAt,
+        targetRoute: '/marketplace',
+        metadata: {
+          name: 'Customer Home Hero',
+          campaignName: 'Default Home Hero',
+          campaignType: 'INFORMATIONAL',
+          badge: 'Blind B2B Marketplace',
+          layoutVariant: 'NAVY_GRID',
+          description:
+            'Discover verified grades, compare market prices and procure directly through a secure blind marketplace.',
+          ctaText: 'Browse Marketplace',
+          ctaAction: 'OPEN_MARKETPLACE',
+          secondaryCtaText: 'Create Purchase Request',
+          secondaryCtaAction: 'OPEN_PURCHASE_REQUEST',
+          platforms: ['CUSTOMER_APP', 'CUSTOMER_WEB'],
+          placement: 'HOME_HERO',
+          priority: 1,
+          source: 'demo_bootstrap',
+        },
+      },
+    });
+    this.logger.log('Default Customer HOME_HERO navy-grid banner ensured');
   }
 
   private async ensureRole(code: RoleCode): Promise<void> {

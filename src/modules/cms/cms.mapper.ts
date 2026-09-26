@@ -6,6 +6,9 @@ import {
 
 export type CmsAudience = 'CUSTOMER' | 'SELLER';
 
+/** IMAGE_OVERLAY = photo creative; NAVY_GRID = structured navy hero (Customer WEB). */
+export type CmsBannerLayoutVariant = 'IMAGE_OVERLAY' | 'NAVY_GRID';
+
 export type PublicCmsBanner = {
   id: string;
   title: string;
@@ -27,6 +30,12 @@ export type PublicCmsBanner = {
   externalUrl: string | null;
   targetId: string | null;
   priority: number;
+  /** Structured layout for Customer WEB hero (navy grid + dual CTAs). */
+  layoutVariant: CmsBannerLayoutVariant;
+  secondaryCtaText: string | null;
+  secondaryCtaAction: string | null;
+  secondaryExternalUrl: string | null;
+  secondaryTargetId: string | null;
 };
 
 const CUSTOMER_PLATFORMS: CmsBannerPlatform[] = [
@@ -61,6 +70,16 @@ function metaString(
 ): string | null {
   const value = meta[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function layoutVariantFromMeta(
+  meta: Record<string, unknown>,
+  hasMedia: boolean,
+): CmsBannerLayoutVariant {
+  const raw = metaString(meta, 'layoutVariant');
+  if (raw === 'NAVY_GRID' || raw === 'IMAGE_OVERLAY') return raw;
+  // No creative → treat as structured navy grid so Admin can ship text-only heroes.
+  return hasMedia ? 'IMAGE_OVERLAY' : 'NAVY_GRID';
 }
 
 export function placementBadge(placement: CmsBannerPlacement): string {
@@ -136,6 +155,8 @@ export function toPublicBanner(
     (isDirectMediaUrl(mobileMeta) ? mobileMeta : null) ??
     imageUrl;
 
+  const hasMedia = Boolean(imageUrl || mobileUrl);
+
   return {
     id: row.id,
     title: row.title,
@@ -160,5 +181,10 @@ export function toPublicBanner(
     externalUrl: metaString(meta, 'externalUrl'),
     targetId: metaString(meta, 'targetId'),
     priority: Number(meta.priority) || 3,
+    layoutVariant: layoutVariantFromMeta(meta, hasMedia),
+    secondaryCtaText: metaString(meta, 'secondaryCtaText'),
+    secondaryCtaAction: metaString(meta, 'secondaryCtaAction'),
+    secondaryExternalUrl: metaString(meta, 'secondaryExternalUrl'),
+    secondaryTargetId: metaString(meta, 'secondaryTargetId'),
   };
 }
