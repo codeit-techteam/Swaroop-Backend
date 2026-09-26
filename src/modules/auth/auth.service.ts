@@ -40,6 +40,10 @@ type RequestMeta = {
 
 type DbClient = Prisma.TransactionClient | PrismaService;
 
+/** Shared Customer + Seller demo identity (Karan Veer). */
+const DEMO_PHONE_E164 = '+918240890242';
+const DEMO_OTP = '123456';
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -91,15 +95,12 @@ export class AuthService {
       data: { consumedAt: new Date() },
     });
 
-    const demoPhone = '+918240890242';
-    const isNonProduction =
-      this.configService.get<string>('app.env') !== 'production';
     const useFixedDevOtp =
-      isNonProduction &&
+      this.isFixedDevOtpEnabled() &&
       identifierType === OtpIdentifierType.PHONE &&
-      identifier === demoPhone;
+      identifier === DEMO_PHONE_E164;
 
-    const otp = useFixedDevOtp ? '123456' : this.crypto.generateOtp(otpLength);
+    const otp = useFixedDevOtp ? DEMO_OTP : this.crypto.generateOtp(otpLength);
     const otpHash = this.crypto.hashOtp(otp);
     const user = await this.findUserByIdentifier(identifier, identifierType);
 
@@ -134,6 +135,23 @@ export class AuthService {
 
   async verifyOtp(dto: VerifyOtpDto, meta: RequestMeta = {}) {
     const { identifier, identifierType } = this.resolveIdentifier(dto);
+
+    // Dev/demo shortcut: Karan Veer (+918240890242) + OTP 123456 always works
+    // even if send was skipped or rate-limited — used by Seller/Customer local UIs.
+    if (
+      this.isFixedDevOtpEnabled() &&
+      identifierType === OtpIdentifierType.PHONE &&
+      identifier === DEMO_PHONE_E164 &&
+      dto.otp === DEMO_OTP
+    ) {
+      return this.issueSessionForIdentifier(
+        identifier,
+        identifierType,
+        dto,
+        meta,
+      );
+    }
+
     const record = await this.prisma.otpVerification.findFirst({
       where: {
         identifier,
@@ -193,66 +211,13 @@ export class AuthService {
         },
       });
 
-      let user = await this.findUserByIdentifier(
+      return this.completeOtpLogin(
+        tx,
         identifier,
         identifierType,
-        tx,
+        dto,
+        meta,
       );
-
-      if (!user) {
-        if (
-          dto.purpose !== OtpPurpose.LOGIN &&
-          dto.purpose !== OtpPurpose.SIGNUP
-        ) {
-          throw new AuthException(
-            AuthErrorCode.AUTH_USER_NOT_FOUND,
-            'User not found',
-            HttpStatus.NOT_FOUND,
-          );
-        }
-
-        const roleHint = this.normalizeRoleHint(dto.roleHint);
-        user = await tx.user.create({
-          data: {
-            phone:
-              identifierType === OtpIdentifierType.PHONE ? identifier : null,
-            email:
-              identifierType === OtpIdentifierType.EMAIL ? identifier : null,
-            status: UserStatus.ACTIVE,
-            phoneVerified: identifierType === OtpIdentifierType.PHONE,
-            emailVerified: identifierType === OtpIdentifierType.EMAIL,
-            userRoles: {
-              create: {
-                role: { connect: { code: roleHint } },
-              },
-            },
-          },
-        });
-      } else {
-        this.assertUserCanAuthenticate(user);
-        user = await tx.user.update({
-          where: { id: user.id },
-          data: {
-            lastLoginAt: new Date(),
-            phoneVerified:
-              identifierType === OtpIdentifierType.PHONE
-                ? true
-                : user.phoneVerified,
-            emailVerified:
-              identifierType === OtpIdentifierType.EMAIL
-                ? true
-                : user.emailVerified,
-            status:
-              user.status === UserStatus.PENDING
-                ? UserStatus.ACTIVE
-                : user.status,
-          },
-        });
-      }
-
-      const tokens = await this.createSession(user.id, meta, tx);
-      const publicUser = await this.toPublicUser(user.id, tx);
-      return { user: publicUser, ...tokens };
     });
 
     return result;
@@ -580,6 +545,89 @@ export class AuthService {
     });
 
     return { message: 'Password reset successfully' };
+  }
+
+  private isFixedDevOtpEnabled(): boolean {
+    if (this.configService.get<boolean>('security.authDevFixedOtp') === true) {
+      return true;
+    }
+    return this.configService.get<string>('app.env') !== 'production';
+  }
+
+  private async issueSessionForIdentifier(
+    identifier: string,
+    identifierType: OtpIdentifierType,
+    dto: VerifyOtpDto,
+    meta: RequestMeta,
+  ) {
+    return this.prisma.$transaction(async (tx: DbClient) =>
+      this.completeOtpLogin(tx, identifier, identifierType, dto, meta),
+    );
+  }
+
+  private async completeOtpLogin(
+    tx: DbClient,
+    identifier: string,
+    identifierType: OtpIdentifierType,
+    dto: VerifyOtpDto,
+    meta: RequestMeta,
+  ) {
+    let user = await this.findUserByIdentifier(identifier, identifierType, tx);
+
+    if (!user) {
+      if (
+        dto.purpose !== OtpPurpose.LOGIN &&
+        dto.purpose !== OtpPurpose.SIGNUP
+      ) {
+        throw new AuthException(
+          AuthErrorCode.AUTH_USER_NOT_FOUND,
+          'User not found',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      const roleHint = this.normalizeRoleHint(dto.roleHint);
+      user = await tx.user.create({
+        data: {
+          phone: identifierType === OtpIdentifierType.PHONE ? identifier : null,
+          email: identifierType === OtpIdentifierType.EMAIL ? identifier : null,
+          firstName: identifier === DEMO_PHONE_E164 ? 'Karan' : null,
+          lastName: identifier === DEMO_PHONE_E164 ? 'Veer' : null,
+          status: UserStatus.ACTIVE,
+          phoneVerified: identifierType === OtpIdentifierType.PHONE,
+          emailVerified: identifierType === OtpIdentifierType.EMAIL,
+          userRoles: {
+            create: {
+              role: { connect: { code: roleHint } },
+            },
+          },
+        },
+      });
+    } else {
+      this.assertUserCanAuthenticate(user);
+      user = await tx.user.update({
+        where: { id: user.id },
+        data: {
+          lastLoginAt: new Date(),
+          phoneVerified:
+            identifierType === OtpIdentifierType.PHONE
+              ? true
+              : user.phoneVerified,
+          emailVerified:
+            identifierType === OtpIdentifierType.EMAIL
+              ? true
+              : user.emailVerified,
+          status:
+            user.status === UserStatus.PENDING
+              ? UserStatus.ACTIVE
+              : user.status,
+        },
+      });
+    }
+
+    const tokens = await this.createSession(user.id, meta, tx);
+    const publicUser = await this.toPublicUser(user.id, tx);
+    return { user: publicUser, ...tokens };
   }
 
   private resolveIdentifier(dto: { phone?: string; email?: string }): {

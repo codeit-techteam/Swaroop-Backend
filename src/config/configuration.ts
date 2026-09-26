@@ -30,6 +30,8 @@ export type AppConfig = {
     otpMaxAttempts: number;
     otpResendCooldownSeconds: number;
     authDevExposeOtp: boolean;
+    /** When true (or non-production), demo phone +918240890242 always uses OTP 123456. */
+    authDevFixedOtp: boolean;
     passwordResetExpiresInSeconds: number;
     bcryptSaltRounds: number;
   };
@@ -121,6 +123,10 @@ export default (): AppConfig => {
         process.env.OTP_RESEND_COOLDOWN_SECONDS ?? 60,
       ),
       authDevExposeOtp: process.env.AUTH_DEV_EXPOSE_OTP === 'true',
+      authDevFixedOtp:
+        process.env.AUTH_DEV_FIXED_OTP === 'true' ||
+        (process.env.NODE_ENV !== 'production' &&
+          process.env.AUTH_DEV_FIXED_OTP !== 'false'),
       passwordResetExpiresInSeconds: Number(
         process.env.PASSWORD_RESET_EXPIRES_IN_SECONDS ?? 1800,
       ),
