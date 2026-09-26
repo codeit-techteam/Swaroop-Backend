@@ -128,9 +128,59 @@ export class ProductsService {
     return grade;
   }
 
+  /**
+   * Seller Product.code is unique per org. Grade Master codes are shared —
+   * never use them raw as SKUs or createListing hits 409 on the second listing.
+   */
+  private async allocateUniqueProductCode(
+    organizationId: string,
+    requested: string,
+  ): Promise<string> {
+    const base =
+      requested
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'SKU';
+
+    const existing = await this.prisma.product.findFirst({
+      where: { organizationId, code: base },
+      select: { id: true, deletedAt: true },
+    });
+
+    if (!existing) return base;
+
+    // Soft-deleted rows still occupy the unique (org, code) slot — free it.
+    if (existing.deletedAt) {
+      await this.prisma.product.update({
+        where: { id: existing.id },
+        data: {
+          code: `${base.slice(0, 28)}__DEL__${existing.id.replace(/-/g, '').slice(0, 8)}`,
+        },
+      });
+      return base;
+    }
+
+    for (let i = 2; i < 100; i += 1) {
+      const candidate = `${base}-${i}`.slice(0, 48);
+      const hit = await this.prisma.product.findFirst({
+        where: { organizationId, code: candidate },
+        select: { id: true },
+      });
+      if (!hit) return candidate;
+    }
+
+    return `${base}-${Date.now().toString(36).toUpperCase()}`.slice(0, 48);
+  }
+
   async create(userId: string, dto: CreateProductDto) {
     const ctx = await this.ctx(userId);
     await this.assertActiveGrade(dto.gradeId);
+    const productCode = await this.allocateUniqueProductCode(
+      ctx.organizationId,
+      dto.code,
+    );
 
     try {
       const product = await this.prisma.product.create({
@@ -138,7 +188,7 @@ export class ProductsService {
           organizationId: ctx.organizationId,
           sellerProfileId: ctx.sellerProfileId,
           gradeId: dto.gradeId,
-          code: dto.code.trim().toUpperCase(),
+          code: productCode,
           name: dto.name.trim(),
           brand: dto.brand,
           manufacturer: dto.manufacturer,
@@ -189,11 +239,11 @@ export class ProductsService {
 
   /**
    * Production listing: Product + Inventory + Offer (+ optional marketplace publish).
-   * Customers only see ACTIVE product + ACTIVE offer; documents attach after create.
+   * Customers only see ACTIVE product + ACTIVE offer + customerVisible grade.
    */
   async createListing(userId: string, dto: CreateMarketplaceListingDto) {
     const ctx = await this.ctx(userId);
-    await this.assertActiveGrade(dto.gradeId);
+    const grade = await this.assertActiveGrade(dto.gradeId);
 
     const warehouse = await this.resolveListingWarehouse(ctx, dto);
     const publish = dto.publishToMarketplace !== false;
@@ -201,6 +251,14 @@ export class ProductsService {
       throw new BadRequestException(
         'Only APPROVED sellers can publish listings to the marketplace',
       );
+    }
+
+    // Publishing to marketplace requires the Grade Master row to be customer-visible.
+    if (publish && !grade.customerVisible) {
+      await this.prisma.grade.update({
+        where: { id: grade.id },
+        data: { customerVisible: true },
+      });
     }
 
     const technicalSpecs: Record<string, unknown> = {
@@ -223,6 +281,10 @@ export class ProductsService {
     const offerStatus = publish ? OfferStatus.ACTIVE : OfferStatus.DRAFT;
     const stock = Number(dto.availableStock ?? 0);
     const unit = dto.unit ?? 'MT';
+    const productCode = await this.allocateUniqueProductCode(
+      ctx.organizationId,
+      dto.code,
+    );
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
@@ -231,7 +293,7 @@ export class ProductsService {
             organizationId: ctx.organizationId,
             sellerProfileId: ctx.sellerProfileId,
             gradeId: dto.gradeId,
-            code: dto.code.trim().toUpperCase(),
+            code: productCode,
             name: dto.name.trim(),
             brand: dto.brand ?? dto.manufacturer,
             manufacturer: dto.manufacturer,
@@ -249,6 +311,7 @@ export class ProductsService {
               notes: dto.notes ?? null,
               reservedStock: dto.reservedStock ?? 0,
               gstPercent: resolveListingGstPercent(dto),
+              gradeMasterCode: dto.code.trim().toUpperCase(),
             } as Prisma.InputJsonValue,
           },
         });
@@ -659,6 +722,20 @@ export class ProductsService {
       throw new BadRequestException(
         'Only APPROVED sellers can publish listings to the marketplace',
       );
+    }
+
+    const gradeId = dto.gradeId ?? existing.gradeId;
+    if (publish && gradeId) {
+      const grade = await this.prisma.grade.findFirst({
+        where: { id: gradeId, deletedAt: null },
+        select: { id: true, customerVisible: true },
+      });
+      if (grade && !grade.customerVisible) {
+        await this.prisma.grade.update({
+          where: { id: grade.id },
+          data: { customerVisible: true },
+        });
+      }
     }
 
     const warehouse = await this.resolveListingWarehouse(ctx, dto);
