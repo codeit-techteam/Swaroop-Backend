@@ -6,8 +6,29 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 import { PrismaClient } from '../generated/prisma/client.js';
 import type { AppConfig } from '../config/configuration.js';
+
+function createPool(connectionString: string): Pool {
+  // DigitalOcean Managed Postgres presents a CA that Node/pg may reject when
+  // sslmode=require is treated as verify-full. Accept TLS without pinning CA
+  // for managed hosts; local docker Postgres stays plain.
+  const needsRelaxedSsl =
+    /ondigitalocean\.com/i.test(connectionString) ||
+    /[?&]sslmode=require\b/i.test(connectionString);
+
+  return new Pool({
+    connectionString,
+    max: 10,
+    connectionTimeoutMillis: 10_000,
+    ...(needsRelaxedSsl
+      ? {
+          ssl: { rejectUnauthorized: false },
+        }
+      : {}),
+  });
+}
 
 @Injectable()
 export class PrismaService
@@ -15,6 +36,7 @@ export class PrismaService
   implements OnModuleInit, OnModuleDestroy
 {
   private readonly logger = new Logger(PrismaService.name);
+  private readonly pool: Pool;
 
   constructor(private readonly configService: ConfigService) {
     const databaseUrl = configService.get<AppConfig['database']['url']>(
@@ -26,8 +48,10 @@ export class PrismaService
       throw new Error('DATABASE_URL is not configured');
     }
 
-    const adapter = new PrismaPg({ connectionString: databaseUrl });
+    const pool = createPool(databaseUrl);
+    const adapter = new PrismaPg(pool);
     super({ adapter });
+    this.pool = pool;
   }
 
   async onModuleInit(): Promise<void> {
@@ -54,6 +78,7 @@ export class PrismaService
 
   async onModuleDestroy(): Promise<void> {
     await this.$disconnect();
+    await this.pool.end();
     this.logger.log('PostgreSQL connection closed');
   }
 
