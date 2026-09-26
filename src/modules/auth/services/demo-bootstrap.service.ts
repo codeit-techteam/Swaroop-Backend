@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import {
   CustomerStatus,
   GradeParentGroup,
@@ -21,6 +21,9 @@ import { CryptoService } from './crypto.service.js';
 export const DEMO_PHONE_E164 = '+918240890242';
 const DEMO_CUSTOMER_EMAIL = 'customer@test.local';
 const DEMO_SELLER_EMAIL = 'seller@test.local';
+const DEMO_ADMIN_EMAIL = 'admin@test.local';
+const DEMO_ADMIN_PHONE = '+919900000003';
+const DEMO_PASSWORD = 'Test@12345';
 const HD_FILM_SKR_CODE = 'HDPE_FILM';
 const HD_FILM_SKR_NAME = 'HD Film SKR';
 
@@ -45,7 +48,7 @@ type NormalizedMasterData = {
 };
 
 @Injectable()
-export class DemoBootstrapService {
+export class DemoBootstrapService implements OnModuleInit {
   private readonly logger = new Logger(DemoBootstrapService.name);
 
   constructor(
@@ -53,11 +56,27 @@ export class DemoBootstrapService {
     private readonly crypto: CryptoService,
   ) {}
 
+  async onModuleInit(): Promise<void> {
+    // PetroTrade demo stack keeps admin@test.local / Test@12345 usable on DO.
+    // Set ENSURE_DEMO_USERS=false to skip.
+    if (process.env.ENSURE_DEMO_USERS === 'false') return;
+    try {
+      await this.ensureDemoAccounts();
+    } catch (error) {
+      this.logger.error(
+        'Failed to ensure demo accounts on startup',
+        error instanceof Error ? error.stack : error,
+      );
+    }
+  }
+
   isDemoUser(input: { phone?: string | null; email?: string | null }): boolean {
     return (
       input.phone === DEMO_PHONE_E164 ||
+      input.phone === DEMO_ADMIN_PHONE ||
       input.email === DEMO_CUSTOMER_EMAIL ||
-      input.email === DEMO_SELLER_EMAIL
+      input.email === DEMO_SELLER_EMAIL ||
+      input.email === DEMO_ADMIN_EMAIL
     );
   }
 
@@ -71,6 +90,12 @@ export class DemoBootstrapService {
     if (!user || !this.isDemoUser(user)) return;
 
     try {
+      await this.ensureDemoAdminUser();
+      // Admin-only logins should not rebuild seller catalog every time.
+      if (user.email === DEMO_ADMIN_EMAIL) {
+        this.logger.log(`Demo admin ready for user ${userId}`);
+        return;
+      }
       await this.ensureSellerSide(userId);
       await this.ensureCustomerSide(userId);
       await this.ensureMasterCatalog();
@@ -86,6 +111,84 @@ export class DemoBootstrapService {
     }
   }
 
+  /** Ensure demo admin/seller/customer accounts exist (startup + remote seed). */
+  async ensureDemoAccounts(): Promise<void> {
+    await this.ensureRole(RoleCode.ADMIN);
+    await this.ensureRole(RoleCode.SUPER_ADMIN);
+    await this.ensureRole(RoleCode.SELLER);
+    await this.ensureRole(RoleCode.CUSTOMER);
+    await this.ensureDemoAdminUser();
+    this.logger.log(
+      `Demo accounts ensured (${DEMO_ADMIN_EMAIL} / ${DEMO_PASSWORD})`,
+    );
+  }
+
+  private async ensureRole(code: RoleCode): Promise<void> {
+    await this.prisma.role.upsert({
+      where: { code },
+      update: { name: code },
+      create: { code, name: code },
+    });
+  }
+
+  /** Upsert admin@test.local so Admin Vercel portal can sign in against DO DB. */
+  async ensureDemoAdminUser(): Promise<void> {
+    await this.ensureRole(RoleCode.ADMIN);
+    await this.ensureRole(RoleCode.SUPER_ADMIN);
+    const passwordHash = await this.crypto.hashPassword(DEMO_PASSWORD);
+
+    let admin = await this.prisma.user.findUnique({
+      where: { email: DEMO_ADMIN_EMAIL },
+    });
+    if (!admin) {
+      admin = await this.prisma.user.findUnique({
+        where: { phone: DEMO_ADMIN_PHONE },
+      });
+    }
+
+    if (admin) {
+      await this.prisma.user.update({
+        where: { id: admin.id },
+        data: {
+          email: DEMO_ADMIN_EMAIL,
+          phone: DEMO_ADMIN_PHONE,
+          firstName: 'Demo',
+          lastName: 'Admin',
+          passwordHash,
+          status: 'ACTIVE',
+          emailVerified: true,
+          phoneVerified: true,
+        },
+      });
+    } else {
+      admin = await this.prisma.user.create({
+        data: {
+          email: DEMO_ADMIN_EMAIL,
+          phone: DEMO_ADMIN_PHONE,
+          firstName: 'Demo',
+          lastName: 'Admin',
+          passwordHash,
+          status: 'ACTIVE',
+          emailVerified: true,
+          phoneVerified: true,
+        },
+      });
+    }
+
+    for (const roleCode of [RoleCode.ADMIN, RoleCode.SUPER_ADMIN] as const) {
+      const role = await this.prisma.role.findUnique({ where: { code: roleCode } });
+      if (!role) continue;
+      const existing = await this.prisma.userRole.findFirst({
+        where: { userId: admin.id, roleId: role.id, organizationId: null },
+      });
+      if (!existing) {
+        await this.prisma.userRole.create({
+          data: { userId: admin.id, roleId: role.id },
+        });
+      }
+    }
+  }
+
   private async ensureSellerSide(demoUserId: string): Promise<void> {
     await this.prisma.role.upsert({
       where: { code: RoleCode.SELLER },
@@ -93,7 +196,7 @@ export class DemoBootstrapService {
       create: { code: RoleCode.SELLER, name: 'SELLER' },
     });
 
-    const passwordHash = await this.crypto.hashPassword('Test@12345');
+    const passwordHash = await this.crypto.hashPassword(DEMO_PASSWORD);
     let sellerEmailUser = await this.prisma.user.findUnique({
       where: { email: DEMO_SELLER_EMAIL },
     });
