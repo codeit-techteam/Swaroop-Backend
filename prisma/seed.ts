@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { Pool } from 'pg';
 import {
   AttributeDataType,
   LocationType,
@@ -14,12 +15,31 @@ import { runCatalogImport } from '../scripts/import-catalog.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const adapter = new PrismaPg({
-  connectionString:
-    process.env.DATABASE_URL ??
-    'postgresql://postgres:postgres@localhost:5433/swaroop?schema=public',
+const connectionString =
+  process.env.DATABASE_URL ??
+  'postgresql://postgres:postgres@localhost:5433/swaroop?schema=public';
+
+const needsRelaxedSsl =
+  /ondigitalocean\.com/i.test(connectionString) ||
+  /[?&]sslmode=/i.test(connectionString);
+
+const cleanUrl = connectionString
+  .replace(
+    /([?&])(sslmode|ssl|sslrootcert|sslcert|sslkey|sslpassword|uselibpqcompat)=[^&]*/gi,
+    '$1',
+  )
+  .replace(/[?&]$/, '')
+  .replace(/\?&/, '?')
+  .replace(/&&+/g, '&');
+
+const pool = new Pool({
+  connectionString: cleanUrl,
+  max: 5,
+  connectionTimeoutMillis: 30_000,
+  ...(needsRelaxedSsl ? { ssl: { rejectUnauthorized: false } } : {}),
 });
 
+const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 type NormalizedMasterData = {
@@ -1009,4 +1029,5 @@ main()
   })
   .finally(async () => {
     await prisma.$disconnect();
+    await pool.end();
   });
