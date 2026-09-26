@@ -28,6 +28,7 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "catalog:extract": "node scripts/extract-frontend-catalog.mjs",
     "catalog:import": "tsx scripts/import-catalog.ts",
+    "catalog:sync-remote": "node scripts/sync-catalog-to-remote-api.mjs",
     "postinstall": "prisma generate"
   },
   "engines": {

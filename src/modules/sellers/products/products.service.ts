@@ -76,6 +76,7 @@ const productInclude = {
       deliveryTerms: true,
       warehouseId: true,
       inventoryId: true,
+      metadata: true,
       priceTiers: {
         orderBy: { minQty: 'asc' as const },
         select: {
@@ -247,6 +248,7 @@ export class ProductsService {
               ...(dto.metadata ?? {}),
               notes: dto.notes ?? null,
               reservedStock: dto.reservedStock ?? 0,
+              gstPercent: resolveListingGstPercent(dto),
             } as Prisma.InputJsonValue,
           },
         });
@@ -285,6 +287,9 @@ export class ProductsService {
             status: offerStatus,
             visibility: 'MARKETPLACE',
             createdById: userId,
+            metadata: {
+              gstPercent: resolveListingGstPercent(dto),
+            } as Prisma.InputJsonValue,
             priceTiers: dto.priceTiers?.length
               ? {
                   create: dto.priceTiers.map((t) => ({
@@ -640,6 +645,7 @@ export class ProductsService {
   /**
    * Update listing commercial fields: product specs, stock, price, MOQ, tiers.
    * Keeps inventory + marketplace offer quantity/price in sync.
+   * When publishToMarketplace=true, activates DRAFT product+offer for customer visibility.
    */
   async updateListing(userId: string, id: string, dto: CreateMarketplaceListingDto) {
     const ctx = await this.ctx(userId);
@@ -648,9 +654,17 @@ export class ProductsService {
       await this.assertActiveGrade(dto.gradeId);
     }
 
+    const publish = dto.publishToMarketplace === true;
+    if (publish && ctx.status !== SellerStatus.APPROVED) {
+      throw new BadRequestException(
+        'Only APPROVED sellers can publish listings to the marketplace',
+      );
+    }
+
     const warehouse = await this.resolveListingWarehouse(ctx, dto);
     const stock = Number(dto.availableStock ?? 0);
     const unit = dto.unit ?? existing.unit ?? 'MT';
+    const gstPercent = resolveListingGstPercent(dto);
     const technicalSpecs: Record<string, unknown> = {
       ...(typeof existing.technicalSpecs === 'object' && existing.technicalSpecs
         ? (existing.technicalSpecs as Record<string, unknown>)
@@ -679,10 +693,13 @@ export class ProductsService {
           unit,
           countryOfOrigin: dto.countryOfOrigin,
           supplyOrigin: dto.supplyOrigin ?? dto.countryOfOrigin,
+          ...(publish ? { status: ProductStatus.ACTIVE } : {}),
           metadata: {
             ...((existing.metadata as Record<string, unknown>) ?? {}),
+            ...(dto.metadata ?? {}),
             notes: dto.notes ?? null,
             reservedStock: dto.reservedStock ?? 0,
+            gstPercent,
           } as Prisma.InputJsonValue,
         },
       });
@@ -733,6 +750,14 @@ export class ProductsService {
           orderBy: { updatedAt: 'desc' },
         }));
 
+      const offerMeta =
+        offer?.metadata && typeof offer.metadata === 'object'
+          ? { ...(offer.metadata as Record<string, unknown>) }
+          : {};
+      // Replacing tiers resets soft-deactivated tier ids from pricing API.
+      delete offerMeta.inactivePriceTier;
+      offerMeta.gstPercent = gstPercent;
+
       if (offer) {
         await tx.offerPriceTier.deleteMany({ where: { offerId: offer.id } });
         await tx.offer.update({
@@ -745,6 +770,9 @@ export class ProductsService {
             unit,
             basePrice: dto.sellingPrice,
             deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
+            visibility: 'MARKETPLACE',
+            ...(publish ? { status: OfferStatus.ACTIVE } : {}),
+            metadata: offerMeta as Prisma.InputJsonValue,
             priceTiers: dto.priceTiers?.length
               ? {
                   create: dto.priceTiers.map((t) => ({
@@ -764,7 +792,7 @@ export class ProductsService {
             organizationId: ctx.organizationId,
             sellerProfileId: ctx.sellerProfileId,
             productId: id,
-            gradeId: existing.gradeId,
+            gradeId: dto.gradeId ?? existing.gradeId,
             inventoryId,
             warehouseId: warehouse.id,
             quantity: stock,
@@ -774,9 +802,10 @@ export class ProductsService {
             currency: CurrencyCode.INR,
             pricingBasis: 'EXW',
             deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
-            status: OfferStatus.ACTIVE,
+            status: publish ? OfferStatus.ACTIVE : OfferStatus.DRAFT,
             visibility: 'MARKETPLACE',
             createdById: userId,
+            metadata: offerMeta as Prisma.InputJsonValue,
             priceTiers: dto.priceTiers?.length
               ? {
                   create: dto.priceTiers.map((t) => ({
@@ -798,7 +827,13 @@ export class ProductsService {
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.PRODUCT,
       entityId: id,
-      newData: { listingUpdate: true, availableStock: stock, sellingPrice: dto.sellingPrice },
+      newData: {
+        listingUpdate: true,
+        availableStock: stock,
+        sellingPrice: dto.sellingPrice,
+        published: publish,
+        priceTier: dto.priceTiers?.length ?? 0,
+      },
     });
 
     return this.serialize(await this.assertOwnedProduct(ctx, id));
@@ -916,4 +951,10 @@ export function estimateDeliveryTerms(locationHint?: string | null): string {
     return '3–5 Business Days';
   }
   return '4–6 Business Days';
+}
+
+function resolveListingGstPercent(dto: CreateMarketplaceListingDto): number {
+  const raw = dto.metadata?.gstPercent;
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+  return Number.isFinite(n) && n >= 0 ? n : 18;
 }

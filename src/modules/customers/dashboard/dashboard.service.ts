@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
   Prisma,
-  ProductStatus,
   PurchaseRequestStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
@@ -17,6 +16,7 @@ import {
 import { CustomerContextService } from '../common/customer-context.service.js';
 import {
   activeMarketplaceOfferWhere,
+  buyableMarketplaceProductWhere,
   customerGradeWhere,
   offerInclude,
   productInclude,
@@ -86,11 +86,7 @@ export class DashboardService {
         },
       }),
       this.prisma.product.count({
-        where: {
-          deletedAt: null,
-          status: ProductStatus.ACTIVE,
-          grade: customerGradeWhere,
-        },
+        where: buyableMarketplaceProductWhere(),
       }),
       this.prisma.offer.count({ where: offerWhere }),
       this.prisma.grade.count({ where: customerGradeWhere }),
@@ -132,9 +128,7 @@ export class DashboardService {
     }
 
     const productWhere: Prisma.ProductWhereInput = {
-      deletedAt: null,
-      status: ProductStatus.ACTIVE,
-      grade: customerGradeWhere,
+      ...buyableMarketplaceProductWhere(),
       OR: [
         { name: { contains: term, mode: 'insensitive' } },
         { code: { contains: term, mode: 'insensitive' } },

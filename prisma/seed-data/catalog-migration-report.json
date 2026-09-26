@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-18T08:08:13.602Z",
+  "generatedAt": "2026-09-26T06:23:41.702Z",
   "source": "Swaroop-Customer-WEBAPP/mock/blind-grades.ts",
   "categories": {
     "existing": 25,
@@ -20,7 +20,7 @@
     "unmatched": 0
   },
   "products": {
-    "existing": 62,
+    "existing": 63,
     "inserted": 0,
     "updated": 61,
     "skipped": 0,
@@ -59,9 +59,9 @@
   "database": {
     "categories": 25,
     "grades": 90,
-    "products": 62,
+    "products": 63,
     "attributes": 12,
-    "offers": 62,
+    "offers": 63,
     "orphanProducts": 0
   }
 }

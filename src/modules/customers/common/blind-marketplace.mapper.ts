@@ -51,6 +51,33 @@ function warehouseHintFromSpecs(technicalSpecs: unknown): string | null {
   return typeof label === 'string' ? label : null;
 }
 
+function inactiveTierIds(metadata: unknown): Set<string> {
+  if (!metadata || typeof metadata !== 'object') return new Set();
+  const raw = (metadata as Record<string, unknown>).inactivePriceTier;
+  if (!Array.isArray(raw)) return new Set();
+  return new Set(
+    raw.filter((id): id is string => typeof id === 'string' && id.length > 0),
+  );
+}
+
+function commercialPriceTiers<
+  T extends {
+    id?: string;
+    minQty: unknown;
+    maxQty: unknown;
+    price: unknown;
+    currency?: string;
+    paymentMethod?: string | null;
+  },
+>(tiers: T[] | undefined, metadata?: unknown): T[] {
+  const inactive = inactiveTierIds(metadata);
+  return [...(tiers ?? [])].filter((tier) => {
+    if (tier.id && inactive.has(tier.id)) return false;
+    if (isPlatformCredit(tier.paymentMethod)) return false;
+    return true;
+  });
+}
+
 export function toBlindProduct(product: {
   id: string;
   code: string;
@@ -88,7 +115,9 @@ export function toBlindProduct(product: {
     currency?: string;
     deliveryTerms?: string | null;
     organizationId?: string;
+    metadata?: unknown;
     priceTiers?: Array<{
+      id?: string;
       minQty: unknown;
       maxQty: unknown;
       price: unknown;
@@ -99,6 +128,7 @@ export function toBlindProduct(product: {
 }) {
   const offer = product.offers?.[0];
   const warehouseHint = warehouseHintFromSpecs(product.technicalSpecs);
+  const tiers = commercialPriceTiers(offer?.priceTiers, offer?.metadata);
   return {
     id: product.id,
     code: product.code,
@@ -140,7 +170,7 @@ export function toBlindProduct(product: {
           leadTime:
             offer.deliveryTerms?.trim() ||
             estimateLeadTime(warehouseHint ?? product.countryOfOrigin),
-          priceTiers: (offer.priceTiers ?? []).map((t) => ({
+          priceTiers: tiers.map((t) => ({
             minQty: t.minQty,
             maxQty: t.maxQty,
             price: t.price,
@@ -247,13 +277,15 @@ export function toBlindOffer(offer: {
           displayName: offer.grade.displayName ?? offer.grade.name,
         }
       : null,
-    priceTiers: (offer.priceTiers ?? []).map((t) => ({
-      minQty: t.minQty,
-      maxQty: t.maxQty,
-      price: t.price,
-      currency: t.currency,
-      paymentMethod: t.paymentMethod,
-    })),
+    priceTiers: commercialPriceTiers(offer.priceTiers, offer.metadata).map(
+      (t) => ({
+        minQty: t.minQty,
+        maxQty: t.maxQty,
+        price: t.price,
+        currency: t.currency,
+        paymentMethod: t.paymentMethod,
+      }),
+    ),
     supplier: {
       displayName: 'ANONYMOUS SUPPLIER',
       reference: anonymousSupplierRef(offer.organizationId),
@@ -265,9 +297,9 @@ export function resolveOfferUnitPrice(
   offer: Offer & { priceTiers?: OfferPriceTier[] },
   quantity: number,
 ): Offer['basePrice'] {
-  const commercialTiers = [...(offer.priceTiers ?? [])]
-    .filter((tier) => !isPlatformCredit(tier.paymentMethod))
-    .sort((a, b) => Number(a.minQty) - Number(b.minQty));
+  const commercialTiers = commercialPriceTiers(offer.priceTiers, offer.metadata).sort(
+    (a, b) => Number(a.minQty) - Number(b.minQty),
+  );
   for (const tier of commercialTiers) {
     const min = Number(tier.minQty);
     const max = tier.maxQty == null ? Infinity : Number(tier.maxQty);

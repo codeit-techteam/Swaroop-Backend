@@ -64,7 +64,7 @@ export class DemoBootstrapService {
   /**
    * Idempotent bootstrap for DigitalOcean / empty DBs:
    * seller+customer profiles, Mumbai+Kolkata warehouses, Grade Master,
-   * and the HD Film SKR marketplace listing.
+   * full marketplace catalog listings, and the HD Film SKR SKU.
    */
   async ensureForDemoUser(userId: string): Promise<void> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
@@ -75,6 +75,7 @@ export class DemoBootstrapService {
       await this.ensureCustomerSide(userId);
       await this.ensureMasterCatalog();
       await this.ensureHdFilmSkrListing(userId);
+      await this.ensureFullMarketplaceCatalog(userId);
       this.logger.log(`Demo bootstrap completed for user ${userId}`);
     } catch (error) {
       this.logger.error(
@@ -370,15 +371,7 @@ export class DemoBootstrapService {
   }
 
   private async ensureMasterCatalog(): Promise<void> {
-    const gradeCount = await this.prisma.grade.count({
-      where: { deletedAt: null },
-    });
-    if (gradeCount > 0) {
-      // Still ensure HDPE_FILM exists even if some grades were seeded.
-      await this.ensureHdpeFilmGrade();
-      return;
-    }
-
+    // Always upsert master data so partial / older DigitalOcean DBs catch up.
     const raw = readFileSync(this.resolveMasterDataPath(), 'utf8');
     const data = JSON.parse(raw) as NormalizedMasterData;
 
@@ -459,8 +452,9 @@ export class DemoBootstrapService {
       });
     }
 
+    await this.ensureHdpeFilmGrade();
     this.logger.log(
-      `Seeded master catalog: ${data.categories.length} categories, ${data.grades.length} grades`,
+      `Synced master catalog: ${data.categories.length} categories, ${data.grades.length} grades`,
     );
   }
 
@@ -684,5 +678,285 @@ export class DemoBootstrapService {
       where: { id: profile.id },
       data: { metadata: metadata as Prisma.InputJsonValue },
     });
+  }
+
+  private resolveCatalogPath(): string {
+    const candidates = [
+      join(process.cwd(), 'prisma/seed-data/catalog-products.json'),
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '../../../../prisma/seed-data/catalog-products.json',
+      ),
+    ];
+    for (const path of candidates) {
+      try {
+        readFileSync(path, 'utf8');
+        return path;
+      } catch {
+        // try next
+      }
+    }
+    throw new Error('catalog-products.json not found');
+  }
+
+  /**
+   * Ensures the full frontend catalog is listed for the demo seller.
+   * Skips when enough ACTIVE products already exist (idempotent / fast path).
+   */
+  private async ensureFullMarketplaceCatalog(userId: string): Promise<void> {
+    const profile = await this.prisma.sellerProfile.findFirst({
+      where: { userId, deletedAt: null },
+    });
+    if (!profile) return;
+
+    let catalog: {
+      products: Array<{
+        sourceId: string;
+        name: string;
+        productCode: string;
+        gradeMasterCode: string;
+        materialType?: string;
+        description?: string;
+        pricePerMt: number;
+        unit: string;
+        origin?: string;
+        warehouseLabel?: string;
+        availableQty: number;
+        moq: number;
+        eta?: string;
+        applications: string[];
+        supplyOrigin?: string;
+        technicalSpecs?: Record<string, string>;
+      }>;
+    };
+    try {
+      catalog = JSON.parse(readFileSync(this.resolveCatalogPath(), 'utf8')) as typeof catalog;
+    } catch (error) {
+      this.logger.warn(
+        `Full catalog seed skipped — ${error instanceof Error ? error.message : error}`,
+      );
+      return;
+    }
+
+    const expected = catalog.products?.length ?? 0;
+    if (expected === 0) return;
+
+    const existingCount = await this.prisma.product.count({
+      where: {
+        organizationId: profile.organizationId,
+        deletedAt: null,
+        status: ProductStatus.ACTIVE,
+      },
+    });
+    // Leave headroom for HD Film SKR + a couple of extras.
+    if (existingCount >= expected) {
+      this.logger.log(
+        `Full catalog already present (${existingCount} products) — skip import`,
+      );
+      return;
+    }
+
+    const hub =
+      (await this.prisma.warehouse.findFirst({
+        where: {
+          organizationId: profile.organizationId,
+          deletedAt: null,
+          OR: [
+            { code: 'WH-MUM-HUB' },
+            { code: { startsWith: 'WH-MUM-' } },
+            { city: { equals: 'Mumbai', mode: 'insensitive' } },
+          ],
+        },
+      })) ??
+      (await this.ensureWarehouse(profile.organizationId, {
+        code: 'WH-MUM-HUB',
+        name: 'Mumbai Primary Warehouse',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        postalCode: '400069',
+        addressLine: 'Andheri East, Mumbai',
+      }));
+
+    const grades = await this.prisma.grade.findMany({
+      where: { deletedAt: null },
+      select: { id: true, code: true },
+    });
+    const gradeByCode = new Map(grades.map((g) => [g.code.toUpperCase(), g]));
+
+    let inserted = 0;
+    for (const item of catalog.products) {
+      if (
+        !item.productCode ||
+        item.productCode === 'DEMO-HDPE-FILM' ||
+        item.productCode === 'HDPE_FILM'
+      ) {
+        continue;
+      }
+      const grade = gradeByCode.get(
+        String(item.gradeMasterCode || '').toUpperCase(),
+      );
+      if (!grade) continue;
+
+      const product = await this.prisma.product.upsert({
+        where: {
+          organizationId_code: {
+            organizationId: profile.organizationId,
+            code: item.productCode,
+          },
+        },
+        update: {
+          name: item.name,
+          gradeId: grade.id,
+          brand: 'PRIVATE',
+          description: item.description,
+          technicalSpecs: {
+            ...(item.technicalSpecs ?? {}),
+            sourceId: item.sourceId,
+            applications: item.applications,
+            materialType: item.materialType,
+            warehouseLabel: item.warehouseLabel,
+          },
+          mfi: item.technicalSpecs?.mfi ?? null,
+          density: item.technicalSpecs?.density ?? null,
+          packaging: '25kg bags',
+          unit: item.unit || 'MT',
+          countryOfOrigin: item.origin || 'IN',
+          supplyOrigin: item.supplyOrigin ?? 'domestic',
+          status: ProductStatus.ACTIVE,
+          sellerProfileId: profile.id,
+          deletedAt: null,
+        },
+        create: {
+          organizationId: profile.organizationId,
+          sellerProfileId: profile.id,
+          gradeId: grade.id,
+          code: item.productCode,
+          name: item.name,
+          brand: 'PRIVATE',
+          description: item.description,
+          technicalSpecs: {
+            ...(item.technicalSpecs ?? {}),
+            sourceId: item.sourceId,
+            applications: item.applications,
+            materialType: item.materialType,
+            warehouseLabel: item.warehouseLabel,
+          },
+          mfi: item.technicalSpecs?.mfi ?? null,
+          density: item.technicalSpecs?.density ?? null,
+          packaging: '25kg bags',
+          unit: item.unit || 'MT',
+          countryOfOrigin: item.origin || 'IN',
+          supplyOrigin: item.supplyOrigin ?? 'domestic',
+          status: ProductStatus.ACTIVE,
+        },
+      });
+
+      await this.prisma.inventory.upsert({
+        where: {
+          productId_warehouseId: {
+            productId: product.id,
+            warehouseId: hub.id,
+          },
+        },
+        update: {
+          availableQty: item.availableQty,
+          minStockQty: item.moq,
+          status: InventoryStatus.AVAILABLE,
+          sellerProfileId: profile.id,
+          unit: item.unit || 'MT',
+          deletedAt: null,
+        },
+        create: {
+          organizationId: profile.organizationId,
+          sellerProfileId: profile.id,
+          productId: product.id,
+          warehouseId: hub.id,
+          availableQty: item.availableQty,
+          minStockQty: item.moq,
+          unit: item.unit || 'MT',
+          status: InventoryStatus.AVAILABLE,
+        },
+      });
+
+      const offerRef = `OFFER-CAT-${item.productCode
+        .replace(/[^A-Z0-9]+/gi, '-')
+        .toUpperCase()}`;
+      const sellingPrice = Number(item.pricePerMt);
+      const moq = Math.max(1, Number(item.moq ?? 1));
+      const offer = await this.prisma.offer.upsert({
+        where: { referenceNumber: offerRef },
+        update: {
+          status: 'ACTIVE',
+          basePrice: sellingPrice,
+          quantity: item.availableQty,
+          moq,
+          unit: item.unit || 'MT',
+          currency: 'INR',
+          productId: product.id,
+          gradeId: grade.id,
+          warehouseId: hub.id,
+          deliveryTerms: item.eta ?? null,
+          visibility: 'MARKETPLACE',
+          deletedAt: null,
+          metadata: { gstPercent: 18 } as Prisma.InputJsonValue,
+        },
+        create: {
+          referenceNumber: offerRef,
+          organizationId: profile.organizationId,
+          sellerProfileId: profile.id,
+          productId: product.id,
+          gradeId: grade.id,
+          warehouseId: hub.id,
+          quantity: item.availableQty,
+          moq,
+          unit: item.unit || 'MT',
+          basePrice: sellingPrice,
+          currency: 'INR',
+          status: 'ACTIVE',
+          visibility: 'MARKETPLACE',
+          deliveryTerms: item.eta ?? null,
+          createdById: userId,
+          metadata: { gstPercent: 18 } as Prisma.InputJsonValue,
+        },
+      });
+
+      const tierCount = await this.prisma.offerPriceTier.count({
+        where: { offerId: offer.id },
+      });
+      if (!tierCount) {
+        const tier1Max = Math.max(moq, 24);
+        const tier2Min = tier1Max + 1;
+        await this.prisma.offerPriceTier.createMany({
+          data: [
+            {
+              offerId: offer.id,
+              minQty: moq,
+              maxQty: tier1Max,
+              price: sellingPrice,
+              currency: 'INR',
+            },
+            {
+              offerId: offer.id,
+              minQty: tier2Min,
+              maxQty: Math.max(tier2Min, 99),
+              price: Math.round(sellingPrice * 0.987),
+              currency: 'INR',
+            },
+            {
+              offerId: offer.id,
+              minQty: Math.max(tier2Min + 1, 100),
+              maxQty: null,
+              price: Math.round(sellingPrice * 0.972),
+              currency: 'INR',
+            },
+          ],
+        });
+      }
+      inserted += 1;
+    }
+
+    this.logger.log(
+      `Full catalog sync complete — upserted ${inserted}/${expected} listings (had ${existingCount})`,
+    );
   }
 }

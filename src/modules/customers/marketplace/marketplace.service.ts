@@ -45,6 +45,33 @@ function activeMarketplaceOfferWhere(now = new Date()): Prisma.OfferWhereInput {
   };
 }
 
+/** Nested offer filter on product cards (validity window included). */
+function liveMarketplaceOfferNestedWhere(
+  now = new Date(),
+): Prisma.OfferWhereInput {
+  return {
+    deletedAt: null,
+    status: OfferStatus.ACTIVE,
+    OR: [{ visibility: 'MARKETPLACE' }, { visibility: null }],
+    AND: [
+      { OR: [{ validUntil: null }, { validUntil: { gte: now } }] },
+      { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
+    ],
+  };
+}
+
+/** Products customers can buy: ACTIVE + live marketplace offer. */
+function buyableMarketplaceProductWhere(
+  now = new Date(),
+): Prisma.ProductWhereInput {
+  return {
+    deletedAt: null,
+    status: ProductStatus.ACTIVE,
+    grade: customerGradeWhere,
+    offers: { some: liveMarketplaceOfferNestedWhere(now) },
+  };
+}
+
 const gradeSelect = {
   id: true,
   code: true,
@@ -86,11 +113,7 @@ const productInclude = {
     },
   },
   offers: {
-    where: {
-      deletedAt: null,
-      status: OfferStatus.ACTIVE,
-      OR: [{ visibility: 'MARKETPLACE' }, { visibility: null }],
-    },
+    where: liveMarketplaceOfferNestedWhere(),
     orderBy: { basePrice: 'asc' as const },
     take: 1,
     select: {
@@ -101,9 +124,11 @@ const productInclude = {
       basePrice: true,
       currency: true,
       deliveryTerms: true,
+      metadata: true,
       priceTiers: {
         orderBy: { minQty: 'asc' as const },
         select: {
+          id: true,
           minQty: true,
           maxQty: true,
           price: true,
@@ -183,22 +208,7 @@ export class MarketplaceService {
         select: gradeSelect,
       }),
       this.prisma.product.findMany({
-        where: {
-          deletedAt: null,
-          status: ProductStatus.ACTIVE,
-          grade: customerGradeWhere,
-          offers: {
-            some: {
-              deletedAt: null,
-              status: OfferStatus.ACTIVE,
-              OR: [{ visibility: 'MARKETPLACE' }, { visibility: null }],
-              AND: [
-                { OR: [{ validUntil: null }, { validUntil: { gte: now } }] },
-                { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
-              ],
-            },
-          },
-        },
+        where: buyableMarketplaceProductWhere(now),
         include: productInclude,
         orderBy: { createdAt: 'desc' },
         take: featuredLimit,
@@ -211,11 +221,7 @@ export class MarketplaceService {
       }),
       this.prisma.grade.count({ where: customerGradeWhere }),
       this.prisma.product.count({
-        where: {
-          deletedAt: null,
-          status: ProductStatus.ACTIVE,
-          grade: customerGradeWhere,
-        },
+        where: buyableMarketplaceProductWhere(now),
       }),
       this.prisma.offer.count({ where: offerWhere }),
     ]);
@@ -378,10 +384,8 @@ export class MarketplaceService {
     await this.getGrade(userId, gradeId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const where: Prisma.ProductWhereInput = {
-      deletedAt: null,
-      status: ProductStatus.ACTIVE,
+      ...buyableMarketplaceProductWhere(),
       gradeId,
-      grade: customerGradeWhere,
     };
 
     const [total, items] = await this.prisma.$transaction([
@@ -433,7 +437,9 @@ export class MarketplaceService {
 
 export {
   activeMarketplaceOfferWhere,
+  buyableMarketplaceProductWhere,
   customerGradeWhere,
+  liveMarketplaceOfferNestedWhere,
   offerInclude,
   productInclude,
 };

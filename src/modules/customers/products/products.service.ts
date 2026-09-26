@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, ProductStatus } from '../../../generated/prisma/client.js';
+import { Prisma } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import {
   paginationMeta,
@@ -14,6 +14,7 @@ import {
 import { CustomerContextService } from '../common/customer-context.service.js';
 import {
   activeMarketplaceOfferWhere,
+  buyableMarketplaceProductWhere,
   customerGradeWhere,
   offerInclude,
   productInclude,
@@ -40,8 +41,7 @@ export class ProductsService {
     const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
 
     const where: Prisma.ProductWhereInput = {
-      deletedAt: null,
-      status: ProductStatus.ACTIVE,
+      ...buyableMarketplaceProductWhere(),
       grade: {
         ...customerGradeWhere,
         ...(query.categoryId ? { categoryId: query.categoryId } : {}),
@@ -89,9 +89,7 @@ export class ProductsService {
     await this.ctx(userId);
     const product = await this.prisma.product.findFirst({
       where: {
-        deletedAt: null,
-        status: ProductStatus.ACTIVE,
-        grade: customerGradeWhere,
+        ...buyableMarketplaceProductWhere(),
         OR: [{ id }, { code: { equals: id, mode: 'insensitive' } }],
       },
       include: productInclude,
@@ -109,9 +107,7 @@ export class ProductsService {
     await this.ctx(userId);
     const product = await this.prisma.product.findFirst({
       where: {
-        deletedAt: null,
-        status: ProductStatus.ACTIVE,
-        grade: customerGradeWhere,
+        ...buyableMarketplaceProductWhere(),
         OR: [
           { id: productId },
           { code: { equals: productId, mode: 'insensitive' } },
@@ -140,9 +136,7 @@ export class ProductsService {
     await this.ctx(userId);
     const product = await this.prisma.product.findFirst({
       where: {
-        deletedAt: null,
-        status: ProductStatus.ACTIVE,
-        grade: customerGradeWhere,
+        ...buyableMarketplaceProductWhere(),
         OR: [
           { id: productId },
           { code: { equals: productId, mode: 'insensitive' } },

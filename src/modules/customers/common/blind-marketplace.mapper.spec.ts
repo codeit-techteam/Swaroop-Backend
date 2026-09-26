@@ -98,4 +98,79 @@ describe('blind marketplace mapper', () => {
     );
     expect(Number(price)).toBe(100000);
   });
+
+  it('ignores soft-deactivated price tiers from offer metadata', () => {
+    const price = resolveOfferUnitPrice(
+      {
+        basePrice: 95000,
+        metadata: { inactivePriceTier: ['tier-inactive'] },
+        priceTiers: [
+          {
+            id: 'tier-inactive',
+            minQty: 1,
+            maxQty: 100,
+            price: 80000,
+            paymentMethod: null,
+          },
+          {
+            id: 'tier-active',
+            minQty: 1,
+            maxQty: 100,
+            price: 92000,
+            paymentMethod: null,
+          },
+        ],
+      } as never,
+      25,
+    );
+    expect(Number(price)).toBe(92000);
+  });
+
+  it('exposes seller price tiers on blind product listings', () => {
+    const payload = toBlindProduct({
+      id: 'prod-2',
+      code: 'PP-INJ-01',
+      name: 'PP Injection',
+      brand: 'PRIVATE',
+      description: null,
+      technicalSpecs: null,
+      mfi: null,
+      density: null,
+      packaging: '25kg bags',
+      unit: 'MT',
+      countryOfOrigin: 'IN',
+      supplyOrigin: 'domestic',
+      status: 'ACTIVE',
+      offers: [
+        {
+          id: 'offer-2',
+          quantity: 500,
+          moq: 10,
+          unit: 'MT',
+          basePrice: 90000,
+          currency: 'INR',
+          deliveryTerms: '2-3 Days',
+          metadata: { inactivePriceTier: ['gone'] },
+          priceTiers: [
+            {
+              id: 'gone',
+              minQty: 1,
+              maxQty: 9,
+              price: 91000,
+            },
+            {
+              id: 'keep',
+              minQty: 10,
+              maxQty: null,
+              price: 88000,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(payload.listing?.priceTiers).toEqual([
+      { minQty: 10, maxQty: null, price: 88000, currency: 'INR' },
+    ]);
+  });
 });
