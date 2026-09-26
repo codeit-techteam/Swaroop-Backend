@@ -6,6 +6,7 @@ import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { JwtAuthGuard, RolesGuard } from './guards/auth.guards.js';
 import { CryptoService } from './services/crypto.service.js';
+import { DemoBootstrapService } from './services/demo-bootstrap.service.js';
 import { OtpDeliveryService } from './services/otp-delivery.service.js';
 import { JwtStrategy } from './strategies/jwt.strategy.js';
 
@@ -29,6 +30,7 @@ import { JwtStrategy } from './strategies/jwt.strategy.js';
   providers: [
     AuthService,
     CryptoService,
+    DemoBootstrapService,
     OtpDeliveryService,
     JwtStrategy,
     JwtAuthGuard,

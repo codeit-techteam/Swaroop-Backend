@@ -883,10 +883,110 @@ async function seedSellerDemoData() {
   const grade = await prisma.grade.findFirst({
     where: { code: 'HDPE_FILM', deletedAt: null },
   });
-  const warehouse = await prisma.warehouse.findUnique({
-    where: { code: 'WH-MUM-HUB' },
-  });
+  const kolkata =
+    (await prisma.warehouse.findFirst({
+      where: {
+        organizationId: sellerProfile.organizationId,
+        deletedAt: null,
+        OR: [
+          { city: { equals: 'Kolkata', mode: 'insensitive' } },
+          { name: { equals: 'Kolkata', mode: 'insensitive' } },
+        ],
+      },
+    })) ??
+    (await prisma.warehouse.create({
+      data: {
+        organizationId: sellerProfile.organizationId,
+        code: 'WH-KOL-DEMO',
+        name: 'Kolkata',
+        city: 'Kolkata',
+        state: 'West Bengal',
+        country: 'IN',
+        postalCode: '700001',
+        addressLine: 'Kolkata Warehouse',
+        isPlatformHub: false,
+        isActive: true,
+        status: MasterStatus.ACTIVE,
+        metadata: { source: 'seed' },
+      },
+    }));
+
+  const warehouse =
+    (await prisma.warehouse.findUnique({
+      where: { code: 'WH-MUM-HUB' },
+    })) ?? kolkata;
   if (!grade || !warehouse) return;
+
+  // HD Film SKR — the grade sellers search for in the Seller panel
+  const skrProduct = await prisma.product.upsert({
+    where: {
+      organizationId_code: {
+        organizationId: sellerProfile.organizationId,
+        code: 'HDPE_FILM',
+      },
+    },
+    update: {
+      name: 'HD Film SKR',
+      gradeId: grade.id,
+      brand: 'SCG',
+      manufacturer: 'SCG',
+      status: 'ACTIVE',
+      sellerProfileId: sellerProfile.id,
+      technicalSpecs: {
+        application: 'SKR',
+        polymerType: 'HDPE',
+        applications: ['SKR'],
+        warehouseLabel: 'Kolkata',
+      },
+    },
+    create: {
+      organizationId: sellerProfile.organizationId,
+      sellerProfileId: sellerProfile.id,
+      gradeId: grade.id,
+      code: 'HDPE_FILM',
+      name: 'HD Film SKR',
+      brand: 'SCG',
+      manufacturer: 'SCG',
+      mfi: '3.2',
+      density: '0.95',
+      packaging: '25 kg bags',
+      unit: 'MT',
+      countryOfOrigin: 'India',
+      supplyOrigin: 'India',
+      status: 'ACTIVE',
+      technicalSpecs: {
+        application: 'SKR',
+        polymerType: 'HDPE',
+        applications: ['SKR'],
+        warehouseLabel: 'Kolkata',
+      },
+    },
+  });
+
+  await prisma.inventory.upsert({
+    where: {
+      productId_warehouseId: {
+        productId: skrProduct.id,
+        warehouseId: kolkata.id,
+      },
+    },
+    update: {
+      availableQty: 850,
+      minStockQty: 10,
+      status: 'AVAILABLE',
+      sellerProfileId: sellerProfile.id,
+    },
+    create: {
+      organizationId: sellerProfile.organizationId,
+      sellerProfileId: sellerProfile.id,
+      productId: skrProduct.id,
+      warehouseId: kolkata.id,
+      availableQty: 850,
+      minStockQty: 10,
+      unit: 'MT',
+      status: 'AVAILABLE',
+    },
+  });
 
   const product = await prisma.product.upsert({
     where: {

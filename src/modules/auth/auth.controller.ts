@@ -95,6 +95,19 @@ export class AuthController {
     return successResponse(data, 'Current user');
   }
 
+  @Post('demo/bootstrap')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('bearer')
+  @Roles(RoleCode.CUSTOMER, RoleCode.SELLER)
+  @ApiOperation({
+    summary:
+      'Bootstrap demo catalog (HD Film SKR, locations, Grade Master) for Karan Veer demo accounts',
+  })
+  async bootstrapDemo(@CurrentUser() user: AuthenticatedUser) {
+    const data = await this.authService.bootstrapDemo(user.id);
+    return successResponse(data, data.message);
+  }
+
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('bearer')

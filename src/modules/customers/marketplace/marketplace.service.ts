@@ -136,7 +136,7 @@ export class MarketplaceService {
   ) {}
 
   private async ctx(userId: string) {
-    return this.customerContext.requireCustomer(userId);
+    return this.customerContext.getOrCreateCustomer(userId);
   }
 
   async home(userId: string, query: MarketplaceHomeQueryDto) {

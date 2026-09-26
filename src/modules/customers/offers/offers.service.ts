@@ -21,7 +21,7 @@ export class OffersService {
   ) {}
 
   private async ctx(userId: string) {
-    return this.customerContext.requireCustomer(userId);
+    return this.customerContext.getOrCreateCustomer(userId);
   }
 
   private buildWhere(query: CustomerOfferQueryDto): Prisma.OfferWhereInput {

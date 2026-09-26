@@ -13,6 +13,10 @@ import { PrismaService } from '../../database/prisma.service.js';
 import { RoleCode } from '../../common/enums/domain.enums.js';
 import { AuthException } from './exceptions/auth.exception.js';
 import { CryptoService } from './services/crypto.service.js';
+import {
+  DEMO_PHONE_E164,
+  DemoBootstrapService,
+} from './services/demo-bootstrap.service.js';
 import { OtpDeliveryService } from './services/otp-delivery.service.js';
 import {
   AuthErrorCode,
@@ -40,8 +44,6 @@ type RequestMeta = {
 
 type DbClient = Prisma.TransactionClient | PrismaService;
 
-/** Shared Customer + Seller demo identity (Karan Veer). */
-const DEMO_PHONE_E164 = '+918240890242';
 const DEMO_OTP = '123456';
 
 @Injectable()
@@ -54,6 +56,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly crypto: CryptoService,
     private readonly otpDelivery: OtpDeliveryService,
+    private readonly demoBootstrap: DemoBootstrapService,
   ) {}
 
   async sendOtp(dto: SendOtpDto) {
@@ -220,6 +223,7 @@ export class AuthService {
       );
     });
 
+    await this.bootstrapDemoIfNeeded(result.user.id);
     return result;
   }
 
@@ -258,6 +262,7 @@ export class AuthService {
     });
 
     const tokens = await this.createSession(user.id, meta);
+    await this.bootstrapDemoIfNeeded(user.id);
     const publicUser = await this.toPublicUser(user.id);
     return { user: publicUser, ...tokens };
   }
@@ -560,9 +565,32 @@ export class AuthService {
     dto: VerifyOtpDto,
     meta: RequestMeta,
   ) {
-    return this.prisma.$transaction(async (tx: DbClient) =>
+    const result = await this.prisma.$transaction(async (tx: DbClient) =>
       this.completeOtpLogin(tx, identifier, identifierType, dto, meta),
     );
+    await this.bootstrapDemoIfNeeded(result.user.id);
+    return result;
+  }
+
+  /** Public re-entry for already-logged-in demo users on empty remote DBs. */
+  async bootstrapDemo(userId: string) {
+    await this.demoBootstrap.ensureForDemoUser(userId);
+    return {
+      message: 'Demo catalog, HD Film SKR, locations, and profiles are ready',
+    };
+  }
+
+  private async bootstrapDemoIfNeeded(userId: string) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || !this.demoBootstrap.isDemoUser(user)) return;
+    try {
+      await this.demoBootstrap.ensureForDemoUser(userId);
+    } catch (error) {
+      this.logger.error(
+        `Demo bootstrap after login failed for ${userId}`,
+        error instanceof Error ? error.stack : error,
+      );
+    }
   }
 
   private async completeOtpLogin(
@@ -635,10 +663,6 @@ export class AuthService {
           },
         },
       });
-
-      if (isDemoPhone) {
-        await this.ensureDemoSellerAccount(tx, user.id);
-      }
     } else {
       this.assertUserCanAuthenticate(user);
       user = await tx.user.update({
@@ -662,151 +686,11 @@ export class AuthService {
             : {}),
         },
       });
-      if (isDemoPhone) {
-        await this.ensureDemoSellerAccount(tx, user.id);
-      }
     }
 
     const tokens = await this.createSession(user.id, meta, tx);
     const publicUser = await this.toPublicUser(user.id, tx);
     return { user: publicUser, ...tokens };
-  }
-
-  /**
-   * Ensures seller@test.local + a SellerProfile/org/warehouse for the
-   * authenticated demo user so Seller panel location APIs work immediately.
-   */
-  private async ensureDemoSellerAccount(
-    tx: DbClient,
-    demoUserId: string,
-  ): Promise<void> {
-    await tx.role.upsert({
-      where: { code: RoleCode.SELLER },
-      update: { name: 'SELLER' },
-      create: { code: RoleCode.SELLER, name: 'SELLER' },
-    });
-
-    const passwordHash = await this.crypto.hashPassword('Test@12345');
-    let sellerEmailUser = await tx.user.findUnique({
-      where: { email: 'seller@test.local' },
-    });
-    if (sellerEmailUser) {
-      await tx.user.update({
-        where: { id: sellerEmailUser.id },
-        data: {
-          passwordHash,
-          firstName: 'Karan',
-          lastName: 'Veer',
-          phone: '+918240890243',
-          status: UserStatus.ACTIVE,
-          emailVerified: true,
-          phoneVerified: true,
-        },
-      });
-    } else {
-      sellerEmailUser = await tx.user.create({
-        data: {
-          email: 'seller@test.local',
-          phone: '+918240890243',
-          firstName: 'Karan',
-          lastName: 'Veer',
-          passwordHash,
-          status: UserStatus.ACTIVE,
-          emailVerified: true,
-          phoneVerified: true,
-          userRoles: {
-            create: { role: { connect: { code: RoleCode.SELLER } } },
-          },
-        },
-      });
-    }
-
-    for (const userId of [demoUserId, sellerEmailUser.id]) {
-      const existingProfile = await tx.sellerProfile.findFirst({
-        where: { userId, deletedAt: null },
-      });
-      if (existingProfile) continue;
-
-      const org = await tx.organization.create({
-        data: {
-          code: `SELLER-DEMO-${userId.slice(0, 8).toUpperCase()}`,
-          name: 'Karan Veer Trading',
-          legalName: 'Karan Veer Trading Pvt Ltd',
-          type: 'SELLER',
-          status: 'ACTIVE',
-          verificationStatus: 'APPROVED',
-          verifiedAt: new Date(),
-        },
-      });
-      await tx.organizationMember.create({
-        data: {
-          organizationId: org.id,
-          userId,
-          isPrimary: true,
-          joinedAt: new Date(),
-        },
-      });
-      const profile = await tx.sellerProfile.create({
-        data: {
-          userId,
-          organizationId: org.id,
-          status: 'APPROVED',
-          approvedAt: new Date(),
-        },
-      });
-      await tx.sellerVerification.create({
-        data: {
-          sellerProfileId: profile.id,
-          gstVerified: true,
-          panVerified: true,
-          bankVerified: true,
-          overallStatus: 'APPROVED',
-          reviewedAt: new Date(),
-        },
-      });
-      await tx.sellerOnboarding.create({
-        data: {
-          sellerProfileId: profile.id,
-          status: 'APPROVED',
-          currentStep: 'completed',
-          completedSteps: ['company', 'gst', 'pan', 'bank', 'address', 'submitted'],
-          companyData: {
-            legalName: 'Karan Veer Trading Pvt Ltd',
-            name: 'Karan Veer Trading',
-          },
-          addressData: {
-            line1: 'Andheri East',
-            city: 'Mumbai',
-            state: 'Maharashtra',
-            postalCode: '400069',
-          },
-          locationData: {
-            city: 'Mumbai',
-            state: 'Maharashtra',
-            pincode: '400069',
-            warehouseName: 'Mumbai Primary Warehouse',
-            warehouseAddress: 'Andheri East, Mumbai',
-          },
-          submittedAt: new Date(),
-          reviewedAt: new Date(),
-        },
-      });
-      await tx.warehouse.create({
-        data: {
-          organizationId: org.id,
-          code: `WH-MUM-${userId.slice(0, 6).toUpperCase()}`,
-          name: 'Mumbai Primary Warehouse',
-          city: 'Mumbai',
-          state: 'Maharashtra',
-          country: 'IN',
-          postalCode: '400069',
-          addressLine: 'Andheri East, Mumbai',
-          isPlatformHub: false,
-          isActive: true,
-          metadata: { source: 'demo_bootstrap' },
-        },
-      });
-    }
   }
 
   private resolveIdentifier(dto: { phone?: string; email?: string }): {

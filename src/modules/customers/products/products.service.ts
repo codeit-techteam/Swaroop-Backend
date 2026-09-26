@@ -29,7 +29,7 @@ export class ProductsService {
   ) {}
 
   private async ctx(userId: string) {
-    return this.customerContext.requireCustomer(userId);
+    return this.customerContext.getOrCreateCustomer(userId);
   }
 
   async findAll(userId: string, query: CustomerProductQueryDto) {

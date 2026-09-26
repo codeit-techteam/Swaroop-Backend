@@ -30,7 +30,7 @@ export class DashboardService {
   ) {}
 
   async summary(userId: string) {
-    const ctx = await this.customerContext.requireCustomer(userId);
+    const ctx = await this.customerContext.getOrCreateCustomer(userId);
     const orgId = ctx.organizationId;
     const offerWhere = activeMarketplaceOfferWhere();
 
@@ -118,7 +118,7 @@ export class DashboardService {
   }
 
   async search(userId: string, q: string, query: PaginationQueryDto) {
-    await this.customerContext.requireCustomer(userId);
+    await this.customerContext.getOrCreateCustomer(userId);
     const term = q?.trim() ?? '';
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
 
