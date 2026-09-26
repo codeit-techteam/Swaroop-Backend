@@ -5,7 +5,7 @@ import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
-import { SetCurrentLocationDto } from '../offers/offers.dto.js';
+import { SetCurrentLocationDto, SaveLocationFromGeoDto } from '../offers/offers.dto.js';
 import { SellerLocationsService } from './locations.service.js';
 
 @ApiTags('Seller Locations')
@@ -45,6 +45,21 @@ export class SellerLocationsController {
     return successResponse(
       await this.locationsService.setCurrent(user.id, dto),
       'Current seller location updated',
+    );
+  }
+
+  @Post('from-geo')
+  @ApiOperation({
+    summary:
+      'Create/save an operating warehouse from GPS + reverse-geocoded address',
+  })
+  async fromGeo(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: SaveLocationFromGeoDto,
+  ) {
+    return successResponse(
+      await this.locationsService.saveFromGeo(user.id, dto),
+      'Location saved from current position',
     );
   }
 }

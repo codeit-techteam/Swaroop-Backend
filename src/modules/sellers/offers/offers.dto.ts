@@ -208,3 +208,49 @@ export class SetCurrentLocationDto {
   @IsUUID()
   warehouseId!: string;
 }
+
+export class SaveLocationFromGeoDto {
+  @ApiProperty({ example: 19.1136 })
+  @IsNumber()
+  latitude!: number;
+
+  @ApiProperty({ example: 72.8697 })
+  @IsNumber()
+  longitude!: number;
+
+  @ApiPropertyOptional({ example: 'Mumbai Primary Warehouse' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  name?: string;
+
+  @ApiPropertyOptional({ example: 'Andheri East' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  addressLine?: string;
+
+  @ApiPropertyOptional({ example: 'Mumbai' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  city?: string;
+
+  @ApiPropertyOptional({ example: 'Maharashtra' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  state?: string;
+
+  @ApiPropertyOptional({ example: '400069' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(12)
+  pincode?: string;
+
+  @ApiPropertyOptional({ example: 'IN' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2)
+  country?: string;
+}

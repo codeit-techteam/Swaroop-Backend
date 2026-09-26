@@ -193,7 +193,17 @@ export class SellerLocationsService {
   }
 
   async list(userId: string): Promise<LocationRow[]> {
-    const ctx = await this.sellerContext.requireSeller(userId);
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, phone: true, firstName: true, lastName: true },
+    });
+    const ctx = await this.sellerContext.getOrCreateDraftSeller(userId, {
+      companyName:
+        [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+        'Seller Organization',
+      email: user?.email,
+      phone: user?.phone,
+    });
 
     const [orgWarehouses, inventoryRows, offerCounts] = await Promise.all([
       this.prisma.warehouse.findMany({
@@ -313,15 +323,128 @@ export class SellerLocationsService {
       }
     }
 
+    if (!groups.size) {
+      const fallback = await this.ensureDefaultWarehouse(ctx.organizationId);
+      groups.set(fallback.id, fallback);
+    }
+
     return [...groups.values()].sort((a, b) => {
       const aLabel = (a.city || a.name).localeCompare(b.city || b.name);
       return aLabel;
     });
   }
 
+  private async ensureDefaultWarehouse(
+    organizationId: string,
+  ): Promise<LocationRow> {
+    const existing = await this.prisma.warehouse.findFirst({
+      where: { organizationId, deletedAt: null },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (existing) return this.mapWarehouse(existing);
+
+    const created = await this.prisma.warehouse.create({
+      data: {
+        organizationId,
+        code: `WH-PRIMARY-${Date.now().toString(36).toUpperCase()}`,
+        name: 'Primary Warehouse',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'IN',
+        postalCode: '400069',
+        addressLine: 'Primary operating location',
+        isPlatformHub: false,
+        isActive: true,
+        metadata: { source: 'auto_default' } as Prisma.InputJsonValue,
+      },
+    });
+    return { ...this.mapWarehouse(created), source: 'saved' };
+  }
+
+  async saveFromGeo(
+    userId: string,
+    dto: {
+      latitude: number;
+      longitude: number;
+      name?: string;
+      addressLine?: string;
+      city?: string;
+      state?: string;
+      pincode?: string;
+      country?: string;
+    },
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, phone: true, firstName: true, lastName: true },
+    });
+    const ctx = await this.sellerContext.getOrCreateDraftSeller(userId, {
+      companyName:
+        [user?.firstName, user?.lastName].filter(Boolean).join(' ') ||
+        'Seller Organization',
+      email: user?.email,
+      phone: user?.phone,
+    });
+
+    const city = this.str(dto.city) || 'Current location';
+    const state = this.str(dto.state);
+    const pincode = this.str(dto.pincode);
+    const addressLine = this.str(dto.addressLine);
+    const warehouseName =
+      this.str(dto.name) ||
+      (city ? `${city} Warehouse` : 'Current location warehouse');
+
+    const code = `WH-GEO-${Date.now().toString(36).toUpperCase()}`;
+    const created = await this.prisma.warehouse.create({
+      data: {
+        organizationId: ctx.organizationId,
+        code,
+        name: warehouseName,
+        city: city || null,
+        state: state || null,
+        country: this.str(dto.country) || 'IN',
+        postalCode: pincode || null,
+        addressLine: addressLine || null,
+        isPlatformHub: false,
+        isActive: true,
+        metadata: {
+          source: 'geolocation',
+          latitude: dto.latitude,
+          longitude: dto.longitude,
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    const profile = await this.prisma.sellerProfile.findUnique({
+      where: { id: ctx.sellerProfileId },
+      select: { metadata: true },
+    });
+    const metadata = this.readMetadata(profile?.metadata);
+    metadata.currentWarehouseId = created.id;
+    await this.prisma.sellerProfile.update({
+      where: { id: ctx.sellerProfileId },
+      data: { metadata: metadata as Prisma.InputJsonValue },
+    });
+
+    await this.audit.log({
+      action: 'SELLER_LOCATION_FROM_GEO',
+      actorUserId: userId,
+      organizationId: ctx.organizationId,
+      entityId: created.id,
+      newData: {
+        warehouseId: created.id,
+        latitude: dto.latitude,
+        longitude: dto.longitude,
+        city,
+      },
+    });
+
+    return this.current(userId);
+  }
+
   async current(userId: string) {
-    const ctx = await this.sellerContext.requireSeller(userId);
     const locations = await this.list(userId);
+    const ctx = await this.sellerContext.getOrCreateDraftSeller(userId);
     const profile = await this.prisma.sellerProfile.findUnique({
       where: { id: ctx.sellerProfileId },
       select: { metadata: true },
@@ -354,7 +477,7 @@ export class SellerLocationsService {
   }
 
   async setCurrent(userId: string, dto: SetCurrentLocationDto) {
-    const ctx = await this.sellerContext.requireSeller(userId);
+    const ctx = await this.sellerContext.getOrCreateDraftSeller(userId);
     const locations = await this.list(userId);
     const target = locations.find((loc) => loc.id === dto.warehouseId);
     if (!target) {

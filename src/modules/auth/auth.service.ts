@@ -637,7 +637,7 @@ export class AuthService {
       });
 
       if (isDemoPhone) {
-        await this.ensureDemoSellerAccount(tx);
+        await this.ensureDemoSellerAccount(tx, user.id);
       }
     } else {
       this.assertUserCanAuthenticate(user);
@@ -663,7 +663,7 @@ export class AuthService {
         },
       });
       if (isDemoPhone) {
-        await this.ensureDemoSellerAccount(tx);
+        await this.ensureDemoSellerAccount(tx, user.id);
       }
     }
 
@@ -672,8 +672,14 @@ export class AuthService {
     return { user: publicUser, ...tokens };
   }
 
-  /** Ensures seller@test.local exists for Seller panel password fallback / catalog. */
-  private async ensureDemoSellerAccount(tx: DbClient): Promise<void> {
+  /**
+   * Ensures seller@test.local + a SellerProfile/org/warehouse for the
+   * authenticated demo user so Seller panel location APIs work immediately.
+   */
+  private async ensureDemoSellerAccount(
+    tx: DbClient,
+    demoUserId: string,
+  ): Promise<void> {
     await tx.role.upsert({
       where: { code: RoleCode.SELLER },
       update: { name: 'SELLER' },
@@ -681,12 +687,12 @@ export class AuthService {
     });
 
     const passwordHash = await this.crypto.hashPassword('Test@12345');
-    const existing = await tx.user.findUnique({
+    let sellerEmailUser = await tx.user.findUnique({
       where: { email: 'seller@test.local' },
     });
-    if (existing) {
+    if (sellerEmailUser) {
       await tx.user.update({
-        where: { id: existing.id },
+        where: { id: sellerEmailUser.id },
         data: {
           passwordHash,
           firstName: 'Karan',
@@ -697,24 +703,110 @@ export class AuthService {
           phoneVerified: true,
         },
       });
-      return;
+    } else {
+      sellerEmailUser = await tx.user.create({
+        data: {
+          email: 'seller@test.local',
+          phone: '+918240890243',
+          firstName: 'Karan',
+          lastName: 'Veer',
+          passwordHash,
+          status: UserStatus.ACTIVE,
+          emailVerified: true,
+          phoneVerified: true,
+          userRoles: {
+            create: { role: { connect: { code: RoleCode.SELLER } } },
+          },
+        },
+      });
     }
 
-    await tx.user.create({
-      data: {
-        email: 'seller@test.local',
-        phone: '+918240890243',
-        firstName: 'Karan',
-        lastName: 'Veer',
-        passwordHash,
-        status: UserStatus.ACTIVE,
-        emailVerified: true,
-        phoneVerified: true,
-        userRoles: {
-          create: { role: { connect: { code: RoleCode.SELLER } } },
+    for (const userId of [demoUserId, sellerEmailUser.id]) {
+      const existingProfile = await tx.sellerProfile.findFirst({
+        where: { userId, deletedAt: null },
+      });
+      if (existingProfile) continue;
+
+      const org = await tx.organization.create({
+        data: {
+          code: `SELLER-DEMO-${userId.slice(0, 8).toUpperCase()}`,
+          name: 'Karan Veer Trading',
+          legalName: 'Karan Veer Trading Pvt Ltd',
+          type: 'SELLER',
+          status: 'ACTIVE',
+          verificationStatus: 'APPROVED',
+          verifiedAt: new Date(),
         },
-      },
-    });
+      });
+      await tx.organizationMember.create({
+        data: {
+          organizationId: org.id,
+          userId,
+          isPrimary: true,
+          joinedAt: new Date(),
+        },
+      });
+      const profile = await tx.sellerProfile.create({
+        data: {
+          userId,
+          organizationId: org.id,
+          status: 'APPROVED',
+          approvedAt: new Date(),
+        },
+      });
+      await tx.sellerVerification.create({
+        data: {
+          sellerProfileId: profile.id,
+          gstVerified: true,
+          panVerified: true,
+          bankVerified: true,
+          overallStatus: 'APPROVED',
+          reviewedAt: new Date(),
+        },
+      });
+      await tx.sellerOnboarding.create({
+        data: {
+          sellerProfileId: profile.id,
+          status: 'APPROVED',
+          currentStep: 'completed',
+          completedSteps: ['company', 'gst', 'pan', 'bank', 'address', 'submitted'],
+          companyData: {
+            legalName: 'Karan Veer Trading Pvt Ltd',
+            name: 'Karan Veer Trading',
+          },
+          addressData: {
+            line1: 'Andheri East',
+            city: 'Mumbai',
+            state: 'Maharashtra',
+            postalCode: '400069',
+          },
+          locationData: {
+            city: 'Mumbai',
+            state: 'Maharashtra',
+            pincode: '400069',
+            warehouseName: 'Mumbai Primary Warehouse',
+            warehouseAddress: 'Andheri East, Mumbai',
+          },
+          submittedAt: new Date(),
+          reviewedAt: new Date(),
+        },
+      });
+      await tx.warehouse.create({
+        data: {
+          organizationId: org.id,
+          code: `WH-MUM-${userId.slice(0, 6).toUpperCase()}`,
+          name: 'Mumbai Primary Warehouse',
+          city: 'Mumbai',
+          state: 'Maharashtra',
+          country: 'IN',
+          postalCode: '400069',
+          addressLine: 'Andheri East, Mumbai',
+          isPlatformHub: false,
+          isActive: true,
+          metadata: { source: 'demo_bootstrap' },
+        },
+      });
+    }
   }
 
   private resolveIdentifier(dto: { phone?: string; email?: string }): {
