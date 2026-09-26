@@ -35,8 +35,33 @@ async function bootstrap(): Promise<void> {
   app.useBodyParser('json', { limit: '1mb' });
   app.useBodyParser('urlencoded', { limit: '1mb', extended: true });
 
+  const configuredOrigins = new Set(appConfig.corsOrigins);
+  const isAllowedOrigin = (origin: string | undefined): boolean => {
+    if (!origin) {
+      return true;
+    }
+    if (configuredOrigins.has(origin)) {
+      return true;
+    }
+    // Allow DigitalOcean App Platform preview/live hosts without listing every slug.
+    try {
+      const { hostname } = new URL(origin);
+      return (
+        hostname.endsWith('.ondigitalocean.app') ||
+        hostname.endsWith('.ondigitalocean.com')
+      );
+    } catch {
+      return false;
+    }
+  };
+
   app.enableCors({
-    origin: appConfig.env === 'production' ? appConfig.corsOrigins : true,
+    origin:
+      appConfig.env === 'production'
+        ? (origin, callback) => {
+            callback(null, isAllowedOrigin(origin));
+          }
+        : true,
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Request-Id'],
