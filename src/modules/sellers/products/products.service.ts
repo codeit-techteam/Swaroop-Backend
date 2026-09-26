@@ -820,12 +820,58 @@ export class ProductsService {
         inventoryId = created.id;
       }
 
+      const offerCandidates = await tx.offer.findMany({
+        where: {
+          productId: id,
+          organizationId: ctx.organizationId,
+          deletedAt: null,
+        },
+        orderBy: [{ updatedAt: 'desc' }],
+        include: { priceTiers: true },
+      });
       const offer =
-        existing.offers?.[0] ??
-        (await tx.offer.findFirst({
-          where: { productId: id, organizationId: ctx.organizationId, deletedAt: null },
-          orderBy: { updatedAt: 'desc' },
-        }));
+        offerCandidates.find((row) => row.status === OfferStatus.ACTIVE) ??
+        offerCandidates[0] ??
+        null;
+
+      const previousBase = offer ? Number(offer.basePrice) : 0;
+      const nextBase = Number(dto.sellingPrice);
+      const incomingTiers = dto.priceTiers ?? [];
+
+      // Open-ended maxQty must stay undefined (null → 0 breaks tier matching).
+      const normalizeMaxQty = (value: unknown): number | undefined => {
+        if (value === null || value === undefined || value === '') return undefined;
+        const n = Number(value);
+        return Number.isFinite(n) && n > 0 ? n : undefined;
+      };
+
+      // When only sellingPrice changes, bump tiers that still mirrored the old base
+      // so Customer WEBAPP/APP stop showing the stale discounted min(tier) price.
+      const resolvedTiers =
+        incomingTiers.length > 0
+          ? incomingTiers.map((t) => {
+              const tierPrice = Number(t.price);
+              const matchedOldBase =
+                previousBase > 0 && Math.abs(tierPrice - previousBase) < 0.01;
+              return {
+                minQty: Number(t.minQty),
+                maxQty: normalizeMaxQty(t.maxQty),
+                price:
+                  matchedOldBase && Math.abs(nextBase - previousBase) >= 0.01
+                    ? nextBase
+                    : tierPrice,
+              };
+            })
+          : (offer?.priceTiers ?? []).map((t) => {
+              const tierPrice = Number(t.price);
+              const matchedOldBase =
+                previousBase > 0 && Math.abs(tierPrice - previousBase) < 0.01;
+              return {
+                minQty: Number(t.minQty),
+                maxQty: normalizeMaxQty(t.maxQty),
+                price: matchedOldBase ? nextBase : tierPrice,
+              };
+            });
 
       const offerMeta =
         offer?.metadata && typeof offer.metadata === 'object'
@@ -845,16 +891,16 @@ export class ProductsService {
             quantity: stock,
             moq: dto.moq,
             unit,
-            basePrice: dto.sellingPrice,
+            basePrice: nextBase,
             deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
             visibility: 'MARKETPLACE',
             ...(publish ? { status: OfferStatus.ACTIVE } : {}),
             metadata: offerMeta as Prisma.InputJsonValue,
-            priceTiers: dto.priceTiers?.length
+            priceTiers: resolvedTiers.length
               ? {
-                  create: dto.priceTiers.map((t) => ({
+                  create: resolvedTiers.map((t) => ({
                     minQty: t.minQty,
-                    maxQty: t.maxQty ?? undefined,
+                    maxQty: t.maxQty,
                     price: t.price,
                     currency: CurrencyCode.INR,
                   })),
@@ -862,6 +908,20 @@ export class ProductsService {
               : undefined,
           },
         });
+
+        const siblingIds = offerCandidates
+          .filter((row) => row.id !== offer.id)
+          .map((row) => row.id);
+        if (siblingIds.length > 0) {
+          await tx.offer.updateMany({
+            where: { id: { in: siblingIds } },
+            data: {
+              basePrice: nextBase,
+              visibility: 'MARKETPLACE',
+              ...(publish ? { status: OfferStatus.ACTIVE } : {}),
+            },
+          });
+        }
       } else {
         await tx.offer.create({
           data: {
@@ -875,7 +935,7 @@ export class ProductsService {
             quantity: stock,
             moq: dto.moq,
             unit,
-            basePrice: dto.sellingPrice,
+            basePrice: nextBase,
             currency: CurrencyCode.INR,
             pricingBasis: 'EXW',
             deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
@@ -883,11 +943,11 @@ export class ProductsService {
             visibility: 'MARKETPLACE',
             createdById: userId,
             metadata: offerMeta as Prisma.InputJsonValue,
-            priceTiers: dto.priceTiers?.length
+            priceTiers: resolvedTiers.length
               ? {
-                  create: dto.priceTiers.map((t) => ({
+                  create: resolvedTiers.map((t) => ({
                     minQty: t.minQty,
-                    maxQty: t.maxQty ?? undefined,
+                    maxQty: t.maxQty,
                     price: t.price,
                     currency: CurrencyCode.INR,
                   })),

@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -182,9 +182,13 @@ export class ListingPriceTierDto {
   @Min(0)
   minQty!: number;
 
-  @ApiPropertyOptional({ example: 50 })
+  @ApiPropertyOptional({ example: 50, nullable: true })
   @IsOptional()
-  @Type(() => Number)
+  @Transform(({ value }) => {
+    if (value === null || value === '' || value === undefined) return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  })
   @IsNumber()
   @Min(0)
   maxQty?: number | null;
