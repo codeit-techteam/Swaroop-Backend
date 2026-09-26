@@ -43,12 +43,13 @@ async function bootstrap(): Promise<void> {
     if (configuredOrigins.has(origin)) {
       return true;
     }
-    // Allow DigitalOcean App Platform preview/live hosts without listing every slug.
+    // Allow DigitalOcean App Platform + Vercel preview/live hosts without listing every slug.
     try {
       const { hostname } = new URL(origin);
       return (
         hostname.endsWith('.ondigitalocean.app') ||
-        hostname.endsWith('.ondigitalocean.com')
+        hostname.endsWith('.ondigitalocean.com') ||
+        hostname.endsWith('.vercel.app')
       );
     } catch {
       return false;
