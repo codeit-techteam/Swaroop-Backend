@@ -10,23 +10,35 @@ import { Pool } from 'pg';
 import { PrismaClient } from '../generated/prisma/client.js';
 import type { AppConfig } from '../config/configuration.js';
 
+/**
+ * Build a pg Pool that works with DigitalOcean Managed Postgres.
+ *
+ * Node `pg` (v8.16+) treats `sslmode=require` in the URL as verify-full, which
+ * rejects DO's chain ("self-signed certificate in certificate chain"). Strip
+ * SSL query params and set `rejectUnauthorized: false` explicitly instead.
+ */
 function createPool(connectionString: string): Pool {
-  // DigitalOcean Managed Postgres presents a CA that Node/pg may reject when
-  // sslmode=require is treated as verify-full. Accept TLS without pinning CA
-  // for managed hosts; local docker Postgres stays plain.
-  const needsRelaxedSsl =
-    /ondigitalocean\.com/i.test(connectionString) ||
-    /[?&]sslmode=require\b/i.test(connectionString);
+  let normalized = connectionString.trim();
+  const hadSslMode = /[?&]sslmode=/i.test(normalized);
+  const isManagedHost = /ondigitalocean\.com/i.test(normalized);
+
+  // Remove SSL-related query params so pg-connection-string does not force verify-full.
+  normalized = normalized
+    .replace(
+      /([?&])(sslmode|ssl|sslrootcert|sslcert|sslkey|sslpassword|uselibpqcompat)=[^&]*/gi,
+      '$1',
+    )
+    .replace(/[?&]$/, '')
+    .replace(/\?&/, '?')
+    .replace(/&&+/g, '&');
+
+  const useSsl = isManagedHost || hadSslMode;
 
   return new Pool({
-    connectionString,
+    connectionString: normalized,
     max: 10,
     connectionTimeoutMillis: 10_000,
-    ...(needsRelaxedSsl
-      ? {
-          ssl: { rejectUnauthorized: false },
-        }
-      : {}),
+    ...(useSsl ? { ssl: { rejectUnauthorized: false } } : {}),
   });
 }
 
@@ -66,6 +78,8 @@ export class PrismaService
 
     try {
       await this.$connect();
+      // Force a real round-trip so TLS/auth failures surface at boot.
+      await this.$queryRaw`SELECT 1`;
       this.logger.log('PostgreSQL connection established via Prisma');
     } catch (error) {
       this.logger.error(
@@ -86,7 +100,12 @@ export class PrismaService
     try {
       await this.$queryRaw`SELECT 1`;
       return true;
-    } catch {
+    } catch (error) {
+      this.logger.warn(
+        `Database health check failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
       return false;
     }
   }
