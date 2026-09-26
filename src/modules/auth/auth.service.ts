@@ -572,7 +572,18 @@ export class AuthService {
     dto: VerifyOtpDto,
     meta: RequestMeta,
   ) {
+    const isDemoPhone =
+      identifierType === OtpIdentifierType.PHONE &&
+      identifier === DEMO_PHONE_E164;
+
     let user = await this.findUserByIdentifier(identifier, identifierType, tx);
+
+    if (!user && isDemoPhone) {
+      // Also try seeded email account if phone row was never created.
+      user = await tx.user.findUnique({
+        where: { email: 'customer@test.local' },
+      });
+    }
 
     if (!user) {
       if (
@@ -587,22 +598,47 @@ export class AuthService {
       }
 
       const roleHint = this.normalizeRoleHint(dto.roleHint);
+      const roleCodes = isDemoPhone
+        ? (['CUSTOMER', 'SELLER'] as const)
+        : ([roleHint] as const);
+
+      for (const code of roleCodes) {
+        await tx.role.upsert({
+          where: { code },
+          update: { name: code },
+          create: { code, name: code },
+        });
+      }
+
+      const passwordHash = isDemoPhone
+        ? await this.crypto.hashPassword('Test@12345')
+        : undefined;
+
       user = await tx.user.create({
         data: {
           phone: identifierType === OtpIdentifierType.PHONE ? identifier : null,
-          email: identifierType === OtpIdentifierType.EMAIL ? identifier : null,
-          firstName: identifier === DEMO_PHONE_E164 ? 'Karan' : null,
-          lastName: identifier === DEMO_PHONE_E164 ? 'Veer' : null,
+          email: isDemoPhone
+            ? 'customer@test.local'
+            : identifierType === OtpIdentifierType.EMAIL
+              ? identifier
+              : null,
+          firstName: isDemoPhone ? 'Karan' : null,
+          lastName: isDemoPhone ? 'Veer' : null,
+          passwordHash,
           status: UserStatus.ACTIVE,
           phoneVerified: identifierType === OtpIdentifierType.PHONE,
-          emailVerified: identifierType === OtpIdentifierType.EMAIL,
+          emailVerified: identifierType === OtpIdentifierType.EMAIL || isDemoPhone,
           userRoles: {
-            create: {
-              role: { connect: { code: roleHint } },
-            },
+            create: roleCodes.map((code) => ({
+              role: { connect: { code } },
+            })),
           },
         },
       });
+
+      if (isDemoPhone) {
+        await this.ensureDemoSellerAccount(tx);
+      }
     } else {
       this.assertUserCanAuthenticate(user);
       user = await tx.user.update({
@@ -621,13 +657,64 @@ export class AuthService {
             user.status === UserStatus.PENDING
               ? UserStatus.ACTIVE
               : user.status,
+          ...(isDemoPhone && !user.passwordHash
+            ? { passwordHash: await this.crypto.hashPassword('Test@12345') }
+            : {}),
         },
       });
+      if (isDemoPhone) {
+        await this.ensureDemoSellerAccount(tx);
+      }
     }
 
     const tokens = await this.createSession(user.id, meta, tx);
     const publicUser = await this.toPublicUser(user.id, tx);
     return { user: publicUser, ...tokens };
+  }
+
+  /** Ensures seller@test.local exists for Seller panel password fallback / catalog. */
+  private async ensureDemoSellerAccount(tx: DbClient): Promise<void> {
+    await tx.role.upsert({
+      where: { code: RoleCode.SELLER },
+      update: { name: 'SELLER' },
+      create: { code: RoleCode.SELLER, name: 'SELLER' },
+    });
+
+    const passwordHash = await this.crypto.hashPassword('Test@12345');
+    const existing = await tx.user.findUnique({
+      where: { email: 'seller@test.local' },
+    });
+    if (existing) {
+      await tx.user.update({
+        where: { id: existing.id },
+        data: {
+          passwordHash,
+          firstName: 'Karan',
+          lastName: 'Veer',
+          phone: '+918240890243',
+          status: UserStatus.ACTIVE,
+          emailVerified: true,
+          phoneVerified: true,
+        },
+      });
+      return;
+    }
+
+    await tx.user.create({
+      data: {
+        email: 'seller@test.local',
+        phone: '+918240890243',
+        firstName: 'Karan',
+        lastName: 'Veer',
+        passwordHash,
+        status: UserStatus.ACTIVE,
+        emailVerified: true,
+        phoneVerified: true,
+        userRoles: {
+          create: { role: { connect: { code: RoleCode.SELLER } } },
+        },
+      },
+    });
   }
 
   private resolveIdentifier(dto: { phone?: string; email?: string }): {
