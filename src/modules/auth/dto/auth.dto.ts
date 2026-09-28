@@ -72,7 +72,7 @@ export class VerifyOtpDto {
 export class LoginDto {
   @ApiPropertyOptional({ example: 'customer@test.local' })
   @ValidateIf((o: LoginDto) => !o.phone)
-  @IsEmail()
+  @IsEmail({ require_tld: false })
   email?: string;
 
   @ApiPropertyOptional({ example: '+918240890242' })

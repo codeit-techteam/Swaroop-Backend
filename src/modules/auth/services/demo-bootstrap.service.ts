@@ -24,8 +24,6 @@ import { CryptoService } from './crypto.service.js';
 export const DEMO_PHONE_E164 = '+918240890242';
 const DEMO_CUSTOMER_EMAIL = 'customer@test.local';
 const DEMO_SELLER_EMAIL = 'seller@test.local';
-const DEMO_ADMIN_EMAIL = 'admin@test.local';
-const DEMO_ADMIN_PHONE = '+919900000003';
 const DEMO_PASSWORD = 'Test@12345';
 const HD_FILM_SKR_CODE = 'HDPE_FILM';
 const HD_FILM_SKR_NAME = 'HD Film SKR';
@@ -60,8 +58,16 @@ export class DemoBootstrapService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // PetroTrade demo stack keeps admin@test.local / Test@12345 usable on DO.
-    // Set ENSURE_DEMO_USERS=false to skip.
+    try {
+      await this.ensurePlatformAdminUser();
+    } catch (error) {
+      this.logger.error(
+        'Failed to ensure platform admin on startup',
+        error instanceof Error ? error.stack : error,
+      );
+    }
+
+    // Set ENSURE_DEMO_USERS=false to skip demo roles + default hero banner.
     if (process.env.ENSURE_DEMO_USERS === 'false') return;
     try {
       await this.ensureDemoAccounts();
@@ -77,10 +83,8 @@ export class DemoBootstrapService implements OnModuleInit {
   isDemoUser(input: { phone?: string | null; email?: string | null }): boolean {
     return (
       input.phone === DEMO_PHONE_E164 ||
-      input.phone === DEMO_ADMIN_PHONE ||
       input.email === DEMO_CUSTOMER_EMAIL ||
-      input.email === DEMO_SELLER_EMAIL ||
-      input.email === DEMO_ADMIN_EMAIL
+      input.email === DEMO_SELLER_EMAIL
     );
   }
 
@@ -94,12 +98,6 @@ export class DemoBootstrapService implements OnModuleInit {
     if (!user || !this.isDemoUser(user)) return;
 
     try {
-      await this.ensureDemoAdminUser();
-      // Admin-only logins should not rebuild seller catalog every time.
-      if (user.email === DEMO_ADMIN_EMAIL) {
-        this.logger.log(`Demo admin ready for user ${userId}`);
-        return;
-      }
       await this.ensureSellerSide(userId);
       await this.ensureCustomerSide(userId);
       await this.ensureMasterCatalog();
@@ -115,16 +113,12 @@ export class DemoBootstrapService implements OnModuleInit {
     }
   }
 
-  /** Ensure demo admin/seller/customer accounts exist (startup + remote seed). */
+  /** Ensure demo seller/customer roles exist (startup + remote seed). */
   async ensureDemoAccounts(): Promise<void> {
     await this.ensureRole(RoleCode.ADMIN);
     await this.ensureRole(RoleCode.SUPER_ADMIN);
     await this.ensureRole(RoleCode.SELLER);
     await this.ensureRole(RoleCode.CUSTOMER);
-    await this.ensureDemoAdminUser();
-    this.logger.log(
-      `Demo accounts ensured (${DEMO_ADMIN_EMAIL} / ${DEMO_PASSWORD})`,
-    );
   }
 
   /**
@@ -188,46 +182,49 @@ export class DemoBootstrapService implements OnModuleInit {
     });
   }
 
-  /** Upsert admin@test.local so Admin Vercel portal can sign in against DO DB. */
-  async ensureDemoAdminUser(): Promise<void> {
-    await this.ensureRole(RoleCode.ADMIN);
-    await this.ensureRole(RoleCode.SUPER_ADMIN);
-    const passwordHash = await this.crypto.hashPassword(DEMO_PASSWORD);
-
-    let admin = await this.prisma.user.findUnique({
-      where: { email: DEMO_ADMIN_EMAIL },
-    });
-    if (!admin) {
-      admin = await this.prisma.user.findUnique({
-        where: { phone: DEMO_ADMIN_PHONE },
-      });
+  /**
+   * Upsert the Admin portal Super Admin from PLATFORM_ADMIN_EMAIL /
+   * PLATFORM_ADMIN_PASSWORD. The env password is the source of truth and is
+   * re-applied on boot whenever it no longer matches the stored hash.
+   */
+  async ensurePlatformAdminUser(): Promise<void> {
+    const email = process.env.PLATFORM_ADMIN_EMAIL?.trim().toLowerCase();
+    const password = process.env.PLATFORM_ADMIN_PASSWORD;
+    if (!email || !password) {
+      this.logger.warn(
+        'PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD not set — skipping platform admin bootstrap',
+      );
+      return;
     }
 
+    await this.ensureRole(RoleCode.ADMIN);
+    await this.ensureRole(RoleCode.SUPER_ADMIN);
+
+    let admin = await this.prisma.user.findUnique({ where: { email } });
     if (admin) {
-      await this.prisma.user.update({
+      const passwordMatches = admin.passwordHash
+        ? await this.crypto.comparePassword(password, admin.passwordHash)
+        : false;
+      admin = await this.prisma.user.update({
         where: { id: admin.id },
         data: {
-          email: DEMO_ADMIN_EMAIL,
-          phone: DEMO_ADMIN_PHONE,
-          firstName: 'Demo',
-          lastName: 'Admin',
-          passwordHash,
+          ...(passwordMatches
+            ? {}
+            : { passwordHash: await this.crypto.hashPassword(password) }),
           status: 'ACTIVE',
           emailVerified: true,
-          phoneVerified: true,
+          deletedAt: null,
         },
       });
     } else {
       admin = await this.prisma.user.create({
         data: {
-          email: DEMO_ADMIN_EMAIL,
-          phone: DEMO_ADMIN_PHONE,
-          firstName: 'Demo',
+          email,
+          firstName: 'Super',
           lastName: 'Admin',
-          passwordHash,
+          passwordHash: await this.crypto.hashPassword(password),
           status: 'ACTIVE',
           emailVerified: true,
-          phoneVerified: true,
         },
       });
     }
