@@ -42,6 +42,10 @@ import { CartService } from '../cart/cart.service.js';
 import { CheckoutService } from '../checkout/checkout.service.js';
 import { offerInclude } from '../marketplace/marketplace.service.js';
 import { CreditEligibilityService } from '../../payments/services/credit-eligibility.service.js';
+import {
+  AddressBookService,
+  type AddressSnapshot,
+} from '../../organizations/index.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import type {
   CreatePurchaseRequestDto,
@@ -117,6 +121,7 @@ export class PurchaseRequestsService {
     private readonly commercialAcceptance: CommercialAcceptanceService,
     private readonly creditEligibility: CreditEligibilityService,
     private readonly matching: PurchaseRequestMatchingService,
+    private readonly addressBook: AddressBookService,
   ) {}
 
   private async ctx(userId: string) {
@@ -242,6 +247,23 @@ export class PurchaseRequestsService {
     }
   }
 
+  private async addressSnapshots(
+    ctx: CustomerContext,
+    shippingAddressId?: string | null,
+    billingAddressId?: string | null,
+  ) {
+    const toJson = (snapshot: AddressSnapshot | null) =>
+      snapshot ? (snapshot as unknown as Prisma.InputJsonValue) : undefined;
+    const [shipping, billing] = await Promise.all([
+      this.addressBook.snapshot(ctx.organizationId, shippingAddressId),
+      this.addressBook.snapshot(ctx.organizationId, billingAddressId),
+    ]);
+    return {
+      shippingAddressSnapshot: toJson(shipping),
+      billingAddressSnapshot: toJson(billing),
+    };
+  }
+
   async create(userId: string, dto: CreatePurchaseRequestDto) {
     const ctx = await this.ctx(userId);
 
@@ -308,6 +330,11 @@ export class PurchaseRequestsService {
     const now = new Date();
     const deadline = new Date(now.getTime() + PR_RESPONSE_WINDOW_MS);
     const batchKey = dto.idempotencyKey ?? `batch-${randomUUID()}`;
+    const snapshots = await this.addressSnapshots(
+      ctx,
+      dto.shippingAddressId,
+      dto.billingAddressId,
+    );
 
     const created = await this.prisma.$transaction(async (tx) => {
       const validated: Array<{
@@ -394,6 +421,7 @@ export class PurchaseRequestsService {
           destinationRegion: dto.destinationRegion,
           shippingAddressId: dto.shippingAddressId,
           billingAddressId: dto.billingAddressId,
+          ...snapshots,
           submittedAt: now,
           expiresAt: deadline,
           responseDeadline: deadline,
@@ -501,6 +529,11 @@ export class PurchaseRequestsService {
     const billingAddressId = dto.billingAddressId ?? quote.billingAddressId ?? undefined;
     await this.assertAddress(ctx, shippingAddressId);
     await this.assertAddress(ctx, billingAddressId);
+    const snapshots = await this.addressSnapshots(
+      ctx,
+      shippingAddressId,
+      billingAddressId,
+    );
 
     const created = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRawUnsafe(
@@ -547,6 +580,7 @@ export class PurchaseRequestsService {
         destinationRegion: dto.destinationRegion,
         shippingAddressId,
         billingAddressId,
+        ...snapshots,
         submittedAt: now,
         expiresAt: deadline,
         responseDeadline: deadline,

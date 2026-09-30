@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '../../../database/prisma.service.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import { CreditEligibilityService } from '../../payments/services/credit-eligibility.service.js';
+import { toAddressBookDto } from '../../organizations/addresses/address-book.mapper.js';
 import { CartService, mapCustomerPaymentMethod } from '../cart/cart.service.js';
 import {
   classifyCartValidation,
@@ -103,21 +104,7 @@ export class CheckoutService {
       },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     });
-    return rows.map((row) => ({
-      id: row.id,
-      type: row.type,
-      label: row.label ?? row.city,
-      line1: row.line1,
-      line2: row.line2,
-      city: row.city,
-      state: row.state,
-      country: row.country,
-      postalCode: row.postalCode,
-      landmark: row.landmark,
-      latitude: row.latitude != null ? Number(row.latitude) : null,
-      longitude: row.longitude != null ? Number(row.longitude) : null,
-      isDefault: row.isDefault,
-    }));
+    return rows.map(toAddressBookDto);
   }
 
   async paymentOptions(userId: string, amount?: number) {

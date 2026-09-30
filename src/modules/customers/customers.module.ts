@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/index.js';
 import { DocumentsModule } from '../documents/index.js';
 import { NotificationsModule } from '../notifications/index.js';
+import { OrganizationsModule } from '../organizations/index.js';
 import { PaymentsModule } from '../payments/index.js';
 import { ProcurementModule } from '../procurement/index.js';
 import { CartController } from './cart/cart.controller.js';
@@ -12,6 +13,8 @@ import { DashboardController } from './dashboard/dashboard.controller.js';
 import { DashboardService } from './dashboard/dashboard.service.js';
 import { CustomerDocumentsController } from './documents/documents.controller.js';
 import { CustomerDocumentsService } from './documents/documents.service.js';
+import { CustomerKycController } from './kyc/customer-kyc.controller.js';
+import { CustomerKycService } from './kyc/customer-kyc.service.js';
 import { CustomerCreditController } from './credit/customer-credit.controller.js';
 import { CustomerCreditService } from './credit/customer-credit.service.js';
 import { BulkLogisticsQuotesController } from './bulk-logistics-quotes/bulk-logistics-quotes.controller.js';
@@ -39,6 +42,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     DocumentsModule,
     PaymentsModule,
     NotificationsModule,
+    OrganizationsModule,
   ],
   controllers: [
     MarketplaceController,
@@ -51,6 +55,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CustomerOrdersController,
     DashboardController,
     CustomerDocumentsController,
+    CustomerKycController,
     CustomerCreditController,
     BulkLogisticsQuotesController,
   ],
@@ -68,6 +73,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CustomerOrdersService,
     DashboardService,
     CustomerDocumentsService,
+    CustomerKycService,
     CustomerCreditService,
     BulkLogisticsQuotesService,
   ],

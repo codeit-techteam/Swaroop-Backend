@@ -36,6 +36,13 @@ import { JwtStrategy } from './strategies/jwt.strategy.js';
     JwtAuthGuard,
     RolesGuard,
   ],
-  exports: [AuthService, JwtAuthGuard, RolesGuard, JwtModule, PassportModule],
+  exports: [
+    AuthService,
+    CryptoService,
+    JwtAuthGuard,
+    RolesGuard,
+    JwtModule,
+    PassportModule,
+  ],
 })
 export class AuthModule {}

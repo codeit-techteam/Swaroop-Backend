@@ -44,6 +44,7 @@ export type AuthenticatedUser = {
   isPhoneVerified: boolean;
   roles: string[];
   sessionId: string;
+  mustChangePassword?: boolean;
 };
 
 export type AuthTokens = {
@@ -63,4 +64,10 @@ export type PublicUser = {
   isPhoneVerified: boolean;
   roles: string[];
   lastLoginAt: Date | null;
+  displayName?: string | null;
+  loginId?: string | null;
+  mustChangePassword?: boolean;
+  sellerId?: string | null;
+  sellerName?: string | null;
+  permissions?: string[];
 };

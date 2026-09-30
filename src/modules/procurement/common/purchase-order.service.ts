@@ -8,6 +8,7 @@ import {
   type PurchaseRequest,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { buildAddressSnapshot } from '../../organizations/addresses/address-book.mapper.js';
 import { ProcurementException } from './procurement.errors.js';
 
 type TxClient = Prisma.TransactionClient;
@@ -47,6 +48,23 @@ export class PurchaseOrderService {
     return `PROC-${year}-${seq}`;
   }
 
+  /** Prefer the PR's immutable snapshot; legacy PRs fall back to the live address. */
+  private async resolveAddressSnapshot(
+    tx: TxClient,
+    customerOrgId: string,
+    existing: Prisma.JsonValue | null,
+    addressId: string | null,
+  ): Promise<Prisma.InputJsonValue | null> {
+    if (existing != null) return existing as Prisma.InputJsonValue;
+    if (!addressId) return null;
+    const row = await tx.address.findFirst({
+      where: { id: addressId, organizationId: customerOrgId },
+    });
+    return row
+      ? (buildAddressSnapshot(row) as unknown as Prisma.InputJsonValue)
+      : null;
+  }
+
   async createFromAcceptedPr(
     tx: TxClient,
     pr: PurchaseRequest & {
@@ -75,6 +93,18 @@ export class PurchaseOrderService {
     }
 
     const now = new Date();
+    const shippingAddressSnapshot = await this.resolveAddressSnapshot(
+      tx,
+      pr.customerOrgId,
+      pr.shippingAddressSnapshot,
+      pr.shippingAddressId,
+    );
+    const billingAddressSnapshot = await this.resolveAddressSnapshot(
+      tx,
+      pr.customerOrgId,
+      pr.billingAddressSnapshot,
+      pr.billingAddressId,
+    );
     let purchaseOrder: Awaited<
       ReturnType<TxClient['purchaseOrder']['create']>
     > | null = null;
@@ -96,6 +126,8 @@ export class PurchaseOrderService {
             orderedQuantity: snapshot.quantity,
             dispatchedQuantity: 0,
             deliveredQuantity: 0,
+            ...(shippingAddressSnapshot ? { shippingAddressSnapshot } : {}),
+            ...(billingAddressSnapshot ? { billingAddressSnapshot } : {}),
             confirmedAt: now,
             metadata: {
               commercialSnapshot: snapshot,

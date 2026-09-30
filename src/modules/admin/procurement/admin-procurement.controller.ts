@@ -19,6 +19,8 @@ import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
   AdminCancelDto,
   AdminNoteDto,
+  AdminProcurementActivityQueryDto,
+  AdminProcurementMutationDto,
   AdminProcurementPrQueryDto,
 } from './admin-procurement.dto.js';
 import { AdminProcurementService } from './admin-procurement.service.js';
@@ -37,6 +39,33 @@ export class AdminProcurementController {
     return successResponse(
       await this.adminProcurement.summary(),
       'Procurement summary',
+    );
+  }
+
+  @Get('activity')
+  @ApiOperation({ summary: 'Latest procurement events for the workbench' })
+  async activity(@Query() query: AdminProcurementActivityQueryDto) {
+    return successResponse(
+      await this.adminProcurement.activity(query.limit),
+      'Procurement activity',
+    );
+  }
+
+  @Get('queue')
+  @ApiOperation({ summary: 'Operational procurement queue grouped by action' })
+  async queue() {
+    return successResponse(
+      await this.adminProcurement.queue(),
+      'Procurement queue',
+    );
+  }
+
+  @Get('export')
+  @ApiOperation({ summary: 'Export the filtered procurement workbench as CSV' })
+  async export(@Query() query: AdminProcurementPrQueryDto) {
+    return successResponse(
+      await this.adminProcurement.exportCsv(query),
+      'Procurement export',
     );
   }
 
@@ -74,6 +103,19 @@ export class AdminProcurementController {
     );
   }
 
+  @Post('purchase-requests/:id/viewed')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Record that an admin opened this procurement' })
+  async viewed(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return successResponse(
+      await this.adminProcurement.recordView(id, user.id),
+      'Procurement view recorded',
+    );
+  }
+
   @Post('purchase-requests/:id/notes')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Add admin note to PR timeline' })
@@ -94,9 +136,10 @@ export class AdminProcurementController {
   async markReview(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminProcurementMutationDto,
   ) {
     return successResponse(
-      await this.adminProcurement.markReview(id, user.id),
+      await this.adminProcurement.markReview(id, user.id, dto),
       'Marked for review',
     );
   }
@@ -107,9 +150,10 @@ export class AdminProcurementController {
   async escalate(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminProcurementMutationDto,
   ) {
     return successResponse(
-      await this.adminProcurement.escalate(id, user.id),
+      await this.adminProcurement.escalate(id, user.id, dto),
       'Purchase request escalated',
     );
   }

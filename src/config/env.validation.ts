@@ -70,6 +70,14 @@ export const envSchema = z
     BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
 
     SKIP_DB_CONNECT_ON_BOOT: booleanFromString.optional().default(false),
+
+    GOOGLE_MAPS_SERVER_API_KEY: z.string().optional().default(''),
+    GOOGLE_MAPS_TIMEOUT_MS: z.coerce.number().int().positive().default(6000),
+    GOOGLE_MAPS_REGION_CODE: z
+      .string()
+      .regex(/^[A-Za-z]{2}$/)
+      .optional()
+      .default('IN'),
   })
   .superRefine((data, ctx) => {
     const accessSecret = data.JWT_ACCESS_SECRET || data.JWT_SECRET;

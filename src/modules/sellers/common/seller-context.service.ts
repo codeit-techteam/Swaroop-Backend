@@ -9,6 +9,7 @@ import {
   SellerStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { resolveSellerActor } from './resolve-seller-actor.js';
 
 export type SellerContext = {
   userId: string;
@@ -24,17 +25,24 @@ export class SellerContextService {
   constructor(private readonly prisma: PrismaService) {}
 
   async requireSeller(userId: string): Promise<SellerContext> {
-    const profile = await this.prisma.sellerProfile.findFirst({
-      where: { userId, deletedAt: null },
-      include: { organization: true },
-    });
-
-    if (!profile) {
+    const resolved = await resolveSellerActor(this.prisma, userId);
+    if (!resolved) {
       throw new NotFoundException(
         'Seller profile not found. Complete onboarding first.',
       );
     }
+    return this.toContext(userId, resolved.profile);
+  }
 
+  private toContext(
+    userId: string,
+    profile: {
+      id: string;
+      organizationId: string;
+      status: SellerStatus;
+      organization: { name: string; verificationStatus: string };
+    },
+  ): SellerContext {
     return {
       userId,
       sellerProfileId: profile.id,
@@ -53,19 +61,23 @@ export class SellerContextService {
       phone?: string | null;
     },
   ): Promise<SellerContext> {
-    const existing = await this.prisma.sellerProfile.findFirst({
-      where: { userId, deletedAt: null },
-      include: { organization: true },
-    });
+    const existing = await resolveSellerActor(this.prisma, userId);
     if (existing) {
-      return {
-        userId,
-        sellerProfileId: existing.id,
-        organizationId: existing.organizationId,
-        status: existing.status,
-        organizationName: existing.organization.name,
-        verificationStatus: existing.organization.verificationStatus,
-      };
+      if (existing.kind === 'MANAGER') {
+        throw new ForbiddenException(
+          'Seller Managers use their assigned seller and cannot create a seller account',
+        );
+      }
+      return this.toContext(userId, existing.profile);
+    }
+
+    const managerRole = await this.prisma.userRole.findFirst({
+      where: { userId, role: { code: 'SELLER_MANAGER' } },
+    });
+    if (managerRole) {
+      throw new ForbiddenException(
+        'Seller Managers must be assigned to a seller by an administrator',
+      );
     }
 
     const result = await this.prisma.$transaction(async (tx) => {

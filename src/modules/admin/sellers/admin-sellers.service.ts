@@ -19,11 +19,37 @@ import {
   paginationMeta,
   skipTake,
 } from '../../master-data/common/pagination.js';
+import { DocumentStateService } from '../../documents/common/document-state.service.js';
+import {
+  resolvedChangeRequest,
+  type KycChangeRequest,
+} from '../../documents/common/kyc-change-request.js';
+import {
+  SELLER_ONBOARDING_DOCUMENT_SLOTS,
+  readJsonObject,
+  resolveOnboardingSlot,
+} from '../../sellers/onboarding/onboarding-documents.slots.js';
 import { AdminAuditService } from '../common/admin-audit.service.js';
+import type { AdminKycRequestChangesDto } from '../kyc/admin-kyc.dto.js';
 import type {
   AdminSellerActionDto,
   AdminSellersQueryDto,
 } from './admin-sellers.dto.js';
+
+function slotName(slot: string | null): string | null {
+  return slot ? (resolveOnboardingSlot(slot)?.name ?? null) : null;
+}
+
+function closedChangeRequestMetadata(
+  metadata: unknown,
+): Prisma.InputJsonValue | undefined {
+  const current = readJsonObject(metadata);
+  if (!current.changeRequest) return undefined;
+  return {
+    ...current,
+    changeRequest: resolvedChangeRequest(current.changeRequest),
+  } as Prisma.InputJsonValue;
+}
 
 const sellerInclude = {
   user: {
@@ -75,6 +101,7 @@ export class AdminSellersService {
     private readonly prisma: PrismaService,
     private readonly audit: AdminAuditService,
     private readonly notifications: NotificationService,
+    private readonly documentState: DocumentStateService,
   ) {}
 
   async list(query: AdminSellersQueryDto) {
@@ -150,7 +177,9 @@ export class AdminSellersService {
             doc.metadata && typeof doc.metadata === 'object'
               ? (doc.metadata as Record<string, unknown>)
               : {};
-          return meta.purpose === 'SELLER_ONBOARDING' && meta.r2Confirmed === true;
+          return (
+            meta.purpose === 'SELLER_ONBOARDING' && meta.r2Confirmed === true
+          );
         })
         .map((doc) => ({
           ...doc,
@@ -172,7 +201,51 @@ export class AdminSellersService {
       throw new BadRequestException('Seller is already approved');
     }
 
+    const pendingDocumentIds: string[] = [];
+    if (seller.onboarding) {
+      const blockers: string[] = [];
+      for (const def of SELLER_ONBOARDING_DOCUMENT_SLOTS) {
+        if (!def.required) continue;
+        const slotDocs = seller.onboardingDocuments.filter(
+          (doc) => doc.slot === def.slot,
+        );
+        const current = slotDocs.find(
+          (doc) => doc.status !== DocumentStatus.REJECTED,
+        );
+        if (current) {
+          if (current.status !== DocumentStatus.VERIFIED) {
+            pendingDocumentIds.push(current.id);
+          }
+          continue;
+        }
+        blockers.push(
+          slotDocs.length ? `${def.name} (rejected)` : `${def.name} (missing)`,
+        );
+      }
+      if (blockers.length) {
+        throw new BadRequestException(
+          `Seller cannot be approved until onboarding documents are complete: ${blockers.join(', ')}`,
+        );
+      }
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
+      // Approving the seller signs off on every onboarding file still awaiting review.
+      if (pendingDocumentIds.length) {
+        await tx.document.updateMany({
+          where: { id: { in: pendingDocumentIds } },
+          data: {
+            status: DocumentStatus.VERIFIED,
+            approvedById: actorUserId,
+            approvedAt: new Date(),
+            rejectedById: null,
+            rejectedAt: null,
+            rejectionReason: null,
+            verificationNotes: 'Verified with seller approval',
+          },
+        });
+      }
+
       const profile = await tx.sellerProfile.update({
         where: { id },
         data: {
@@ -207,6 +280,7 @@ export class AdminSellersService {
           overallStatus: VerificationStatus.APPROVED,
           reviewedAt: new Date(),
           notes: dto.notes ?? dto.reason,
+          metadata: closedChangeRequestMetadata(seller.verification?.metadata),
         },
       });
 
@@ -234,7 +308,10 @@ export class AdminSellersService {
       entityType: EntityOwnerType.SELLER,
       entityId: id,
       previousData: { status: seller.status },
-      newData: { status: SellerStatus.APPROVED },
+      newData: {
+        status: SellerStatus.APPROVED,
+        verifiedDocumentIds: pendingDocumentIds,
+      },
     });
 
     await this.notifications.create({
@@ -272,6 +349,7 @@ export class AdminSellersService {
             status: SellerOnboardingStatus.REJECTED,
             reviewedAt: new Date(),
             reviewNotes: reason,
+            rejectedReason: reason,
           },
         });
       }
@@ -288,6 +366,7 @@ export class AdminSellersService {
           overallStatus: VerificationStatus.REJECTED,
           reviewedAt: new Date(),
           notes: reason,
+          metadata: closedChangeRequestMetadata(seller.verification?.metadata),
         },
       });
 
@@ -317,6 +396,161 @@ export class AdminSellersService {
       body: reason,
       entityType: EntityOwnerType.SELLER,
       entityId: id,
+    });
+
+    return this.findOne(id);
+  }
+
+  /**
+   * Send onboarding back to the seller: selected files are rejected with the
+   * reason, onboarding reopens for edits, and the seller is notified.
+   */
+  async requestChanges(
+    id: string,
+    actorUserId: string,
+    dto: AdminKycRequestChangesDto,
+  ) {
+    const seller = await this.findOne(id);
+    if (!seller.onboarding) {
+      throw new BadRequestException('Seller has not started onboarding yet');
+    }
+    if (seller.status === SellerStatus.APPROVED) {
+      throw new BadRequestException(
+        'Seller is already approved. Suspend the seller to force re-verification.',
+      );
+    }
+    const reason = dto.reason.trim();
+    const documentIds = [...new Set(dto.documentIds ?? [])];
+    const selected = seller.onboardingDocuments.filter((doc) =>
+      documentIds.includes(doc.id),
+    );
+    if (selected.length !== documentIds.length) {
+      throw new BadRequestException(
+        "Some selected documents are not part of this seller's onboarding",
+      );
+    }
+    for (const doc of selected) {
+      if (doc.status === DocumentStatus.VERIFIED) {
+        throw new BadRequestException(
+          `${slotName(doc.slot) ?? doc.fileName} is already verified and cannot be sent back`,
+        );
+      }
+      this.documentState.assertTransition(doc.status, DocumentStatus.REJECTED);
+    }
+
+    const now = new Date();
+    const changeRequest: KycChangeRequest = {
+      reason,
+      documentIds,
+      slots: selected
+        .map((doc) => doc.slot)
+        .filter((slot): slot is string => Boolean(slot)),
+      requestedAt: now.toISOString(),
+      requestedById: actorUserId,
+      resolvedAt: null,
+    };
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const doc of selected) {
+        if (doc.status === DocumentStatus.REJECTED) continue;
+        await tx.document.update({
+          where: { id: doc.id },
+          data: {
+            status: DocumentStatus.REJECTED,
+            rejectionReason: reason,
+            verificationNotes: reason,
+            rejectedById: actorUserId,
+            rejectedAt: now,
+            approvedById: null,
+            approvedAt: null,
+          },
+        });
+      }
+
+      await tx.sellerOnboarding.update({
+        where: { sellerProfileId: id },
+        data: {
+          status: SellerOnboardingStatus.IN_PROGRESS,
+          currentStep: 'documents',
+          reviewedAt: now,
+          reviewNotes: reason,
+        },
+      });
+
+      await tx.sellerProfile.update({
+        where: { id },
+        data: {
+          status: SellerStatus.PENDING_VERIFICATION,
+          verificationNotes: reason,
+        },
+      });
+
+      const verification = await tx.sellerVerification.findUnique({
+        where: { sellerProfileId: id },
+        select: { metadata: true },
+      });
+      const metadata = {
+        ...readJsonObject(verification?.metadata),
+        changeRequest,
+      } as Prisma.InputJsonValue;
+      await tx.sellerVerification.upsert({
+        where: { sellerProfileId: id },
+        create: {
+          sellerProfileId: id,
+          overallStatus: VerificationStatus.PENDING,
+          reviewedAt: now,
+          notes: reason,
+          metadata,
+        },
+        update: {
+          overallStatus: VerificationStatus.PENDING,
+          reviewedAt: now,
+          notes: reason,
+          metadata,
+        },
+      });
+
+      await tx.organization.update({
+        where: { id: seller.organizationId },
+        data: { verificationStatus: VerificationStatus.PENDING },
+      });
+    });
+
+    await this.audit.log({
+      action: 'SELLER_CHANGES_REQUESTED',
+      actorUserId,
+      organizationId: seller.organizationId,
+      entityType: EntityOwnerType.SELLER,
+      entityId: id,
+      previousData: {
+        status: seller.status,
+        onboardingStatus: seller.onboarding.status,
+      },
+      newData: {
+        status: SellerStatus.PENDING_VERIFICATION,
+        onboardingStatus: SellerOnboardingStatus.IN_PROGRESS,
+        reason,
+        documentIds,
+      },
+    });
+
+    const docNames = changeRequest.slots
+      .map((slot) => slotName(slot))
+      .filter(Boolean);
+    await this.notifications.create({
+      userId: seller.userId,
+      organizationId: seller.organizationId,
+      title: 'Action required: update your seller verification',
+      body: docNames.length
+        ? `Please re-upload ${docNames.join(', ')}. ${reason}`
+        : reason,
+      entityType: EntityOwnerType.SELLER,
+      entityId: id,
+      metadata: {
+        type: 'KYC_CHANGES_REQUESTED',
+        slots: changeRequest.slots,
+        documentIds,
+      },
     });
 
     return this.findOne(id);

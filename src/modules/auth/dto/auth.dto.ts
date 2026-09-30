@@ -71,17 +71,27 @@ export class VerifyOtpDto {
 
 export class LoginDto {
   @ApiPropertyOptional({ example: 'customer@test.local' })
-  @ValidateIf((o: LoginDto) => !o.phone)
+  @ValidateIf((o: LoginDto) => !o.phone && !o.identifier)
   @IsEmail({ require_tld: false })
   email?: string;
 
   @ApiPropertyOptional({ example: '+918240890242' })
-  @ValidateIf((o: LoginDto) => !o.email)
+  @ValidateIf((o: LoginDto) => !o.email && !o.identifier)
   @IsString()
   @Matches(/^\+[1-9]\d{7,14}$/, {
     message: 'phone must be in E.164 format, e.g. +919876543210',
   })
   phone?: string;
+
+  @ApiPropertyOptional({
+    description: 'Login ID, email, or phone. Seller Managers use their Login ID.',
+    example: 'PTM-000123',
+  })
+  @ValidateIf((o: LoginDto) => !o.email && !o.phone)
+  @IsString()
+  @MinLength(3)
+  @MaxLength(120)
+  identifier?: string;
 
   @ApiProperty({ example: 'Test@12345' })
   @IsString()

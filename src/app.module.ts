@@ -31,6 +31,7 @@ import { RolesPermissionsModule } from './modules/roles-permissions/index.js';
 import { SellersModule } from './modules/sellers/index.js';
 import { SettlementsModule } from './modules/settlements/index.js';
 import { LogisticsModule } from './modules/logistics/index.js';
+import { LocationsModule } from './modules/locations/index.js';
 import { CmsModule } from './modules/cms/index.js';
 import { ShipmentsModule } from './modules/shipments/index.js';
 import { SupportModule } from './modules/support/index.js';
@@ -77,6 +78,10 @@ import { StorageModule } from './storage/storage.module.js';
                 'CLOUDFLARE_R2_SECRET_ACCESS_KEY',
                 'CLOUDFLARE_R2_ACCESS_KEY_ID',
                 '*.password',
+                '*.passwordHash',
+                '*.temporaryPassword',
+                '*.refreshToken',
+                '*.accessToken',
                 '*.otp',
                 '*.token',
                 '*.secret',
@@ -114,6 +119,7 @@ import { StorageModule } from './storage/storage.module.js';
     OrdersModule,
     PaymentsModule,
     LogisticsModule,
+    LocationsModule,
     CmsModule,
     ShipmentsModule,
     DocumentsModule,

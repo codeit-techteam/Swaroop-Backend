@@ -725,7 +725,9 @@ model User {
   id            String     @id @default(uuid()) @db.Uuid
   email         String?    @unique
   phone         String?    @unique
-  passwordHash  String?    @map("password_hash")
+  passwordHash        String?  @map("password_hash")
+  loginId             String?  @unique @map("login_id")
+  mustChangePassword  Boolean  @default(false) @map("must_change_password")
   firstName     String?    @map("first_name")
   lastName      String?    @map("last_name")
   displayName   String?    @map("display_name")
@@ -764,6 +766,9 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   supportTicketsRequested SupportTicket[]         @relation("SupportTicketRequester")
   supportTicketsAssigned  SupportTicket[]         @relation("SupportTicketAssignee")
+  managerAssignments      SellerManagerAssignment[] @relation("ManagerAssignmentUser")
+  managerAssignmentsMade  SellerManagerAssignment[] @relation("ManagerAssignmentAssigner")
+  permissionGrants        UserPermissionGrant[]
 
   @@index([status])
   @@index([createdAt])
@@ -915,6 +920,50 @@ model UserRole {
   @@index([userId])
   @@index([roleId])
   @@map("user_roles")
+}
+
+enum ManagerAssignmentStatus {
+  ACTIVE
+  INACTIVE
+  REVOKED
+}
+
+/// A Seller Manager is a User assigned to one Seller. The Manager is not a Seller.
+model SellerManagerAssignment {
+  id              String                  @id @default(uuid()) @db.Uuid
+  userId          String                  @map("user_id") @db.Uuid
+  sellerProfileId String                  @map("seller_profile_id") @db.Uuid
+  isPrimary       Boolean                 @default(false) @map("is_primary")
+  status          ManagerAssignmentStatus @default(ACTIVE)
+  title           String?
+  assignedAt      DateTime                @default(now()) @map("assigned_at")
+  assignedById    String?                 @map("assigned_by_id") @db.Uuid
+  deactivatedAt   DateTime?               @map("deactivated_at")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+
+  user          User          @relation("ManagerAssignmentUser", fields: [userId], references: [id], onDelete: Cascade)
+  sellerProfile SellerProfile @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
+  assignedBy    User?         @relation("ManagerAssignmentAssigner", fields: [assignedById], references: [id])
+
+  @@index([userId, status])
+  @@index([sellerProfileId, status])
+  @@index([assignedById])
+  @@map("seller_manager_assignments")
+}
+
+/// Explicit grants for a Seller Manager. Seller owners keep role-level access.
+model UserPermissionGrant {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  code      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, code])
+  @@index([userId])
+  @@map("user_permission_grants")
 }
 
 // =============================================================================
@@ -1273,6 +1322,7 @@ model SellerProfile {
   orders            Order[]
   settlements       Settlement[]
   prResponses       PurchaseRequestResponse[]
+  managerAssignments SellerManagerAssignment[]
 
   @@index([status])
   @@map("seller_profiles")
@@ -1369,8 +1419,16 @@ model Address {
   country        String      @default("IN")
   postalCode     String      @map("postal_code")
   landmark       String?
+  locality       String?
+  district       String?
   latitude       Decimal?    @db.Decimal(10, 7)
   longitude      Decimal?    @db.Decimal(10, 7)
+  /// Google Place ID of the resolved location (autocomplete / reverse geocode).
+  placeId          String?   @map("place_id")
+  formattedAddress String?   @map("formatted_address")
+  accuracyMeters   Int?      @map("accuracy_meters")
+  /// How the location was captured: AUTOCOMPLETE | GPS | MAP_PIN | PINCODE | MANUAL
+  source           String?
   isDefault      Boolean     @default(false) @map("is_default")
   isActive       Boolean     @default(true) @map("is_active")
   createdAt      DateTime    @default(now()) @map("created_at")
@@ -1380,7 +1438,10 @@ model Address {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, type])
+  @@index([organizationId, isDefault])
   @@index([city, state])
+  @@index([placeId])
+  @@index([postalCode])
   @@map("addresses")
 }
 
@@ -1691,6 +1752,10 @@ model Warehouse {
   country        String       @default("IN")
   postalCode     String?      @map("postal_code")
   addressLine    String?      @map("address_line")
+  latitude         Decimal?   @db.Decimal(10, 7)
+  longitude        Decimal?   @db.Decimal(10, 7)
+  placeId          String?    @map("place_id")
+  formattedAddress String?    @map("formatted_address")
   contactName    String?      @map("contact_name")
   contactPhone   String?      @map("contact_phone")
   isPlatformHub  Boolean      @default(false) @map("is_platform_hub")
@@ -1713,6 +1778,7 @@ model Warehouse {
   @@index([locationId])
   @@index([city, state])
   @@index([status])
+  @@index([organizationId, placeId])
   @@map("warehouses")
 }
 
@@ -1910,6 +1976,9 @@ model PurchaseRequest {
   destinationRegion String?               @map("destination_region")
   billingAddressId  String?               @map("billing_address_id") @db.Uuid
   shippingAddressId String?               @map("shipping_address_id") @db.Uuid
+  /// Immutable copy of the delivery address at submission time.
+  shippingAddressSnapshot Json?           @map("shipping_address_snapshot")
+  billingAddressSnapshot  Json?           @map("billing_address_snapshot")
   notes             String?
   rejectionReason   String?               @map("rejection_reason")
   expiresAt               DateTime?             @map("expires_at")
@@ -2178,6 +2247,8 @@ model PurchaseOrder {
   orderedQuantity   Decimal?            @map("ordered_quantity") @db.Decimal(18, 3)
   dispatchedQuantity Decimal            @default(0) @map("dispatched_quantity") @db.Decimal(18, 3)
   deliveredQuantity Decimal             @default(0) @map("delivered_quantity") @db.Decimal(18, 3)
+  shippingAddressSnapshot Json?         @map("shipping_address_snapshot")
+  billingAddressSnapshot  Json?         @map("billing_address_snapshot")
   confirmedAt       DateTime?           @map("confirmed_at")
   metadata          Json?
   createdAt         DateTime            @default(now()) @map("created_at")
@@ -3193,6 +3264,7 @@ model PasswordResetToken {
   id        String    @id @default(uuid()) @db.Uuid
   userId    String    @map("user_id") @db.Uuid
   tokenHash String    @map("token_hash")
+  purpose   String    @default("PASSWORD_RESET")
   expiresAt DateTime  @map("expires_at")
   usedAt    DateTime? @map("used_at")
   createdAt DateTime  @default(now()) @map("created_at")

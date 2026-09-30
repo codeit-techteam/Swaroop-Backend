@@ -17,6 +17,8 @@ import { AdminDashboardController } from './dashboard/admin-dashboard.controller
 import { AdminDashboardService } from './dashboard/admin-dashboard.service.js';
 import { AdminDocumentsController } from './documents/admin-documents.controller.js';
 import { AdminDocumentsService } from './documents/admin-documents.service.js';
+import { AdminKycController } from './kyc/admin-kyc.controller.js';
+import { AdminKycService } from './kyc/admin-kyc.service.js';
 import { AdminGradesController } from './grades/admin-grades.controller.js';
 import { AdminNotificationsController } from './notifications/admin-notifications.controller.js';
 import { AdminOffersController } from './offers/admin-offers.controller.js';
@@ -44,6 +46,7 @@ import { AdminBulkLogisticsQuotesController } from './bulk-logistics-quotes/admi
 import { AdminBulkLogisticsQuotesService } from './bulk-logistics-quotes/admin-bulk-logistics-quotes.service.js';
 import { AdminSellersController } from './sellers/admin-sellers.controller.js';
 import { AdminSellersService } from './sellers/admin-sellers.service.js';
+import { AdminManagerService } from './users/admin-manager.service.js';
 import { AdminUsersController } from './users/admin-users.controller.js';
 import { AdminUsersService } from './users/admin-users.service.js';
 
@@ -51,6 +54,7 @@ const adminProviders = [
   AdminAuditService,
   AdminDashboardService,
   AdminUsersService,
+  AdminManagerService,
   AdminSellersService,
   AdminCustomersService,
   AdminProductsService,
@@ -59,6 +63,7 @@ const adminProviders = [
   AdminOrdersService,
   AdminDocumentsService,
   AdminComplianceService,
+  AdminKycService,
   AdminPricingService,
   AdminReportsService,
   AdminAuditLogsService,
@@ -94,6 +99,7 @@ const adminProviders = [
     AdminOrdersController,
     AdminDocumentsController,
     AdminComplianceController,
+    AdminKycController,
     AdminPricingController,
     AdminNotificationsController,
     AdminReportsController,

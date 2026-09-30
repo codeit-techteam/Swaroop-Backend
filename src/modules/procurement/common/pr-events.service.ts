@@ -24,7 +24,7 @@ export const PR_EVENT_TYPES = [
   'PURCHASE_ORDER_CREATED',
   'ADMIN_NOTE_ADDED',
   'ADMIN_MARKED_FOR_REVIEW',
-  'ADMIN_ESCALATED',
+  'PROCUREMENT_VIEWED',
 ] as const;
 
 export type PrEventType = (typeof PR_EVENT_TYPES)[number];

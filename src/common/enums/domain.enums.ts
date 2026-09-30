@@ -14,6 +14,7 @@ export enum RoleCode {
   COMPLIANCE_MANAGER = 'COMPLIANCE_MANAGER',
   CUSTOMER = 'CUSTOMER',
   SELLER = 'SELLER',
+  SELLER_MANAGER = 'SELLER_MANAGER',
 }
 
 export enum PermissionCode {

@@ -84,6 +84,29 @@ export type OwnershipFilter = {
   organizationId?: string;
 };
 
+export type DownloadOptions = {
+  /** inline = open in browser tab / iframe, attachment = force save dialog. */
+  disposition?: 'inline' | 'attachment';
+  expiresInSeconds?: number;
+  /** HEAD the object first so a missing file returns 404 instead of a dead link. */
+  verifyExists?: boolean;
+};
+
+/** Metadata keys that identify which workflow owns a document; never overwritten on replace. */
+const IMMUTABLE_METADATA_KEYS = ['purpose', 'slot'] as const;
+
+function contentDisposition(
+  disposition: 'inline' | 'attachment',
+  fileName: string,
+): string {
+  const ascii = fileName.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_');
+  const encoded = encodeURIComponent(fileName).replace(
+    /['()*]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return `${disposition}; filename="${ascii}"; filename*=UTF-8''${encoded}`;
+}
+
 @Injectable()
 export class DocumentsCoreService {
   constructor(
@@ -382,6 +405,10 @@ export class DocumentsCoreService {
       !Array.isArray(existing.metadata)
         ? (existing.metadata as Record<string, unknown>)
         : {};
+    const preserved: Record<string, unknown> = {};
+    for (const key of IMMUTABLE_METADATA_KEYS) {
+      if (existingMeta[key] !== undefined) preserved[key] = existingMeta[key];
+    }
     const nextMeta = {
       ...existingMeta,
       ...(input.metadata &&
@@ -389,6 +416,7 @@ export class DocumentsCoreService {
       !Array.isArray(input.metadata)
         ? (input.metadata as Record<string, unknown>)
         : {}),
+      ...preserved,
       r2Confirmed: Boolean(input.storageKey),
       replacedAt: new Date().toISOString(),
       awaitingAdminReview: true,
@@ -452,18 +480,48 @@ export class DocumentsCoreService {
     };
   }
 
-  async download(id: string, ownership?: OwnershipFilter) {
+  async download(
+    id: string,
+    ownership?: OwnershipFilter,
+    options?: DownloadOptions,
+  ) {
     const doc = await this.requireDocument(id, ownership);
+    if (options?.verifyExists) {
+      const stored = await this.storage.exists(doc.storageKey);
+      if (!stored) {
+        throw new NotFoundException(
+          'The file for this document is missing from storage.',
+        );
+      }
+    }
+    const fileName = doc.originalFileName ?? doc.fileName;
+    const expiresInSeconds = options?.expiresInSeconds;
     const url = await this.storage.getSignedUrl({
       key: doc.storageKey,
       operation: 'get',
+      expiresInSeconds,
+      responseContentDisposition: options?.disposition
+        ? contentDisposition(options.disposition, fileName)
+        : undefined,
+      responseContentType: options?.disposition
+        ? (doc.mimeType ?? undefined)
+        : undefined,
     });
     return {
       id: doc.id,
       url,
-      fileName: doc.fileName,
+      fileName,
       mimeType: doc.mimeType,
+      fileSizeBytes: doc.fileSizeBytes?.toString() ?? null,
       documentNumber: doc.documentNumber,
+      disposition: options?.disposition ?? null,
+      ...(expiresInSeconds
+        ? {
+            expiresAt: new Date(
+              Date.now() + expiresInSeconds * 1000,
+            ).toISOString(),
+          }
+        : {}),
     };
   }
 

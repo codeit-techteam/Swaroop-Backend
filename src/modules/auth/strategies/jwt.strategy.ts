@@ -83,6 +83,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       isPhoneVerified: user.phoneVerified,
       roles: user.userRoles.map((ur) => ur.role.code),
       sessionId: session.id,
+      mustChangePassword: user.mustChangePassword,
     };
   }
 }

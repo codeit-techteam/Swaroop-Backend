@@ -1,7 +1,20 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
-import { SELLER_ONBOARDING_SLOT_VALUES } from './onboarding-documents.slots.js';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
+import {
+  SELLER_ONBOARDING_SLOT_VALUES,
+  SELLER_ONBOARDING_UPLOAD_SOURCES,
+  type SellerOnboardingUploadSource,
+} from './onboarding-documents.slots.js';
 
 /** DTO ceiling. Runtime limit is StorageService.getMaxDocumentSizeBytes(). */
 const ONBOARDING_DOCUMENT_DTO_MAX_BYTES = 50 * 1024 * 1024;
@@ -35,4 +48,13 @@ export class CreateOnboardingDocumentDto {
   @Min(1)
   @Max(ONBOARDING_DOCUMENT_DTO_MAX_BYTES)
   fileSizeBytes!: number;
+
+  @ApiPropertyOptional({
+    enum: SELLER_ONBOARDING_UPLOAD_SOURCES,
+    description:
+      'Client that uploaded the file; shown to admins in the Document Center',
+  })
+  @IsOptional()
+  @IsIn(SELLER_ONBOARDING_UPLOAD_SOURCES)
+  source?: SellerOnboardingUploadSource;
 }

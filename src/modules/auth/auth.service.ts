@@ -3,12 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
 import {
+  EntityOwnerType,
   OtpIdentifierType,
   OtpPurpose,
   UserStatus,
   type Prisma,
   type User,
 } from '../../generated/prisma/client.js';
+import { SELLER_OWNER_PERMISSIONS } from '../sellers/managers/seller-access.js';
+import { resolveSellerActor } from '../sellers/common/resolve-seller-actor.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { RoleCode } from '../../common/enums/domain.enums.js';
 import { AuthException } from './exceptions/auth.exception.js';
@@ -228,13 +231,7 @@ export class AuthService {
   }
 
   async login(dto: LoginDto, meta: RequestMeta = {}) {
-    const email = dto.email?.trim().toLowerCase();
-    const phone = dto.phone?.trim();
-    const user = email
-      ? await this.prisma.user.findUnique({ where: { email } })
-      : phone
-        ? await this.prisma.user.findUnique({ where: { phone } })
-        : null;
+    const user = await this.findUserForPasswordLogin(dto);
 
     if (!user || !user.passwordHash) {
       throw new AuthException(
@@ -264,6 +261,9 @@ export class AuthService {
     const tokens = await this.createSession(user.id, meta);
     await this.bootstrapDemoIfNeeded(user.id);
     const publicUser = await this.toPublicUser(user.id);
+    if (publicUser.roles.includes(RoleCode.SELLER_MANAGER)) {
+      await this.auditManagerEvent('MANAGER_LOGIN', user.id, publicUser.sellerId);
+    }
     return { user: publicUser, ...tokens };
   }
 
@@ -407,6 +407,10 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
+    if (user.roles.includes(RoleCode.SELLER_MANAGER)) {
+      await this.auditManagerEvent('MANAGER_LOGOUT', user.id);
+    }
+
     return { message: 'Logged out successfully' };
   }
 
@@ -541,6 +545,7 @@ export class AuthService {
         data: {
           passwordHash,
           status: UserStatus.ACTIVE,
+          mustChangePassword: false,
         },
       });
       await tx.authSession.updateMany({
@@ -842,20 +847,96 @@ export class AuthService {
       },
     });
 
+    const roles = user.userRoles.map(
+      (ur: { role: { code: string } }) => ur.role.code,
+    );
+    const actor = await resolveSellerActor(client, user.id);
+    const isManager = roles.includes(RoleCode.SELLER_MANAGER);
+    const isSeller = roles.includes(RoleCode.SELLER);
+    const grants = isManager
+      ? await client.userPermissionGrant.findMany({
+          where: { userId },
+          select: { code: true },
+        })
+      : [];
+
     return {
       id: user.id,
       email: user.email,
       phone: user.phone,
       firstName: user.firstName,
       lastName: user.lastName,
+      displayName: user.displayName,
+      loginId: user.loginId,
       status: user.status,
       isEmailVerified: user.emailVerified,
       isPhoneVerified: user.phoneVerified,
-      roles: user.userRoles.map(
-        (ur: { role: { code: string } }) => ur.role.code,
-      ),
+      mustChangePassword: user.mustChangePassword,
+      roles,
       lastLoginAt: user.lastLoginAt,
+      sellerId: actor?.profile.id ?? null,
+      sellerName: actor?.profile.organization.name ?? null,
+      permissions: isManager
+        ? grants.map((grant) => grant.code)
+        : isSeller
+          ? [...SELLER_OWNER_PERMISSIONS]
+          : [],
     };
+  }
+
+  private async findUserForPasswordLogin(dto: LoginDto) {
+    const identifier = dto.identifier?.trim();
+    if (identifier) {
+      const byLoginId = await this.prisma.user.findUnique({
+        where: { loginId: identifier },
+      });
+      if (byLoginId) return byLoginId;
+      if (identifier.includes('@')) {
+        return this.prisma.user.findUnique({
+          where: { email: identifier.toLowerCase() },
+        });
+      }
+      const digits = identifier.replace(/\D/g, '');
+      const phone =
+        digits.length === 10
+          ? `+91${digits}`
+          : identifier.startsWith('+')
+            ? identifier
+            : null;
+      if (phone) {
+        return this.prisma.user.findUnique({ where: { phone } });
+      }
+      return null;
+    }
+
+    const email = dto.email?.trim().toLowerCase();
+    const phone = dto.phone?.trim();
+    if (email) return this.prisma.user.findUnique({ where: { email } });
+    if (phone) return this.prisma.user.findUnique({ where: { phone } });
+    return null;
+  }
+
+  private async auditManagerEvent(
+    action: string,
+    userId: string,
+    sellerId?: string | null,
+  ) {
+    try {
+      await this.prisma.auditLog.create({
+        data: {
+          action,
+          actorUserId: userId,
+          entityType: EntityOwnerType.USER,
+          entityId: userId,
+          metadata: sellerId ? { sellerId } : undefined,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        `Failed to audit ${action} for ${userId}`,
+        error instanceof Error ? error.stack : error,
+      );
+    }
   }
 
   private parseDurationToMs(value: string): number {

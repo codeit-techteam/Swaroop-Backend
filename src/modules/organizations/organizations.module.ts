@@ -1,8 +1,12 @@
 import { Module } from '@nestjs/common';
+import { AddressBookService } from './addresses/address-book.service.js';
 
 /**
- * Phase 2 domain boundary for Organizations.
- * Business REST controllers/services are intentionally deferred to later phases.
+ * Organization domain boundary. Hosts the org-scoped address book shared by
+ * Customer and Seller organizations.
  */
-@Module({})
+@Module({
+  providers: [AddressBookService],
+  exports: [AddressBookService],
+})
 export class OrganizationsModule {}

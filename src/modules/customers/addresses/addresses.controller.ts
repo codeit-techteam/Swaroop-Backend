@@ -41,7 +41,9 @@ export class CustomerAddressesController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Save a delivery address (GPS, pincode, or manual)' })
+  @ApiOperation({
+    summary: 'Save a delivery address (GPS, pincode, or manual)',
+  })
   async create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CreateCustomerAddressDto,

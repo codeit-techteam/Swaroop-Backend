@@ -133,6 +133,8 @@ export class CloudflareR2Provider implements ObjectStorageProvider {
         : new GetObjectCommand({
             Bucket: this.bucketName,
             Key: input.key,
+            ResponseContentDisposition: input.responseContentDisposition,
+            ResponseContentType: input.responseContentType,
           });
 
     return getSignedUrl(client, command, { expiresIn });

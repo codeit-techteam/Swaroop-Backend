@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import {
   EntityOwnerType,
+  ManagerAssignmentStatus,
   Prisma,
   UserStatus,
 } from '../../../generated/prisma/client.js';
@@ -17,6 +18,7 @@ import {
 import { AdminAuditService } from '../common/admin-audit.service.js';
 import { AdminUserStatusFilter } from '../common/admin-query.dto.js';
 import type {
+  AdminDirectoryStatusFilter,
   AdminUsersQueryDto,
   UpdateUserRoleDto,
   UpdateUserStatusDto,
@@ -26,6 +28,7 @@ const userSelect = {
   id: true,
   email: true,
   phone: true,
+  loginId: true,
   firstName: true,
   lastName: true,
   displayName: true,
@@ -33,6 +36,7 @@ const userSelect = {
   status: true,
   emailVerified: true,
   phoneVerified: true,
+  mustChangePassword: true,
   lastLoginAt: true,
   createdAt: true,
   updatedAt: true,
@@ -45,15 +49,42 @@ const userSelect = {
     },
   },
   customerProfile: { select: { id: true, status: true, organizationId: true } },
-  sellerProfile: { select: { id: true, status: true, organizationId: true } },
+  sellerProfile: {
+    select: {
+      id: true,
+      status: true,
+      organizationId: true,
+      organization: { select: { name: true } },
+    },
+  },
   adminProfile: { select: { id: true, status: true } },
+  managerAssignments: {
+    orderBy: { assignedAt: 'desc' as const },
+    take: 3,
+    select: {
+      id: true,
+      status: true,
+      isPrimary: true,
+      title: true,
+      sellerProfile: {
+        select: {
+          id: true,
+          status: true,
+          organization: { select: { name: true, gstin: true, pan: true } },
+        },
+      },
+    },
+  },
 } satisfies Prisma.UserSelect;
 
 function mapStatusFilter(
-  status?: AdminUserStatusFilter,
+  status?: AdminUserStatusFilter | AdminDirectoryStatusFilter,
 ): UserStatus | undefined {
-  if (!status) return undefined;
-  if (status === AdminUserStatusFilter.INACTIVE) return UserStatus.INACTIVE;
+  if (!status || status === 'REVOKED') return undefined;
+  if (status === 'INVITED' || status === 'PENDING') return UserStatus.PENDING;
+  if (status === AdminUserStatusFilter.INACTIVE || status === 'INACTIVE') {
+    return UserStatus.INACTIVE;
+  }
   return status as unknown as UserStatus;
 }
 
@@ -68,11 +99,39 @@ export class AdminUsersService {
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const where: Prisma.UserWhereInput = { deletedAt: null };
 
-    if (query.status) {
+    if (query.status === 'REVOKED') {
+      where.managerAssignments = {
+        some: { status: ManagerAssignmentStatus.REVOKED },
+      };
+      where.NOT = {
+        managerAssignments: {
+          some: { status: ManagerAssignmentStatus.ACTIVE },
+        },
+      };
+    } else if (query.status) {
       where.status = mapStatusFilter(query.status);
     }
     if (query.role) {
       where.userRoles = { some: { role: { code: query.role } } };
+    }
+    if (query.sellerId) {
+      where.managerAssignments = {
+        some: {
+          sellerProfileId: query.sellerId,
+          ...(query.status === 'REVOKED'
+            ? { status: ManagerAssignmentStatus.REVOKED }
+            : { status: ManagerAssignmentStatus.ACTIVE }),
+        },
+      };
+    }
+    if (query.lastLoginFrom || query.lastLoginTo) {
+      where.lastLoginAt = {};
+      if (query.lastLoginFrom) {
+        where.lastLoginAt.gte = new Date(query.lastLoginFrom);
+      }
+      if (query.lastLoginTo) {
+        where.lastLoginAt.lte = new Date(query.lastLoginTo);
+      }
     }
     if (query.from || query.to) {
       where.createdAt = {};
@@ -87,21 +146,69 @@ export class AdminUsersService {
         { firstName: { contains: q, mode: 'insensitive' } },
         { lastName: { contains: q, mode: 'insensitive' } },
         { displayName: { contains: q, mode: 'insensitive' } },
+        { loginId: { contains: q, mode: 'insensitive' } },
       ];
     }
 
+    const sortField =
+      query.sortBy === 'lastLoginAt' || query.sortBy === 'displayName'
+        ? query.sortBy
+        : 'createdAt';
     const [items, total] = await Promise.all([
       this.prisma.user.findMany({
         where,
         select: userSelect,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { [sortField]: query.sortOrder === 'asc' ? 'asc' : 'desc' },
         skip,
         take,
       }),
       this.prisma.user.count({ where }),
     ]);
 
-    return { items, meta: paginationMeta(page, limit, total) };
+    return {
+      items: items.map(presentListUser),
+      meta: paginationMeta(page, limit, total),
+    };
+  }
+
+  async exportRows(query: AdminUsersQueryDto) {
+    const pageSize = 100;
+    const first = await this.list({ ...query, page: 1, limit: pageSize });
+    const pages = Math.min(first.meta.totalPages, 20);
+    const items = [...first.items];
+    for (let page = 2; page <= pages; page += 1) {
+      const next = await this.list({ ...query, page, limit: pageSize });
+      items.push(...next.items);
+    }
+    const listed = { items };
+    const header = [
+      'Name',
+      'Email',
+      'Phone',
+      'Role',
+      'Seller',
+      'Status',
+      'Last Login',
+      'Created At',
+    ];
+    const lines = listed.items.map((row) =>
+      [
+        row.name,
+        row.email,
+        row.phone,
+        row.role,
+        row.seller?.name,
+        row.status,
+        row.lastLoginAt,
+        row.createdAt,
+      ]
+        .map((value) => csvCell(value))
+        .join(','),
+    );
+    return {
+      filename: 'users.csv',
+      csv: [header.join(','), ...lines].join('\n'),
+    };
   }
 
   async findOne(id: string) {
@@ -192,4 +299,57 @@ export class AdminUsersService {
 
     return updated;
   }
+}
+
+type ListedUser = Prisma.UserGetPayload<{ select: typeof userSelect }>;
+
+function presentListUser(user: ListedUser) {
+  const assignment =
+    user.managerAssignments.find((row) => row.status === 'ACTIVE') ??
+    user.managerAssignments[0] ??
+    null;
+  const sellerName =
+    assignment?.sellerProfile.organization.name ??
+    user.sellerProfile?.organization.name ??
+    null;
+  const sellerId =
+    assignment?.sellerProfile.id ?? user.sellerProfile?.id ?? null;
+  const role =
+    user.userRoles.find((row) => row.role.code === 'SELLER_MANAGER')?.role
+      .code ??
+    user.userRoles[0]?.role.code ??
+    null;
+  return {
+    id: user.id,
+    name:
+      user.displayName ||
+      [user.firstName, user.lastName].filter(Boolean).join(' ') ||
+      user.email ||
+      'User',
+    email: user.email,
+    phone: user.phone,
+    loginId: user.loginId,
+    role,
+    roles: user.userRoles.map((row) => row.role.code),
+    status: user.status,
+    lastLoginAt: user.lastLoginAt,
+    createdAt: user.createdAt,
+    seller: sellerId
+      ? {
+          id: sellerId,
+          name: sellerName,
+          gst: assignment?.sellerProfile.organization.gstin ?? null,
+          pan: assignment?.sellerProfile.organization.pan ?? null,
+          status: assignment?.sellerProfile.status ?? user.sellerProfile?.status,
+        }
+      : null,
+    assignmentStatus: assignment?.status ?? null,
+    isPrimary: assignment?.isPrimary ?? false,
+  };
+}
+
+function csvCell(value: unknown) {
+  const text = value == null ? '' : String(value);
+  if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+  return text;
 }

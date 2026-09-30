@@ -154,6 +154,73 @@ describe('OnboardingDocumentsService', () => {
     );
   });
 
+  const upload = {
+    slot: 'gst' as const,
+    fileName: 'gst-v2.pdf',
+    mimeType: 'application/pdf',
+    fileSizeBytes: 2048,
+    source: 'SELLER_APP' as const,
+  };
+
+  it('lets a submitted seller replace a slot the admin rejected', async () => {
+    prisma.sellerOnboarding.findUnique.mockResolvedValue({
+      id: 'onb-1',
+      status: 'SUBMITTED',
+      metadata: {},
+    });
+    prisma.document.findMany.mockResolvedValue([
+      doc({
+        status: DocumentStatus.REJECTED,
+        metadata: {
+          purpose: SELLER_ONBOARDING_DOCUMENT_PURPOSE,
+          slot: 'gst',
+          r2Confirmed: true,
+        },
+      }),
+    ]);
+    documents.create.mockResolvedValue({
+      id: 'doc-2',
+      fileName: 'gst-v2.pdf',
+      originalFileName: 'gst-v2.pdf',
+      mimeType: 'application/pdf',
+      fileSizeBytes: '2048',
+      status: DocumentStatus.UPLOADED,
+      uploadUrl: 'https://r2.example/put',
+    });
+
+    const result = await service.createUpload('user-1', upload);
+
+    expect(result.uploadUrl).toBe('https://r2.example/put');
+    expect(documents.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ uploadSource: 'SELLER_APP' }),
+      }),
+    );
+  });
+
+  it('keeps a submitted slot locked while its file is still under review', async () => {
+    prisma.sellerOnboarding.findUnique.mockResolvedValue({
+      id: 'onb-1',
+      status: 'SUBMITTED',
+      metadata: {},
+    });
+    prisma.document.findMany.mockResolvedValue([
+      doc({
+        status: DocumentStatus.UNDER_REVIEW,
+        metadata: {
+          purpose: SELLER_ONBOARDING_DOCUMENT_PURPOSE,
+          slot: 'gst',
+          r2Confirmed: true,
+        },
+      }),
+    ]);
+
+    await expect(service.createUpload('user-1', upload)).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(documents.create).not.toHaveBeenCalled();
+  });
+
   it('reports required documents that are not confirmed in storage', async () => {
     prisma.document.findMany.mockImplementation(
       async ({ where }: { where: { category: DocumentCategory } }) => {

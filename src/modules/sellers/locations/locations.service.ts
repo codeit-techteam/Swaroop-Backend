@@ -5,9 +5,54 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import {
+  isValidCoordinate,
+  isWithinIndia,
+} from '../../locations/location-normalizer.js';
+import { haversineMeters } from '../../organizations/addresses/address-book.mapper.js';
 import { SellerAuditService } from '../common/seller-audit.service.js';
 import { SellerContextService } from '../common/seller-context.service.js';
-import type { SetCurrentLocationDto } from '../offers/offers.dto.js';
+import type {
+  SaveLocationFromGeoDto,
+  SetCurrentLocationDto,
+} from '../offers/offers.dto.js';
+
+/** Saving within this radius of an existing warehouse updates it instead of duplicating. */
+const WAREHOUSE_DEDUPE_METERS = 75;
+
+const warehouseSelect = {
+  id: true,
+  code: true,
+  name: true,
+  city: true,
+  state: true,
+  country: true,
+  postalCode: true,
+  addressLine: true,
+  latitude: true,
+  longitude: true,
+  placeId: true,
+  formattedAddress: true,
+  isActive: true,
+  contactName: true,
+} as const;
+
+type WarehouseRow = {
+  id: string;
+  code: string;
+  name: string;
+  city: string | null;
+  state: string | null;
+  country: string;
+  postalCode: string | null;
+  addressLine?: string | null;
+  latitude?: Prisma.Decimal | null;
+  longitude?: Prisma.Decimal | null;
+  placeId?: string | null;
+  formattedAddress?: string | null;
+  isActive: boolean;
+  contactName?: string | null;
+};
 
 type SellerProfileMetadata = {
   currentWarehouseId?: string;
@@ -22,6 +67,11 @@ type LocationRow = {
   state: string | null;
   country: string;
   pincode: string | null;
+  addressLine: string | null;
+  formattedAddress: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  placeId: string | null;
   status: 'active' | 'inactive';
   availableStockMt: number;
   activeOffers: number;
@@ -70,17 +120,13 @@ export class SellerLocationsService {
     return typeof value === 'string' ? value.trim() : '';
   }
 
-  private mapWarehouse(row: {
-    id: string;
-    code: string;
-    name: string;
-    city: string | null;
-    state: string | null;
-    country: string;
-    postalCode: string | null;
-    isActive: boolean;
-    contactName?: string | null;
-  }): LocationRow {
+  private coord(value: Prisma.Decimal | null | undefined): number | null {
+    if (value == null) return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  private mapWarehouse(row: WarehouseRow): LocationRow {
     return {
       id: row.id,
       code: row.code,
@@ -89,6 +135,11 @@ export class SellerLocationsService {
       state: row.state,
       country: row.country,
       pincode: row.postalCode,
+      addressLine: row.addressLine ?? null,
+      formattedAddress: row.formattedAddress ?? null,
+      latitude: this.coord(row.latitude),
+      longitude: this.coord(row.longitude),
+      placeId: row.placeId ?? null,
       status: row.isActive ? 'active' : 'inactive',
       availableStockMt: 0,
       activeOffers: 0,
@@ -176,6 +227,16 @@ export class SellerLocationsService {
         addressLine: addressLine || null,
         contactName: this.str(location.contactName) || null,
         contactPhone: this.str(location.contactPhone) || null,
+        ...(isValidCoordinate(location.latitude, location.longitude)
+          ? {
+              latitude: new Prisma.Decimal(
+                Number(location.latitude).toFixed(7),
+              ),
+              longitude: new Prisma.Decimal(
+                Number(location.longitude).toFixed(7),
+              ),
+            }
+          : {}),
         isPlatformHub: false,
         isActive: true,
         metadata: {
@@ -212,17 +273,7 @@ export class SellerLocationsService {
           organizationId: ctx.organizationId,
         },
         orderBy: { name: 'asc' },
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          city: true,
-          state: true,
-          country: true,
-          postalCode: true,
-          isActive: true,
-          contactName: true,
-        },
+        select: warehouseSelect,
       }),
       this.prisma.inventory.findMany({
         where: { organizationId: ctx.organizationId, deletedAt: null },
@@ -230,19 +281,7 @@ export class SellerLocationsService {
           availableQty: true,
           reservedQty: true,
           warehouseId: true,
-          warehouse: {
-            select: {
-              id: true,
-              code: true,
-              name: true,
-              city: true,
-              state: true,
-              country: true,
-              postalCode: true,
-              isActive: true,
-              contactName: true,
-            },
-          },
+          warehouse: { select: warehouseSelect },
         },
       }),
       this.prisma.offer.groupBy({
@@ -292,17 +331,7 @@ export class SellerLocationsService {
     if (orphanOfferIds.length) {
       const orphanWarehouses = await this.prisma.warehouse.findMany({
         where: { id: { in: orphanOfferIds }, deletedAt: null },
-        select: {
-          id: true,
-          code: true,
-          name: true,
-          city: true,
-          state: true,
-          country: true,
-          postalCode: true,
-          isActive: true,
-          contactName: true,
-        },
+        select: warehouseSelect,
       });
       for (const warehouse of orphanWarehouses) {
         groups.set(warehouse.id, {
@@ -323,57 +352,38 @@ export class SellerLocationsService {
       }
     }
 
-    if (!groups.size) {
-      const fallback = await this.ensureDefaultWarehouse(ctx.organizationId);
-      groups.set(fallback.id, fallback);
-    }
-
     return [...groups.values()].sort((a, b) => {
       const aLabel = (a.city || a.name).localeCompare(b.city || b.name);
       return aLabel;
     });
   }
 
-  private async ensureDefaultWarehouse(
-    organizationId: string,
-  ): Promise<LocationRow> {
-    const existing = await this.prisma.warehouse.findFirst({
-      where: { organizationId, deletedAt: null },
-      orderBy: { createdAt: 'asc' },
-    });
-    if (existing) return this.mapWarehouse(existing);
-
-    const created = await this.prisma.warehouse.create({
-      data: {
-        organizationId,
-        code: `WH-PRIMARY-${Date.now().toString(36).toUpperCase()}`,
-        name: 'Primary Warehouse',
-        city: 'Mumbai',
-        state: 'Maharashtra',
-        country: 'IN',
-        postalCode: '400069',
-        addressLine: 'Primary operating location',
-        isPlatformHub: false,
-        isActive: true,
-        metadata: { source: 'auto_default' } as Prisma.InputJsonValue,
-      },
-    });
-    return { ...this.mapWarehouse(created), source: 'saved' };
+  /** Validates a resolved location before it becomes a seller operating location. */
+  private assertLocation(dto: SaveLocationFromGeoDto) {
+    if (!isValidCoordinate(dto.latitude, dto.longitude)) {
+      throw new BadRequestException({
+        code: 'INVALID_COORDINATES',
+        message: 'The selected location coordinates are invalid.',
+      });
+    }
+    const country = this.str(dto.country).toUpperCase() || 'IN';
+    if (country === 'IN' && !isWithinIndia(dto.latitude, dto.longitude)) {
+      throw new BadRequestException({
+        code: 'COORDINATES_OUTSIDE_REGION',
+        message: 'The selected location is outside India.',
+      });
+    }
+    const pincode = this.str(dto.pincode);
+    if (pincode && !/^[1-9][0-9]{5}$/.test(pincode)) {
+      throw new BadRequestException({
+        code: 'INVALID_PIN',
+        message: 'Enter a valid 6-digit Indian PIN code.',
+      });
+    }
   }
 
-  async saveFromGeo(
-    userId: string,
-    dto: {
-      latitude: number;
-      longitude: number;
-      name?: string;
-      addressLine?: string;
-      city?: string;
-      state?: string;
-      pincode?: string;
-      country?: string;
-    },
-  ) {
+  async saveFromGeo(userId: string, dto: SaveLocationFromGeoDto) {
+    this.assertLocation(dto);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { email: true, phone: true, firstName: true, lastName: true },
@@ -386,56 +396,94 @@ export class SellerLocationsService {
       phone: user?.phone,
     });
 
-    const city = this.str(dto.city) || 'Current location';
+    const city = this.str(dto.city);
     const state = this.str(dto.state);
     const pincode = this.str(dto.pincode);
-    const addressLine = this.str(dto.addressLine);
+    const addressLine = [this.str(dto.addressLine), this.str(dto.addressLine2)]
+      .filter(Boolean)
+      .join(', ');
+    const placeId = this.str(dto.placeId) || null;
+    const formattedAddress = this.str(dto.formattedAddress) || null;
     const warehouseName =
       this.str(dto.name) ||
-      (city ? `${city} Warehouse` : 'Current location warehouse');
+      (city ? `${city} Warehouse` : addressLine.slice(0, 80) || 'Warehouse');
 
-    const code = `WH-GEO-${Date.now().toString(36).toUpperCase()}`;
-    const created = await this.prisma.warehouse.create({
-      data: {
-        organizationId: ctx.organizationId,
-        code,
-        name: warehouseName,
-        city: city || null,
-        state: state || null,
-        country: this.str(dto.country) || 'IN',
-        postalCode: pincode || null,
-        addressLine: addressLine || null,
-        isPlatformHub: false,
-        isActive: true,
-        metadata: {
-          source: 'geolocation',
-          latitude: dto.latitude,
-          longitude: dto.longitude,
-        } as Prisma.InputJsonValue,
-      },
+    const candidates = await this.prisma.warehouse.findMany({
+      where: { organizationId: ctx.organizationId, deletedAt: null },
+      select: { id: true, placeId: true, latitude: true, longitude: true },
     });
+    const duplicate = candidates.find((row) => {
+      if (placeId && row.placeId === placeId) return true;
+      const lat = this.coord(row.latitude);
+      const lng = this.coord(row.longitude);
+      return (
+        lat != null &&
+        lng != null &&
+        haversineMeters(lat, lng, dto.latitude, dto.longitude) <=
+          WAREHOUSE_DEDUPE_METERS
+      );
+    });
+
+    const locationData = {
+      name: warehouseName,
+      city: city || null,
+      state: state || null,
+      country: this.str(dto.country).toUpperCase() || 'IN',
+      postalCode: pincode || null,
+      addressLine: addressLine || null,
+      latitude: new Prisma.Decimal(dto.latitude.toFixed(7)),
+      longitude: new Prisma.Decimal(dto.longitude.toFixed(7)),
+      placeId,
+      formattedAddress,
+    };
+    const metadata = {
+      source: dto.source ?? 'GPS',
+      accuracyMeters: dto.accuracyMeters ?? null,
+      landmark: this.str(dto.landmark) || null,
+      locality: this.str(dto.locality) || null,
+      district: this.str(dto.district) || null,
+    };
+
+    const saved = duplicate
+      ? await this.prisma.warehouse.update({
+          where: { id: duplicate.id },
+          data: { ...locationData, isActive: true },
+        })
+      : await this.prisma.warehouse.create({
+          data: {
+            organizationId: ctx.organizationId,
+            code: `WH-GEO-${Date.now().toString(36).toUpperCase()}`,
+            ...locationData,
+            isPlatformHub: false,
+            isActive: true,
+            metadata: metadata as Prisma.InputJsonValue,
+          },
+        });
 
     const profile = await this.prisma.sellerProfile.findUnique({
       where: { id: ctx.sellerProfileId },
       select: { metadata: true },
     });
-    const metadata = this.readMetadata(profile?.metadata);
-    metadata.currentWarehouseId = created.id;
+    const profileMetadata = this.readMetadata(profile?.metadata);
+    profileMetadata.currentWarehouseId = saved.id;
     await this.prisma.sellerProfile.update({
       where: { id: ctx.sellerProfileId },
-      data: { metadata: metadata as Prisma.InputJsonValue },
+      data: { metadata: profileMetadata as Prisma.InputJsonValue },
     });
 
     await this.audit.log({
       action: 'SELLER_LOCATION_FROM_GEO',
       actorUserId: userId,
       organizationId: ctx.organizationId,
-      entityId: created.id,
+      entityId: saved.id,
       newData: {
-        warehouseId: created.id,
+        warehouseId: saved.id,
+        reusedExisting: Boolean(duplicate),
         latitude: dto.latitude,
         longitude: dto.longitude,
+        placeId,
         city,
+        source: metadata.source,
       },
     });
 

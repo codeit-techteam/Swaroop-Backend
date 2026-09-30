@@ -5,12 +5,15 @@ import {
   IsArray,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsObject,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -253,4 +256,54 @@ export class SaveLocationFromGeoDto {
   @IsString()
   @MaxLength(2)
   country?: string;
+
+  @ApiPropertyOptional({ example: 'Near MIDC gate 2' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  addressLine2?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  landmark?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  locality?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  district?: string;
+
+  @ApiPropertyOptional({
+    description: 'Google Place ID of the resolved location',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z0-9_-]{10,300}$/, { message: 'placeId is invalid' })
+  placeId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  formattedAddress?: string;
+
+  @ApiPropertyOptional({ description: 'Device-reported GPS accuracy (metres)' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100_000)
+  accuracyMeters?: number;
+
+  @ApiPropertyOptional({ enum: ['AUTOCOMPLETE', 'GPS', 'MAP_PIN', 'MANUAL'] })
+  @IsOptional()
+  @IsIn(['AUTOCOMPLETE', 'GPS', 'MAP_PIN', 'MANUAL'])
+  source?: 'AUTOCOMPLETE' | 'GPS' | 'MAP_PIN' | 'MANUAL';
 }

@@ -101,6 +101,11 @@ const ROLES = [
   },
   { code: 'CUSTOMER', name: 'Customer', description: 'Customer organization user' },
   { code: 'SELLER', name: 'Seller', description: 'Seller organization user' },
+  {
+    code: 'SELLER_MANAGER',
+    name: 'Seller Manager',
+    description: 'User assigned to operate one seller account',
+  },
 ] as const;
 
 const PERMISSIONS = [
@@ -202,6 +207,7 @@ const ROLE_PERMISSION_MAP: Record<string, string[]> = {
     'SHIPMENT_READ',
     'DOCUMENT_UPLOAD',
   ],
+  SELLER_MANAGER: [],
   SELLER: [
     'GRADE_READ',
     'PRODUCT_READ',

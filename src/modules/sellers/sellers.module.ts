@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/index.js';
 import { DocumentsModule } from '../documents/index.js';
+import { OrganizationsModule } from '../organizations/index.js';
 import { ProcurementModule } from '../procurement/index.js';
+import { SellerAddressesController } from './addresses/seller-addresses.controller.js';
+import { SellerAddressesService } from './addresses/seller-addresses.service.js';
 import { SellerAuditService } from './common/seller-audit.service.js';
 import { SellerContextService } from './common/seller-context.service.js';
 import { CompanyController } from './company/company.controller.js';
@@ -40,7 +43,7 @@ import { SellerProcurementWorkbenchController } from './procurement/seller-procu
 import { SellerProcurementWorkbenchService } from './procurement/seller-procurement-workbench.service.js';
 
 @Module({
-  imports: [AuthModule, ProcurementModule, DocumentsModule],
+  imports: [AuthModule, ProcurementModule, DocumentsModule, OrganizationsModule],
   controllers: [
     ProfileController,
     OnboardingController,
@@ -51,6 +54,7 @@ import { SellerProcurementWorkbenchService } from './procurement/seller-procurem
     InventoryController,
     OffersController,
     SellerLocationsController,
+    SellerAddressesController,
     PricingController,
     PurchaseRequestsController,
     SellerOrdersController,
@@ -72,6 +76,7 @@ import { SellerProcurementWorkbenchService } from './procurement/seller-procurem
     InventoryService,
     OffersService,
     SellerLocationsService,
+    SellerAddressesService,
     PricingService,
     PurchaseRequestsService,
     SellerOrdersService,

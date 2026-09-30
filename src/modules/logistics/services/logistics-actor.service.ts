@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { resolveSellerActor } from '../../sellers/common/resolve-seller-actor.js';
 import { LogisticsException } from '../common/logistics.errors.js';
 
 @Injectable()
@@ -31,18 +32,16 @@ export class LogisticsActorService {
     organizationId: string;
     sellerProfileId: string;
   }> {
-    const profile = await this.prisma.sellerProfile.findFirst({
-      where: { userId, deletedAt: null },
-    });
-    if (!profile) {
+    const resolved = await resolveSellerActor(this.prisma, userId);
+    if (!resolved) {
       throw new NotFoundException(
         'Seller profile not found. Complete onboarding first.',
       );
     }
     return {
       userId,
-      organizationId: profile.organizationId,
-      sellerProfileId: profile.id,
+      organizationId: resolved.profile.organizationId,
+      sellerProfileId: resolved.profile.id,
     };
   }
 

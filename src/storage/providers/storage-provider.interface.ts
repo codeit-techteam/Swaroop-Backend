@@ -17,6 +17,10 @@ export type StorageSignedUrlInput = {
   expiresInSeconds?: number;
   operation?: 'get' | 'put';
   contentType?: string;
+  /** GET only: overrides the Content-Disposition header R2 returns. */
+  responseContentDisposition?: string;
+  /** GET only: overrides the Content-Type header R2 returns. */
+  responseContentType?: string;
 };
 
 export type StorageProviderName = 'none' | 'r2';

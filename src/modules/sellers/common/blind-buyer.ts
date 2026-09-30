@@ -18,6 +18,10 @@ export const FORBIDDEN_SELLER_IDENTITY_MARKERS = [
   'GSTIN',
   'billingAddress',
   'shippingAddress',
+  'billingAddressSnapshot',
+  'shippingAddressSnapshot',
+  'billingAddressId',
+  'shippingAddressId',
   'customerOrg',
   'customerProfile',
 ] as const;

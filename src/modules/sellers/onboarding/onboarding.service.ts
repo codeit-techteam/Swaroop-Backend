@@ -12,9 +12,14 @@ import {
   VerificationStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import {
+  openChangeRequest,
+  resolvedChangeRequest,
+} from '../../documents/common/kyc-change-request.js';
 import { SellerAuditService } from '../common/seller-audit.service.js';
 import { SellerContextService } from '../common/seller-context.service.js';
 import { OnboardingDocumentsService } from './onboarding-documents.service.js';
+import { readJsonObject } from './onboarding-documents.slots.js';
 import type {
   CreateOnboardingDto,
   UpdateOnboardingDto,
@@ -232,7 +237,26 @@ export class OnboardingService {
         });
       }
 
-      return updated;
+      const verification = await tx.sellerVerification.findUnique({
+        where: { sellerProfileId: ctx.sellerProfileId },
+      });
+      const pendingRequest = openChangeRequest(
+        readJsonObject(verification?.metadata).changeRequest,
+      );
+      if (verification && pendingRequest) {
+        await tx.sellerVerification.update({
+          where: { id: verification.id },
+          data: {
+            overallStatus: VerificationStatus.UNDER_REVIEW,
+            metadata: {
+              ...readJsonObject(verification.metadata),
+              changeRequest: resolvedChangeRequest(pendingRequest),
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
+
+      return { updated, resubmission: Boolean(pendingRequest) };
     });
 
     await this.audit.log({
@@ -241,20 +265,44 @@ export class OnboardingService {
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.SELLER,
       entityId: ctx.sellerProfileId,
+      metadata: { resubmission: result.resubmission },
     });
 
-    return result;
+    return result.updated;
   }
 
   async status(userId: string) {
+    const ctx = await this.sellerContext.requireSeller(userId);
     const onboarding = await this.get(userId);
+    const [profile, verification] = await Promise.all([
+      this.prisma.sellerProfile.findUnique({
+        where: { id: ctx.sellerProfileId },
+        select: { status: true },
+      }),
+      this.prisma.sellerVerification.findUnique({
+        where: { sellerProfileId: ctx.sellerProfileId },
+        select: { metadata: true },
+      }),
+    ]);
+    const reopened =
+      onboarding.status === SellerOnboardingStatus.IN_PROGRESS ||
+      onboarding.status === SellerOnboardingStatus.DRAFT;
+    const changeRequest = reopened
+      ? openChangeRequest(readJsonObject(verification?.metadata).changeRequest)
+      : null;
+    const rejected = onboarding.status === SellerOnboardingStatus.REJECTED;
     return {
       status: onboarding.status,
+      sellerStatus: profile?.status ?? null,
       currentStep: onboarding.currentStep,
       completedSteps: onboarding.completedSteps,
       submittedAt: onboarding.submittedAt,
       reviewedAt: onboarding.reviewedAt,
-      rejectedReason: onboarding.rejectedReason,
+      rejectedReason: rejected
+        ? (onboarding.rejectedReason ?? onboarding.reviewNotes)
+        : onboarding.rejectedReason,
+      changeRequest,
+      canResubmit: Boolean(changeRequest) || rejected,
     };
   }
 }

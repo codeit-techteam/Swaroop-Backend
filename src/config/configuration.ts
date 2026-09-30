@@ -47,6 +47,13 @@ export type AppConfig = {
     signedUrlExpirySeconds: number;
     maxDocumentSizeMb: number;
   };
+  maps: {
+    /** Server-only Google Maps Platform key (IP-restricted). Empty disables Google lookups. */
+    serverApiKey: string;
+    requestTimeoutMs: number;
+    /** ISO 3166-1 alpha-2 region used to restrict autocomplete results. */
+    regionCode: string;
+  };
 };
 
 const splitOrigins = (value: string): string[] =>
@@ -144,6 +151,11 @@ export default (): AppConfig => {
       region: process.env.R2_REGION || 'auto',
       signedUrlExpirySeconds: Number(process.env.R2_SIGNED_URL_EXPIRY || 900),
       maxDocumentSizeMb: Number(process.env.MAX_DOCUMENT_SIZE_MB || 10),
+    },
+    maps: {
+      serverApiKey: (process.env.GOOGLE_MAPS_SERVER_API_KEY ?? '').trim(),
+      requestTimeoutMs: Number(process.env.GOOGLE_MAPS_TIMEOUT_MS || 6000),
+      regionCode: (process.env.GOOGLE_MAPS_REGION_CODE || 'IN').toUpperCase(),
     },
   };
 };

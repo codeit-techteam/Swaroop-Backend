@@ -3,6 +3,14 @@ import { DocumentCategory } from '../../../generated/prisma/client.js';
 /** Marks rows created by seller onboarding, separate from later bank/KYC uploads. */
 export const SELLER_ONBOARDING_DOCUMENT_PURPOSE = 'SELLER_ONBOARDING';
 
+export const SELLER_ONBOARDING_UPLOAD_SOURCES = [
+  'SELLER_APP',
+  'SELLER_WEB',
+] as const;
+
+export type SellerOnboardingUploadSource =
+  (typeof SELLER_ONBOARDING_UPLOAD_SOURCES)[number];
+
 export const SELLER_ONBOARDING_DOCUMENT_SLOTS = [
   {
     slot: 'gst',

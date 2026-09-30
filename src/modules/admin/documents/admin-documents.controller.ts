@@ -19,6 +19,7 @@ import { ADMIN_COMPLIANCE_ROLES } from '../common/admin-roles.js';
 import { AdminExpiringQueryDto } from '../common/admin-query.dto.js';
 import {
   AdminDocumentActionDto,
+  AdminDocumentDownloadQueryDto,
   AdminDocumentsQueryDto,
 } from './admin-documents.dto.js';
 import { AdminDocumentsService } from './admin-documents.service.js';
@@ -66,10 +67,16 @@ export class AdminDocumentsController {
   }
 
   @Get(':id/download')
-  @ApiOperation({ summary: 'Signed download URL' })
-  async download(@Param('id', ParseUUIDPipe) id: string) {
+  @ApiOperation({
+    summary: 'Short-lived signed URL to preview (inline) or download the file',
+  })
+  async download(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: AdminDocumentDownloadQueryDto,
+  ) {
     return successResponse(
-      await this.documents.download(id),
+      await this.documents.download(id, user.id, query),
       'Download URL generated',
     );
   }

@@ -52,7 +52,10 @@ export class ProfileService {
       };
     }
 
-    if (user.roles.includes(RoleCode.SELLER)) {
+    if (
+      user.roles.includes(RoleCode.SELLER) ||
+      user.roles.includes(RoleCode.SELLER_MANAGER)
+    ) {
       return this.sellerContext.requireSeller(user.id);
     }
 
@@ -91,7 +94,43 @@ export class ProfileService {
       throw new NotFoundException('Seller profile not found');
     }
 
-    return profile;
+    const managers = await this.prisma.sellerManagerAssignment.findMany({
+      where: { sellerProfileId: profile.id, status: 'ACTIVE' },
+      orderBy: [{ isPrimary: 'desc' }, { assignedAt: 'asc' }],
+      include: {
+        user: {
+          select: {
+            id: true,
+            email: true,
+            phone: true,
+            firstName: true,
+            lastName: true,
+            displayName: true,
+            status: true,
+            loginId: true,
+          },
+        },
+      },
+    });
+
+    return {
+      ...profile,
+      accountManagers: managers.map((row) => ({
+        id: row.user.id,
+        assignmentId: row.id,
+        name:
+          row.user.displayName ||
+          [row.user.firstName, row.user.lastName].filter(Boolean).join(' '),
+        email: row.user.email,
+        phone: row.user.phone,
+        loginId: row.user.loginId,
+        role: 'SELLER_MANAGER',
+        title: row.title,
+        status: row.user.status,
+        isPrimary: row.isPrimary,
+        seller: profile.organization.name,
+      })),
+    };
   }
 
   async updateProfile(user: AuthenticatedUser, dto: UpdateSellerProfileDto) {

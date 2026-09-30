@@ -99,7 +99,7 @@ export class OnboardingDocumentsService {
     this.storage.assertConfigured();
 
     const ctx = await this.sellerContext.getOrCreateDraftSeller(userId);
-    await this.assertMutable(ctx.sellerProfileId);
+    await this.assertSlotWritable(ctx, slotDef.slot);
     await this.discardUnconfirmed(ctx, slotDef.slot);
 
     const created = await this.documents.create({
@@ -116,6 +116,7 @@ export class OnboardingDocumentsService {
         purpose: SELLER_ONBOARDING_DOCUMENT_PURPOSE,
         slot: slotDef.slot,
         r2Confirmed: false,
+        uploadSource: dto.source ?? null,
       },
       status: DocumentStatus.UPLOADED,
       requireUploadUrl: true,
@@ -154,8 +155,8 @@ export class OnboardingDocumentsService {
       userId,
       documentId,
     );
-    await this.assertMutable(ctx.sellerProfileId);
     const slot = meta.slot as SellerOnboardingDocumentSlot;
+    await this.assertSlotWritable(ctx, slot, doc.id);
 
     if (this.countsAsStored(doc)) {
       const stillThere = await this.storage.exists(doc.storageKey);
@@ -261,14 +262,46 @@ export class OnboardingDocumentsService {
     return missing;
   }
 
-  private async assertMutable(sellerProfileId: string) {
+  private async isLocked(sellerProfileId: string): Promise<boolean> {
     const onboarding = await this.prisma.sellerOnboarding.findUnique({
       where: { sellerProfileId },
       select: { status: true },
     });
-    if (onboarding && LOCKED_ONBOARDING_STATUSES.has(onboarding.status)) {
+    return Boolean(
+      onboarding && LOCKED_ONBOARDING_STATUSES.has(onboarding.status),
+    );
+  }
+
+  private async assertMutable(sellerProfileId: string) {
+    if (await this.isLocked(sellerProfileId)) {
       throw new BadRequestException(
         'Onboarding documents are locked after submission. Contact support to re-upload.',
+      );
+    }
+  }
+
+  /**
+   * After submission a slot is only writable when an admin rejected its
+   * current file, so the seller can send a replacement for re-review.
+   */
+  private async assertSlotWritable(
+    ctx: SellerContext,
+    slot: SellerOnboardingDocumentSlot,
+    pendingDocumentId?: string,
+  ) {
+    if (!(await this.isLocked(ctx.sellerProfileId))) return;
+    const rows = await this.findSlotDocuments(ctx, slot);
+    const hasActive = rows.some(
+      (row) => row.id !== pendingDocumentId && this.countsAsStored(row),
+    );
+    const hasRejected = rows.some(
+      (row) =>
+        row.status === DocumentStatus.REJECTED &&
+        isR2Confirmed(readJsonObject(row.metadata)),
+    );
+    if (hasActive || !hasRejected) {
+      throw new BadRequestException(
+        'Onboarding documents are locked after submission. Only documents rejected by the admin team can be re-uploaded.',
       );
     }
   }

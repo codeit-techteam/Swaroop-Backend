@@ -16,6 +16,7 @@ import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import { ADMIN_CORE_ROLES } from '../common/admin-roles.js';
+import { AdminKycRequestChangesDto } from '../kyc/admin-kyc.dto.js';
 import {
   AdminSellerActionDto,
   AdminSellersQueryDto,
@@ -68,6 +69,22 @@ export class AdminSellersController {
     return successResponse(
       await this.sellers.reject(id, user.id, dto),
       'Seller rejected',
+    );
+  }
+
+  @Post(':id/request-changes')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Send onboarding back to the seller with the changes required',
+  })
+  async requestChanges(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminKycRequestChangesDto,
+  ) {
+    return successResponse(
+      await this.sellers.requestChanges(id, user.id, dto),
+      'Changes requested from seller',
     );
   }
 
