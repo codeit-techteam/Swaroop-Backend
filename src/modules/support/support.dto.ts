@@ -11,6 +11,7 @@ import {
 import {
   SupportRequesterType,
   SupportTicketCategory,
+  SupportTicketChannel,
   SupportTicketPriority,
   SupportTicketStatus,
 } from '../../generated/prisma/client.js';
@@ -21,7 +22,10 @@ export class CreateSupportTicketDto {
   @IsEnum(SupportTicketCategory)
   category!: SupportTicketCategory;
 
-  @ApiPropertyOptional({ enum: SupportTicketPriority, default: SupportTicketPriority.MEDIUM })
+  @ApiPropertyOptional({
+    enum: SupportTicketPriority,
+    default: SupportTicketPriority.MEDIUM,
+  })
   @IsOptional()
   @IsEnum(SupportTicketPriority)
   priority?: SupportTicketPriority;
@@ -49,6 +53,15 @@ export class CreateSupportTicketDto {
   @IsString()
   @MaxLength(64)
   relatedOrderId?: string;
+
+  @ApiPropertyOptional({
+    enum: SupportTicketChannel,
+    default: SupportTicketChannel.WEB,
+    description: 'Which client raised the ticket (web app or mobile app).',
+  })
+  @IsOptional()
+  @IsEnum(SupportTicketChannel)
+  channel?: SupportTicketChannel;
 }
 
 export class ReplySupportTicketDto {
@@ -81,7 +94,11 @@ export class UpdateSupportTicketStatusDto {
   @IsUUID()
   assignedToUserId?: string;
 
-  @ApiPropertyOptional({ maxLength: 2000 })
+  @ApiPropertyOptional({
+    maxLength: 2000,
+    description:
+      'Message shown to the requester. Required when resolving a ticket.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(2000)
@@ -108,6 +125,11 @@ export class SupportTicketsQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsEnum(SupportTicketPriority)
   priority?: SupportTicketPriority;
+
+  @ApiPropertyOptional({ enum: SupportTicketChannel })
+  @IsOptional()
+  @IsEnum(SupportTicketChannel)
+  channel?: SupportTicketChannel;
 
   @ApiPropertyOptional()
   @IsOptional()

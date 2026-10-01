@@ -19,6 +19,12 @@ export const SELLER_MANAGER_PERMISSIONS: SellerPermissionDef[] = [
   { code: 'inventory.manage', module: 'Inventory', action: 'Create / Edit' },
   { code: 'offers.view', module: 'My Offers', action: 'View' },
   { code: 'offers.manage', module: 'My Offers', action: 'Create / Edit' },
+  { code: 'import.view', module: 'Import Trading', action: 'View' },
+  {
+    code: 'import.manage',
+    module: 'Import Trading',
+    action: 'Create / Publish / Negotiate',
+  },
   { code: 'procurement.view', module: 'Purchase Requests', action: 'View' },
   {
     code: 'procurement.manage',
@@ -61,6 +67,7 @@ export const MANAGER_PRESETS: Record<string, { label: string; permissions: strin
         'inventory.manage',
         'offers.view',
         'offers.manage',
+        'import.view',
         'procurement.view',
         'procurement.manage',
         'orders.view',
@@ -76,6 +83,8 @@ export const MANAGER_PRESETS: Record<string, { label: string; permissions: strin
         'catalog.view',
         'offers.view',
         'offers.manage',
+        'import.view',
+        'import.manage',
         'procurement.view',
         'procurement.manage',
         'orders.view',
@@ -172,12 +181,16 @@ export function permissionForManagerRequest(method: string, url: string): string
     return SELLER_ACCESS_DENY;
   }
   if (path.includes('/seller/onboarding')) return SELLER_ACCESS_DENY;
-  if (path.includes('/master-data/')) {
+  if (path.includes('/master-data/') && !path.includes('/import/')) {
     return write ? SELLER_ACCESS_DENY : 'catalog.view';
   }
-  if (!path.includes('/seller')) return SELLER_ACCESS_DENY;
 
   const rule = (view: string, manage: string) => (write ? manage : view);
+
+  if (/\/v\d+\/import(\/|$)/.test(path)) {
+    return rule('import.view', 'import.manage');
+  }
+  if (!path.includes('/seller')) return SELLER_ACCESS_DENY;
 
   if (path.includes('/dashboard') || path.includes('dashboard-summary')) {
     return 'dashboard.view';

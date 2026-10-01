@@ -109,6 +109,121 @@ describe('location normalizer', () => {
     expect(result.addressLine1).toBe('Howrah');
   });
 
+  it('keeps every sublocality level when the place name covers the area', () => {
+    const result = normalizeAddressComponents({
+      components: toComponents([
+        { longText: 'India', types: ['country'] },
+        { longText: 'CM Block', types: ['sublocality_level_3'] },
+        { longText: 'Sector V', types: ['sublocality_level_2'] },
+        { longText: 'Bidhannagar', types: ['locality'] },
+        {
+          longText: 'North 24 Parganas',
+          types: ['administrative_area_level_3'],
+        },
+        {
+          longText: 'Presidency Division',
+          types: ['administrative_area_level_2'],
+        },
+        {
+          longText: 'West Bengal',
+          shortText: 'WB',
+          types: ['administrative_area_level_1'],
+        },
+        { longText: '700091', types: ['postal_code'] },
+      ]),
+      formattedAddress:
+        'CM Block, Sector V, Bidhannagar, West Bengal 700091, India',
+      latitude: 22.580939,
+      longitude: 88.429052,
+      name: 'Salt Lake Sector V',
+      source: 'AUTOCOMPLETE',
+    });
+    expect(result).toMatchObject({
+      addressLine1: 'Salt Lake Sector V',
+      addressLine2: 'CM Block',
+      city: 'Bidhannagar',
+      district: 'North 24 Parganas',
+      postalCode: '700091',
+    });
+  });
+
+  it('builds line 1 from building segments instead of a bare street number', () => {
+    const result = normalizeAddressComponents({
+      components: toComponents([
+        { longText: '3', types: ['street_number'] },
+        { longText: 'Nariman Point', types: ['sublocality_level_1'] },
+        { longText: 'Mumbai', types: ['locality'] },
+        { longText: 'Maharashtra', types: ['administrative_area_level_1'] },
+        { longText: '400021', types: ['postal_code'] },
+      ]),
+      formattedAddress:
+        '62, 6th Floor, Maker Chambers III, Nariman Point, Mumbai, Maharashtra 400021',
+      latitude: 18.9248949,
+      longitude: 72.8231523,
+      name: 'Adani Enterprises Limited',
+      source: 'AUTOCOMPLETE',
+    });
+    expect(result.addressLine1).toBe('62, 6th Floor, Maker Chambers III');
+    expect(result.addressLine2).toBe('Nariman Point');
+  });
+
+  it('keeps a bare plot number together with its block', () => {
+    const result = normalizeAddressComponents({
+      components: toComponents([
+        { longText: '601', types: ['premise'] },
+        { longText: 'EP Block', types: ['sublocality_level_3'] },
+        { longText: 'Sector V', types: ['sublocality_level_2'] },
+        { longText: 'Kolkata', types: ['locality'] },
+        { longText: 'West Bengal', types: ['administrative_area_level_1'] },
+        { longText: '700091', types: ['postal_code'] },
+      ]),
+      formattedAddress:
+        '601, EP Block, Sector V, Bidhannagar, Kolkata, West Bengal 700091, India',
+      latitude: 22.5726,
+      longitude: 88.4337,
+      source: 'GPS',
+    });
+    expect(result.addressLine1).toBe('601, EP Block');
+    expect(result.addressLine2).toBe('Sector V');
+  });
+
+  it('skips "near" landmark segments and numeric place names', () => {
+    const gps = normalizeAddressComponents({
+      components: toComponents([
+        { longText: '1777', types: ['premise'] },
+        { longText: 'DCB Bank', types: ['landmark'] },
+        { longText: 'Lower Parel', types: ['neighborhood'] },
+        { longText: 'Kurla West', types: ['sublocality_level_2'] },
+        { longText: 'Mumbai', types: ['locality'] },
+        { longText: 'Maharashtra', types: ['administrative_area_level_1'] },
+        { longText: '400070', types: ['postal_code'] },
+      ]),
+      formattedAddress:
+        '1777, near DCB Bank, Lower Parel, Kurla West, Mumbai, Maharashtra 400070, India',
+      latitude: 19.076,
+      longitude: 72.8777,
+      source: 'GPS',
+    });
+    expect(gps.addressLine1).toBe('1777, Lower Parel');
+    expect(gps.addressLine2).toBe('Kurla West');
+    expect(gps.landmark).toBe('DCB Bank');
+
+    const pin = normalizeAddressComponents({
+      components: toComponents([
+        { longText: 'Mumbai', types: ['locality'] },
+        { longText: 'Maharashtra', types: ['administrative_area_level_1'] },
+        { longText: '400001', types: ['postal_code'] },
+      ]),
+      formattedAddress: 'Mumbai, Maharashtra 400001, India',
+      latitude: 18.94,
+      longitude: 72.83,
+      name: '400001',
+      source: 'AUTOCOMPLETE',
+    });
+    expect(pin.addressLine1).toBe('Mumbai');
+    expect(pin.postalCode).toBe('400001');
+  });
+
   it('prefers a non plus-code reverse geocode result and fills missing PIN', () => {
     const selected = selectReverseGeocodeResult([
       {

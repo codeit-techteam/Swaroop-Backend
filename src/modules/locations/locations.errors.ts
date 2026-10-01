@@ -7,6 +7,7 @@ export type LocationErrorCode =
   | 'PLACE_NOT_FOUND'
   | 'GEOCODING_FAILED'
   | 'INVALID_COORDINATES'
+  | 'LOCATION_OUTSIDE_SERVICE_AREA'
   | 'LOCATION_RATE_LIMITED';
 
 const STATUS: Record<LocationErrorCode, number> = {
@@ -16,6 +17,7 @@ const STATUS: Record<LocationErrorCode, number> = {
   PLACE_NOT_FOUND: HttpStatus.NOT_FOUND,
   GEOCODING_FAILED: HttpStatus.UNPROCESSABLE_ENTITY,
   INVALID_COORDINATES: HttpStatus.BAD_REQUEST,
+  LOCATION_OUTSIDE_SERVICE_AREA: HttpStatus.UNPROCESSABLE_ENTITY,
   LOCATION_RATE_LIMITED: HttpStatus.TOO_MANY_REQUESTS,
 };
 
@@ -32,6 +34,8 @@ const MESSAGES: Record<LocationErrorCode, string> = {
   GEOCODING_FAILED:
     'Unable to resolve an address for this location. Please search for your address manually.',
   INVALID_COORDINATES: 'The selected location coordinates are invalid.',
+  LOCATION_OUTSIDE_SERVICE_AREA:
+    'This location is outside India. Please choose an Indian delivery address.',
   LOCATION_RATE_LIMITED:
     'Too many address lookups. Please wait a moment and try again.',
 };

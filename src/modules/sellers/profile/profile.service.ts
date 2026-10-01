@@ -5,6 +5,11 @@ import {
 } from '@nestjs/common';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import {
+  AddressType,
+  DocumentStatus,
+  EntityOwnerType,
+} from '../../../generated/prisma/client.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
   SellerContext,
@@ -12,6 +17,15 @@ import {
 } from '../common/seller-context.service.js';
 import { SellerAuditService } from '../common/seller-audit.service.js';
 import { UpdateSellerProfileDto } from './profile.dto.js';
+import { buildSellerProfileSummary } from './seller-profile.summary.js';
+
+const ADDRESS_PRIORITY: AddressType[] = [
+  AddressType.REGISTERED,
+  AddressType.BILLING,
+  AddressType.WAREHOUSE,
+  AddressType.SHIPPING,
+  AddressType.OTHER,
+];
 
 @Injectable()
 export class ProfileService {
@@ -94,27 +108,84 @@ export class ProfileService {
       throw new NotFoundException('Seller profile not found');
     }
 
-    const managers = await this.prisma.sellerManagerAssignment.findMany({
-      where: { sellerProfileId: profile.id, status: 'ACTIVE' },
-      orderBy: [{ isPrimary: 'desc' }, { assignedAt: 'asc' }],
-      include: {
-        user: {
-          select: {
-            id: true,
-            email: true,
-            phone: true,
-            firstName: true,
-            lastName: true,
-            displayName: true,
-            status: true,
-            loginId: true,
+    const [managers, addresses, bank, kycDocumentsCount] = await Promise.all([
+      this.prisma.sellerManagerAssignment.findMany({
+        where: { sellerProfileId: profile.id, status: 'ACTIVE' },
+        orderBy: [{ isPrimary: 'desc' }, { assignedAt: 'asc' }],
+        include: {
+          user: {
+            select: {
+              id: true,
+              email: true,
+              phone: true,
+              firstName: true,
+              lastName: true,
+              displayName: true,
+              status: true,
+              loginId: true,
+            },
           },
         },
-      },
+      }),
+      this.prisma.address.findMany({
+        where: {
+          organizationId: profile.organizationId,
+          deletedAt: null,
+          isActive: true,
+        },
+        orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.bankAccount.findFirst({
+        where: { organizationId: profile.organizationId, deletedAt: null },
+        orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      }),
+      this.prisma.document.count({
+        where: {
+          deletedAt: null,
+          ownerType: EntityOwnerType.SELLER,
+          ownerId: profile.id,
+          status: {
+            in: [
+              DocumentStatus.UPLOADED,
+              DocumentStatus.UNDER_REVIEW,
+              DocumentStatus.VERIFIED,
+            ],
+          },
+        },
+      }),
+    ]);
+
+    const address =
+      ADDRESS_PRIORITY.map((type) =>
+        addresses.find((row) => row.type === type),
+      ).find(Boolean) ?? null;
+
+    const summary = buildSellerProfileSummary(profile, {
+      address: address
+        ? {
+            line1: address.formattedAddress || address.line1,
+            city: address.city,
+            state: address.state,
+            postalCode: address.postalCode,
+            type: address.type,
+          }
+        : null,
+      bank: bank
+        ? {
+            accountHolder: bank.accountHolder,
+            bankName: bank.bankName,
+            accountNumber: bank.accountNumber,
+            ifsc: bank.ifsc,
+            branch: bank.branch,
+            verificationStatus: bank.verificationStatus,
+          }
+        : null,
+      kycDocumentsCount,
     });
 
     return {
       ...profile,
+      summary,
       accountManagers: managers.map((row) => ({
         id: row.user.id,
         assignmentId: row.id,

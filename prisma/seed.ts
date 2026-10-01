@@ -12,6 +12,7 @@ import {
   PrismaClient,
 } from '../src/generated/prisma/client.js';
 import { runCatalogImport } from '../scripts/import-catalog.js';
+import { seedImportMasterData } from './seed/import-master-data.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -1120,6 +1121,7 @@ async function main() {
   console.log('Seeding SWAROOP Phase 4/5 master + seller demo data...');
   await seedRolesAndPermissions();
   const counts = await seedMasterData();
+  await seedImportMasterData(prisma);
   await seedDevUsers();
   await seedSellerDemoData();
   const catalog = await runCatalogImport(prisma);

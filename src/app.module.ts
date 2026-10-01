@@ -16,6 +16,7 @@ import { AuthModule } from './modules/auth/index.js';
 import { CustomersModule } from './modules/customers/index.js';
 import { DocumentsModule } from './modules/documents/index.js';
 import { GradesModule } from './modules/grades/index.js';
+import { ImportModule } from './modules/import/index.js';
 import { InventoryModule } from './modules/inventory/index.js';
 import { MasterDataModule } from './modules/master-data/index.js';
 import { NotificationsModule } from './modules/notifications/index.js';
@@ -127,6 +128,7 @@ import { StorageModule } from './storage/storage.module.js';
     SettlementsModule,
     SupportModule,
     AuditModule,
+    ImportModule,
   ],
   providers: [
     {

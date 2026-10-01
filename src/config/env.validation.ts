@@ -78,6 +78,13 @@ export const envSchema = z
       .regex(/^[A-Za-z]{2}$/)
       .optional()
       .default('IN'),
+
+    IMPORT_FEATURE_ENABLED: booleanFromString.optional().default(true),
+    IMPORT_EXPIRY_SWEEP_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(5_000)
+      .default(60_000),
   })
   .superRefine((data, ctx) => {
     const accessSecret = data.JWT_ACCESS_SECRET || data.JWT_SECRET;

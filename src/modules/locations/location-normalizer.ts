@@ -35,6 +35,13 @@ export function isValidCoordinate(latitude: unknown, longitude: unknown) {
   );
 }
 
+const PLUS_CODE_REGEX = /^[A-Z0-9]{4}\+[A-Z0-9]{2,3}/;
+const BARE_NUMBER_REGEX = /^[\d\s/-]+[A-Za-z]?$/;
+
+function isBareNumber(value: string) {
+  return BARE_NUMBER_REGEX.test(value);
+}
+
 function first(...values: Array<string | null | undefined>): string {
   for (const value of values) {
     const trimmed = value?.trim();
@@ -83,10 +90,8 @@ export function normalizeAddressComponents(input: {
   const route = pick('route');
   const premise = first(pick('premise'), pick('subpremise'));
   const neighborhood = pick('neighborhood');
-  const sublocality2 = first(
-    pick('sublocality_level_3'),
-    pick('sublocality_level_2'),
-  );
+  const sublocality3 = pick('sublocality_level_3');
+  const sublocality2 = pick('sublocality_level_2');
   const sublocality1 = first(pick('sublocality_level_1'), pick('sublocality'));
   const localityRaw = pick('locality');
   const adminL3 = pick('administrative_area_level_3');
@@ -108,25 +113,67 @@ export function normalizeAddressComponents(input: {
   const district = first(adminL3, adminL2);
   const locality = first(sublocality1, neighborhood, localityRaw);
 
-  const street = [streetNumber, route].filter(Boolean).join(' ');
+  // A street number without a route (e.g. "3") is not a usable street line.
+  const street = route ? [streetNumber, route].filter(Boolean).join(' ') : '';
   const formatted = (input.formattedAddress ?? '').trim();
-  const leadingSegment = formatted.split(',')[0]?.trim() ?? '';
-  const leadingIsGeneric =
-    !leadingSegment ||
-    same(leadingSegment, city) ||
-    same(leadingSegment, state) ||
-    /^[A-Z0-9]{4}\+[A-Z0-9]{2,3}/.test(leadingSegment);
+  const areaNames = [
+    neighborhood,
+    sublocality3,
+    sublocality2,
+    sublocality1,
+    localityRaw,
+    city,
+    district,
+    state,
+    country,
+  ].filter(Boolean);
+  const isArea = (segment: string) =>
+    areaNames.some((area) => same(segment, area)) ||
+    (Boolean(state) && segment.startsWith(`${state} `)) ||
+    /^\d{6}$/.test(segment);
 
-  const line1Parts = [premise, street].filter(Boolean);
+  // Building / plot segments that precede the first known area in the
+  // formatted address. A bare house number keeps the next segment with it.
+  // Segments are only trusted once a known area confirms where they end.
+  const buildingParts: string[] = [];
+  let reachedArea = false;
+  for (const segment of formatted.split(',').map((part) => part.trim())) {
+    if (!segment || PLUS_CODE_REGEX.test(segment)) continue;
+    if (/^near\s/i.test(segment)) continue;
+    if (!isArea(segment)) {
+      buildingParts.push(segment);
+      continue;
+    }
+    reachedArea = true;
+    if (buildingParts.length > 0 && buildingParts.every(isBareNumber)) {
+      buildingParts.push(segment);
+    }
+    break;
+  }
+  const buildingLine =
+    reachedArea && !buildingParts.every(isBareNumber)
+      ? buildingParts.join(', ')
+      : '';
+
+  // A bare plot number ("601") only reads as an address next to a street.
+  const line1Parts =
+    street || !isBareNumber(premise) ? [premise, street].filter(Boolean) : [];
+  const placeName =
+    input.name && !isBareNumber(input.name.trim()) ? input.name : '';
   const addressLine1 = first(
     line1Parts.join(', '),
-    leadingIsGeneric ? '' : leadingSegment,
-    input.name,
+    buildingLine,
+    placeName,
     locality,
     city,
   );
 
-  const line2Candidates = [neighborhood, sublocality2, sublocality1].filter(
+  const line2Candidates = [
+    neighborhood,
+    sublocality3,
+    sublocality2,
+    sublocality1,
+  ].filter(
     (value, index, all) =>
       Boolean(value) &&
       all.findIndex((other) => same(other, value)) === index &&

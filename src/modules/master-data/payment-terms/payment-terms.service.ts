@@ -26,6 +26,9 @@ export class PaymentTermsService {
           percentage: dto.percentage,
           status: dto.status ?? MasterStatus.ACTIVE,
           sortOrder: dto.sortOrder ?? 0,
+          method: dto.method,
+          currencyCodes: dto.currencyCodes?.map((c) => c.toUpperCase()) ?? [],
+          importEnabled: dto.importEnabled ?? false,
         },
       });
     } catch (error) {
@@ -38,6 +41,9 @@ export class PaymentTermsService {
     const where: Prisma.PaymentTermWhereInput = { deletedAt: null };
     if (query.status) where.status = query.status;
     if (query.paymentType) where.paymentType = query.paymentType;
+    if (query.method) where.method = query.method;
+    if (query.scope === 'import') where.importEnabled = true;
+    if (query.scope === 'domestic') where.importEnabled = false;
     if (query.search?.trim()) {
       const q = query.search.trim();
       where.OR = [
@@ -57,9 +63,14 @@ export class PaymentTermsService {
     return { items, meta: paginationMeta(page, limit, total) };
   }
 
+  /** Domestic checkout/offer pickers; Import terms are served by /import/master-data/payment-terms. */
   async findActive() {
     return this.prisma.paymentTerm.findMany({
-      where: { deletedAt: null, status: MasterStatus.ACTIVE },
+      where: {
+        deletedAt: null,
+        status: MasterStatus.ACTIVE,
+        importEnabled: false,
+      },
       orderBy: { sortOrder: 'asc' },
     });
   }
@@ -88,6 +99,9 @@ export class PaymentTermsService {
           percentage: dto.percentage,
           status: dto.status,
           sortOrder: dto.sortOrder,
+          method: dto.method,
+          currencyCodes: dto.currencyCodes?.map((c) => c.toUpperCase()),
+          importEnabled: dto.importEnabled,
         },
       });
     } catch (error) {

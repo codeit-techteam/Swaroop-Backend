@@ -543,6 +543,11 @@ enum DocumentCategory {
   COMPLIANCE
   PRODUCT_IMAGE
   PRODUCT_TDS
+  CERTIFICATE_OF_ORIGIN
+  COMMERCIAL_INVOICE
+  BILL_OF_LADING
+  INSPECTION_CERTIFICATE
+  INSURANCE_CERTIFICATE
   OTHER
 }
 
@@ -714,6 +719,11 @@ enum EntityOwnerType {
   DOCUMENT
   CREDIT
   CMS
+  IMPORT_LISTING
+  IMPORT_NEGOTIATION
+  IMPORT_DEAL
+  IMPORT_MASTER
+  SUPPORT_TICKET
   OTHER
 }
 
@@ -769,6 +779,7 @@ model User {
   managerAssignments      SellerManagerAssignment[] @relation("ManagerAssignmentUser")
   managerAssignmentsMade  SellerManagerAssignment[] @relation("ManagerAssignmentAssigner")
   permissionGrants        UserPermissionGrant[]
+  createdImportListings   ImportListing[]          @relation("ImportListingCreatedBy")
 
   @@index([status])
   @@index([createdAt])
@@ -833,6 +844,11 @@ model Organization {
   checkoutQuotesAsCustomer CheckoutQuote[] @relation("CheckoutQuoteCustomerOrg")
   checkoutQuotesAsSeller   CheckoutQuote[] @relation("CheckoutQuoteSellerOrg")
   supportTickets           SupportTicket[]
+  importListings           ImportListing[]
+  importNegotiationsAsBuyer  ImportNegotiation[] @relation("ImportNegotiationBuyerOrg")
+  importNegotiationsAsSeller ImportNegotiation[] @relation("ImportNegotiationSellerOrg")
+  importDealsAsBuyer         ImportDeal[]        @relation("ImportDealBuyerOrg")
+  importDealsAsSeller        ImportDeal[]        @relation("ImportDealSellerOrg")
 
   @@index([type])
   @@index([status])
@@ -995,6 +1011,7 @@ model CustomerProfile {
   orders           Order[]
   checkoutQuotes   CheckoutQuote[]
   bulkLogisticsQuotes BulkLogisticsQuoteRequest[]
+  importListings   ImportListing[]
 
   @@index([status])
   @@index([creditStatus])
@@ -1323,6 +1340,7 @@ model SellerProfile {
   settlements       Settlement[]
   prResponses       PurchaseRequestResponse[]
   managerAssignments SellerManagerAssignment[]
+  importListings    ImportListing[]
 
   @@index([status])
   @@map("seller_profiles")
@@ -1488,6 +1506,7 @@ model GradeCategory {
 
   grades        Grade[]
   subcategories Subcategory[]
+  importListings ImportListing[]
 
   @@index([parentGroup])
   @@index([isActive])
@@ -1578,6 +1597,7 @@ model Grade {
   purchaseRequestItems PurchaseRequestItem[]
   orderItems           OrderItem[]
   checkoutQuotes       CheckoutQuote[]
+  importListings       ImportListing[]
 
   @@index([categoryId])
   @@index([subcategoryId])
@@ -1647,6 +1667,9 @@ model Location {
   parent     Location?   @relation("LocationTree", fields: [parentId], references: [id])
   children   Location[]  @relation("LocationTree")
   warehouses Warehouse[]
+  brands     Brand[]
+  ports      Port[]
+  importListingsOrigin ImportListing[] @relation("ImportListingOrigin")
 
   @@index([type, status])
   @@index([parentId])
@@ -1663,14 +1686,23 @@ model PaymentTerm {
   paymentType PaymentTermType @map("payment_type")
   days        Int             @default(0)
   percentage  Decimal?        @db.Decimal(5, 2)
+  /// Instrument family used to group terms in Import forms (T/T, L/C, D/P, ...).
+  method        PaymentTermMethod? @map("method")
+  /// Currencies this term applies to. Empty = every currency.
+  currencyCodes String[]           @default([]) @map("currency_codes")
+  /// Offered in Import BUY/SELL forms. Domestic terms stay false.
+  importEnabled Boolean            @default(false) @map("import_enabled")
   status      MasterStatus    @default(ACTIVE)
   sortOrder   Int             @default(0) @map("sort_order")
   createdAt   DateTime        @default(now()) @map("created_at")
   updatedAt   DateTime        @updatedAt @map("updated_at")
   deletedAt   DateTime?       @map("deleted_at")
 
+  importListings ImportListing[]
+
   @@index([status])
   @@index([paymentType])
+  @@index([importEnabled, status])
   @@map("payment_terms")
 }
 
@@ -3322,10 +3354,16 @@ enum SupportMessageSender {
   SYSTEM
 }
 
+enum SupportTicketChannel {
+  WEB
+  APP
+}
+
 model SupportTicket {
   id               String                 @id @default(uuid()) @db.Uuid
   ticketNumber     String                 @unique @map("ticket_number")
   requesterType    SupportRequesterType   @map("requester_type")
+  channel          SupportTicketChannel   @default(WEB)
   requesterUserId  String                 @map("requester_user_id") @db.Uuid
   organizationId   String                 @map("organization_id") @db.Uuid
   category         SupportTicketCategory
@@ -3337,6 +3375,7 @@ model SupportTicket {
   attachmentName   String?                @map("attachment_name")
   assignedToName   String?                @map("assigned_to_name")
   assignedToUserId String?                @map("assigned_to_user_id") @db.Uuid
+  resolutionNote   String?                @map("resolution_note") @db.Text
   resolvedAt       DateTime?              @map("resolved_at")
   closedAt         DateTime?              @map("closed_at")
   createdAt        DateTime               @default(now()) @map("created_at")
@@ -3354,6 +3393,7 @@ model SupportTicket {
   @@index([category])
   @@index([createdAt])
   @@index([updatedAt])
+  @@index([status, updatedAt])
   @@map("support_tickets")
 }
 
@@ -3371,4 +3411,588 @@ model SupportTicketMessage {
   @@index([ticketId])
   @@index([createdAt])
   @@map("support_ticket_messages")
+}
+
+// =============================================================================
+// IMPORT TRADING (international BUY RFQs / SELL offers)
+// Product = GradeCategory, Grade = Grade, Country = Location(type COUNTRY),
+// Payment terms = PaymentTerm(importEnabled). Everything below is additive.
+// =============================================================================
+
+enum ImportSide {
+  BUY
+  SELL
+}
+
+enum ImportListingStatus {
+  DRAFT
+  PUBLISHED
+  MATCHING
+  OFFER_RECEIVED
+  NEGOTIATION
+  MATCHED
+  DEAL_CONFIRMED
+  PARTIALLY_FULFILLED
+  FULFILLED
+  PAUSED
+  EXPIRED
+  CANCELLED
+}
+
+enum ImportQuantityUnit {
+  MT
+  KG
+  CONTAINER
+  OTHER
+}
+
+enum ImportPriceType {
+  FIXED
+  NEGOTIABLE
+  INDICATIVE
+  FORMULA_BASED
+  INDEX_LINKED
+}
+
+enum ImportGstTreatment {
+  GST_EXTRA
+  GST_INCLUDED
+  GST_APPLICABLE
+  GST_EXEMPT_NIL
+  OTHER
+}
+
+enum ImportShipmentPermission {
+  ALLOWED
+  NOT_ALLOWED
+  NEGOTIABLE
+}
+
+enum ImportShipmentType {
+  FCL
+  LCL
+  BULK
+  CONTAINER
+}
+
+enum ImportContainerSize {
+  FT_20
+  FT_40
+  OTHER
+}
+
+enum ImportInspectionType {
+  NO_INSPECTION
+  SELLER_INSPECTION
+  SGS
+  BUREAU_VERITAS
+  OTHER_THIRD_PARTY
+  BUYER_INSPECTION
+}
+
+enum ImportReadyStockType {
+  READY_STOCK
+  PRODUCTION
+  FUTURE_SHIPMENT
+}
+
+enum ImportListingSource {
+  WEB
+  MOBILE
+  ADMIN
+  API
+  WHATSAPP
+}
+
+enum PortType {
+  SEA
+  AIR
+  OTHER
+}
+
+/// Where an Incoterm's price is quoted: origin (FOB/FCA/EXW) or destination (CFR/CIF).
+enum IncotermPriceBasis {
+  ORIGIN
+  DESTINATION
+  ANY
+}
+
+enum PaymentTermMethod {
+  TT
+  LC
+  DP
+  OPEN_ACCOUNT
+  ADVANCE
+  CREDIT
+  OTHER
+}
+
+enum ImportNegotiationStatus {
+  OPEN
+  AGREED
+  REJECTED
+  WITHDRAWN
+  EXPIRED
+  CANCELLED
+}
+
+enum ImportNegotiationEventType {
+  OPENED
+  COUNTER
+  ACCEPTED
+  REJECTED
+  WITHDRAWN
+  EXPIRED
+}
+
+enum ImportTradeParty {
+  BUYER
+  SELLER
+  ADMIN
+  SYSTEM
+}
+
+enum ImportMatchStatus {
+  SUGGESTED
+  DISMISSED
+  NEGOTIATING
+  CONVERTED
+  STALE
+}
+
+enum ImportDealStatus {
+  PENDING_CONFIRMATION
+  CONFIRMED
+  PARTIALLY_FULFILLED
+  FULFILLED
+  CANCELLED
+}
+
+model Currency {
+  id            String       @id @default(uuid()) @db.Uuid
+  code          String       @unique
+  name          String
+  symbol        String?
+  decimalPlaces Int          @default(2) @map("decimal_places")
+  importEnabled Boolean      @default(true) @map("import_enabled")
+  status        MasterStatus @default(ACTIVE)
+  sortOrder     Int          @default(0) @map("sort_order")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  deletedAt     DateTime?    @map("deleted_at")
+
+  importListings ImportListing[]
+
+  @@index([status, importEnabled])
+  @@map("currencies")
+}
+
+model Incoterm {
+  id          String             @id @default(uuid()) @db.Uuid
+  code        String             @unique
+  name        String
+  description String?
+  priceBasis  IncotermPriceBasis @default(ANY) @map("price_basis")
+  status      MasterStatus       @default(ACTIVE)
+  sortOrder   Int                @default(0) @map("sort_order")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
+  deletedAt   DateTime?          @map("deleted_at")
+
+  importListings ImportListing[]
+
+  @@index([status])
+  @@map("incoterms")
+}
+
+model Brand {
+  id        String       @id @default(uuid()) @db.Uuid
+  code      String       @unique
+  name      String
+  countryId String?      @map("country_id") @db.Uuid
+  status    MasterStatus @default(ACTIVE)
+  sortOrder Int          @default(0) @map("sort_order")
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+  deletedAt DateTime?    @map("deleted_at")
+
+  country        Location?       @relation(fields: [countryId], references: [id])
+  importListings ImportListing[]
+
+  @@index([status])
+  @@index([name])
+  @@index([countryId])
+  @@map("brands")
+}
+
+model Port {
+  id          String       @id @default(uuid()) @db.Uuid
+  /// UN/LOCODE, e.g. INMUN (Mundra), CNSHA (Shanghai)
+  code        String       @unique
+  name        String
+  countryId   String?      @map("country_id") @db.Uuid
+  countryCode String       @map("country_code")
+  type        PortType     @default(SEA)
+  status      MasterStatus @default(ACTIVE)
+  sortOrder   Int          @default(0) @map("sort_order")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  deletedAt   DateTime?    @map("deleted_at")
+
+  country            Location?       @relation(fields: [countryId], references: [id])
+  polListings        ImportListing[] @relation("ImportListingPol")
+  podListings        ImportListing[] @relation("ImportListingPod")
+  priceBasisListings ImportListing[] @relation("ImportListingPriceBasisPort")
+
+  @@index([status, type])
+  @@index([countryCode])
+  @@index([name])
+  @@map("ports")
+}
+
+model Packaging {
+  id          String       @id @default(uuid()) @db.Uuid
+  code        String       @unique
+  name        String
+  description String?
+  status      MasterStatus @default(ACTIVE)
+  sortOrder   Int          @default(0) @map("sort_order")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  deletedAt   DateTime?    @map("deleted_at")
+
+  importListings ImportListing[]
+
+  @@index([status])
+  @@map("packaging_types")
+}
+
+model DocumentRequirement {
+  id               String           @id @default(uuid()) @db.Uuid
+  code             String           @unique
+  name             String
+  description      String?
+  /// Category used when a file for this requirement is uploaded to R2.
+  documentCategory DocumentCategory @map("document_category")
+  status           MasterStatus     @default(ACTIVE)
+  sortOrder        Int              @default(0) @map("sort_order")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  deletedAt        DateTime?        @map("deleted_at")
+
+  listings ImportListingDocumentRequirement[]
+
+  @@index([status])
+  @@map("document_requirements")
+}
+
+/// Singleton row (id = 'default') holding Admin-tunable Import configuration.
+model ImportSettings {
+  id                   String   @id @default("default")
+  /// { PRODUCT: 15, GRADE: 15, ... } — normalised to 100 when scoring.
+  matchWeights         Json     @map("match_weights")
+  minMatchScore        Int      @default(60) @map("min_match_score")
+  allowCustomGrade     Boolean  @default(true) @map("allow_custom_grade")
+  nearExpiryHours      Int      @default(24) @map("near_expiry_hours")
+  negotiationTtlHours  Int      @default(72) @map("negotiation_ttl_hours")
+  notificationChannels String[] @default(["IN_APP"]) @map("notification_channels")
+  updatedById          String?  @map("updated_by_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  @@map("import_settings")
+}
+
+/// One table for BUY RFQs and SELL offers: they share ~90% of their fields and
+/// the Admin table lists both. `side` decides which side-specific columns apply.
+model ImportListing {
+  id              String              @id @default(uuid()) @db.Uuid
+  referenceNumber String              @unique @map("reference_number")
+  side            ImportSide
+  status          ImportListingStatus @default(DRAFT)
+  source          ImportListingSource @default(WEB)
+  version         Int                 @default(1)
+
+  ownerOrgId        String  @map("owner_org_id") @db.Uuid
+  customerProfileId String? @map("customer_profile_id") @db.Uuid
+  sellerProfileId   String? @map("seller_profile_id") @db.Uuid
+  createdById       String? @map("created_by_id") @db.Uuid
+  updatedById       String? @map("updated_by_id") @db.Uuid
+
+  // Product
+  categoryId      String?            @map("category_id") @db.Uuid
+  gradeId         String?            @map("grade_id") @db.Uuid
+  customGradeName String?            @map("custom_grade_name")
+  brandId         String?            @map("brand_id") @db.Uuid
+  originCountryId String?            @map("origin_country_id") @db.Uuid
+  /// BUY: required quantity. SELL: available quantity.
+  quantity        Decimal?           @db.Decimal(18, 3)
+  quantityUnit    ImportQuantityUnit @default(MT) @map("quantity_unit")
+  packagingId     String?            @map("packaging_id") @db.Uuid
+  application     String?
+  hsCode          String?            @map("hs_code")
+  casNumber       String?            @map("cas_number")
+
+  // Commercial. BUY: target price. SELL: offer price.
+  price              Decimal?            @db.Decimal(18, 4)
+  currencyId         String?             @map("currency_id") @db.Uuid
+  currencyCode       String?             @map("currency_code")
+  priceUnit          ImportQuantityUnit  @default(MT) @map("price_unit")
+  priceType          ImportPriceType?    @map("price_type")
+  incotermId         String?             @map("incoterm_id") @db.Uuid
+  priceBasisPortId   String?             @map("price_basis_port_id") @db.Uuid
+  priceBasisLocation String?             @map("price_basis_location")
+  paymentTermId      String?             @map("payment_term_id") @db.Uuid
+  gstTreatment       ImportGstTreatment? @map("gst_treatment")
+
+  // Shipping
+  polId           String?                   @map("pol_id") @db.Uuid
+  podId           String?                   @map("pod_id") @db.Uuid
+  esd             DateTime?                 @db.Date
+  lsd             DateTime?                 @db.Date
+  transitMinDays  Int?                      @map("transit_min_days")
+  transitMaxDays  Int?                      @map("transit_max_days")
+  partialShipment ImportShipmentPermission? @map("partial_shipment")
+  transshipment   ImportShipmentPermission?
+  shipmentType    ImportShipmentType?       @map("shipment_type")
+  containerSize   ImportContainerSize?      @map("container_size")
+  containerCount  Int?                      @map("container_count")
+
+  // Quality
+  specification  String?               @db.Text
+  inspectionType ImportInspectionType? @map("inspection_type")
+
+  // BUY only
+  acceptableQuantityMin Decimal?  @map("acceptable_quantity_min") @db.Decimal(18, 3)
+  acceptableQuantityMax Decimal?  @map("acceptable_quantity_max") @db.Decimal(18, 3)
+  requiredDeliveryDate  DateTime? @map("required_delivery_date") @db.Date
+  specialRequirements   String?   @map("special_requirements") @db.Text
+
+  // SELL only
+  moq             Decimal?              @db.Decimal(18, 3)
+  maximumQuantity Decimal?              @map("maximum_quantity") @db.Decimal(18, 3)
+  readyStockType  ImportReadyStockType? @map("ready_stock_type")
+
+  remarks String? @db.Text
+
+  // Validity (server time is authoritative; validUntil is the expiry instant)
+  validFrom            DateTime? @map("valid_from")
+  validUntil           DateTime? @map("valid_until")
+  publishedAt          DateTime? @map("published_at")
+  pausedAt             DateTime? @map("paused_at")
+  cancelledAt          DateTime? @map("cancelled_at")
+  expiredAt            DateTime? @map("expired_at")
+  cancelReason         String?   @map("cancel_reason")
+  nearExpiryNotifiedAt DateTime? @map("near_expiry_notified_at")
+
+  /// Master-data names/codes frozen at publish so later master edits never rewrite history.
+  snapshot   Json?
+  /// Future AI/WhatsApp intake: original text and extracted fields with confidence.
+  rawInput   String? @map("raw_input") @db.Text
+  extraction Json?
+  metadata   Json?
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  ownerOrg        Organization     @relation(fields: [ownerOrgId], references: [id])
+  customerProfile CustomerProfile? @relation(fields: [customerProfileId], references: [id])
+  sellerProfile   SellerProfile?   @relation(fields: [sellerProfileId], references: [id])
+  createdBy       User?            @relation("ImportListingCreatedBy", fields: [createdById], references: [id])
+  category        GradeCategory?   @relation(fields: [categoryId], references: [id])
+  grade           Grade?           @relation(fields: [gradeId], references: [id])
+  brand           Brand?           @relation(fields: [brandId], references: [id])
+  originCountry   Location?        @relation("ImportListingOrigin", fields: [originCountryId], references: [id])
+  packaging       Packaging?       @relation(fields: [packagingId], references: [id])
+  currency        Currency?        @relation(fields: [currencyId], references: [id])
+  incoterm        Incoterm?        @relation(fields: [incotermId], references: [id])
+  priceBasisPort  Port?            @relation("ImportListingPriceBasisPort", fields: [priceBasisPortId], references: [id])
+  paymentTerm     PaymentTerm?     @relation(fields: [paymentTermId], references: [id])
+  pol             Port?            @relation("ImportListingPol", fields: [polId], references: [id])
+  pod             Port?            @relation("ImportListingPod", fields: [podId], references: [id])
+
+  documentRequirements ImportListingDocumentRequirement[]
+  buyMatches           ImportMatch[]                      @relation("ImportMatchBuy")
+  sellMatches          ImportMatch[]                      @relation("ImportMatchSell")
+  buyNegotiations      ImportNegotiation[]                @relation("ImportNegotiationBuy")
+  sellNegotiations     ImportNegotiation[]                @relation("ImportNegotiationSell")
+  buyDeals             ImportDeal[]                       @relation("ImportDealBuy")
+  sellDeals            ImportDeal[]                       @relation("ImportDealSell")
+
+  @@index([side, status, validUntil])
+  @@index([side, status, categoryId, createdAt])
+  @@index([ownerOrgId, side, status])
+  @@index([customerProfileId])
+  @@index([sellerProfileId])
+  @@index([gradeId])
+  @@index([brandId])
+  @@index([originCountryId])
+  @@index([currencyId])
+  @@index([incotermId])
+  @@index([polId])
+  @@index([podId])
+  @@index([esd, lsd])
+  @@index([createdAt])
+  @@map("import_listings")
+}
+
+model ImportListingDocumentRequirement {
+  listingId             String   @map("listing_id") @db.Uuid
+  documentRequirementId String   @map("document_requirement_id") @db.Uuid
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  listing             ImportListing       @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  documentRequirement DocumentRequirement @relation(fields: [documentRequirementId], references: [id])
+
+  @@id([listingId, documentRequirementId])
+  @@index([documentRequirementId])
+  @@map("import_listing_document_requirements")
+}
+
+/// Deterministic, weight-based match evidence between one BUY and one SELL listing.
+model ImportMatch {
+  id                String            @id @default(uuid()) @db.Uuid
+  buyListingId      String            @map("buy_listing_id") @db.Uuid
+  sellListingId     String            @map("sell_listing_id") @db.Uuid
+  score             Decimal           @db.Decimal(5, 2)
+  matchedCriteria   String[]          @map("matched_criteria")
+  unmatchedCriteria String[]          @map("unmatched_criteria")
+  evidence          Json
+  weights           Json
+  algorithmVersion  String            @map("algorithm_version")
+  status            ImportMatchStatus @default(SUGGESTED)
+  computedAt        DateTime          @default(now()) @map("computed_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+
+  buyListing   ImportListing       @relation("ImportMatchBuy", fields: [buyListingId], references: [id], onDelete: Cascade)
+  sellListing  ImportListing       @relation("ImportMatchSell", fields: [sellListingId], references: [id], onDelete: Cascade)
+  negotiations ImportNegotiation[]
+
+  @@unique([buyListingId, sellListingId])
+  @@index([buyListingId, score])
+  @@index([sellListingId, score])
+  @@index([status, computedAt])
+  @@map("import_matches")
+}
+
+model ImportNegotiation {
+  id              String                  @id @default(uuid()) @db.Uuid
+  referenceNumber String                  @unique @map("reference_number")
+  status          ImportNegotiationStatus @default(OPEN)
+  buyListingId    String?                 @map("buy_listing_id") @db.Uuid
+  sellListingId   String?                 @map("sell_listing_id") @db.Uuid
+  matchId         String?                 @map("match_id") @db.Uuid
+  buyerOrgId      String                  @map("buyer_org_id") @db.Uuid
+  sellerOrgId     String                  @map("seller_org_id") @db.Uuid
+  initiatedBy     ImportTradeParty        @map("initiated_by")
+  lastActorParty  ImportTradeParty?       @map("last_actor_party")
+  roundCount      Int                     @default(0) @map("round_count")
+  expiresAt       DateTime?               @map("expires_at")
+  agreedAt        DateTime?               @map("agreed_at")
+  closedAt        DateTime?               @map("closed_at")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+
+  buyListing  ImportListing?           @relation("ImportNegotiationBuy", fields: [buyListingId], references: [id])
+  sellListing ImportListing?           @relation("ImportNegotiationSell", fields: [sellListingId], references: [id])
+  match       ImportMatch?             @relation(fields: [matchId], references: [id])
+  buyerOrg    Organization             @relation("ImportNegotiationBuyerOrg", fields: [buyerOrgId], references: [id])
+  sellerOrg   Organization             @relation("ImportNegotiationSellerOrg", fields: [sellerOrgId], references: [id])
+  events      ImportNegotiationEvent[]
+  deal        ImportDeal?
+
+  @@index([buyerOrgId, status])
+  @@index([sellerOrgId, status])
+  @@index([buyListingId, status])
+  @@index([sellListingId, status])
+  @@index([status, expiresAt])
+  @@map("import_negotiations")
+}
+
+/// Append-only. A DB trigger rejects UPDATE so historical terms are never rewritten.
+model ImportNegotiationEvent {
+  id              String                     @id @default(uuid()) @db.Uuid
+  negotiationId   String                     @map("negotiation_id") @db.Uuid
+  sequence        Int
+  type            ImportNegotiationEventType
+  actorParty      ImportTradeParty           @map("actor_party")
+  actorUserId     String?                    @map("actor_user_id") @db.Uuid
+  price           Decimal?                   @db.Decimal(18, 4)
+  currencyCode    String?                    @map("currency_code")
+  priceUnit       ImportQuantityUnit?        @map("price_unit")
+  quantity        Decimal?                   @db.Decimal(18, 3)
+  quantityUnit    ImportQuantityUnit?        @map("quantity_unit")
+  moq             Decimal?                   @db.Decimal(18, 3)
+  incotermId      String?                    @map("incoterm_id") @db.Uuid
+  incotermCode    String?                    @map("incoterm_code")
+  paymentTermId   String?                    @map("payment_term_id") @db.Uuid
+  paymentTermName String?                    @map("payment_term_name")
+  esd             DateTime?                  @db.Date
+  lsd             DateTime?                  @db.Date
+  inspectionType  ImportInspectionType?      @map("inspection_type")
+  otherTerms      String?                    @map("other_terms") @db.Text
+  note            String?                    @db.Text
+  createdAt       DateTime                   @default(now()) @map("created_at")
+
+  negotiation ImportNegotiation @relation(fields: [negotiationId], references: [id], onDelete: Cascade)
+
+  @@unique([negotiationId, sequence])
+  @@index([negotiationId, createdAt])
+  @@map("import_negotiation_events")
+}
+
+model ImportDeal {
+  id                 String             @id @default(uuid()) @db.Uuid
+  referenceNumber    String             @unique @map("reference_number")
+  negotiationId      String             @unique @map("negotiation_id") @db.Uuid
+  buyListingId       String?            @map("buy_listing_id") @db.Uuid
+  sellListingId      String?            @map("sell_listing_id") @db.Uuid
+  buyerOrgId         String             @map("buyer_org_id") @db.Uuid
+  sellerOrgId        String             @map("seller_org_id") @db.Uuid
+  status             ImportDealStatus   @default(PENDING_CONFIRMATION)
+  price              Decimal            @db.Decimal(18, 4)
+  currencyCode       String             @map("currency_code")
+  priceUnit          ImportQuantityUnit @map("price_unit")
+  quantity           Decimal            @db.Decimal(18, 3)
+  quantityUnit       ImportQuantityUnit @map("quantity_unit")
+  incotermCode       String?            @map("incoterm_code")
+  priceBasisLocation String?            @map("price_basis_location")
+  paymentTermName    String?            @map("payment_term_name")
+  esd                DateTime?          @db.Date
+  lsd                DateTime?          @db.Date
+  /// Full agreed terms + listing snapshots at acceptance.
+  terms              Json
+  buyerConfirmedAt   DateTime?          @map("buyer_confirmed_at")
+  sellerConfirmedAt  DateTime?          @map("seller_confirmed_at")
+  confirmedAt        DateTime?          @map("confirmed_at")
+  cancelledAt        DateTime?          @map("cancelled_at")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  negotiation ImportNegotiation @relation(fields: [negotiationId], references: [id])
+  buyListing  ImportListing?    @relation("ImportDealBuy", fields: [buyListingId], references: [id])
+  sellListing ImportListing?    @relation("ImportDealSell", fields: [sellListingId], references: [id])
+  buyerOrg    Organization      @relation("ImportDealBuyerOrg", fields: [buyerOrgId], references: [id])
+  sellerOrg   Organization      @relation("ImportDealSellerOrg", fields: [sellerOrgId], references: [id])
+
+  @@index([buyerOrgId, status])
+  @@index([sellerOrgId, status])
+  @@index([status, createdAt])
+  @@map("import_deals")
+}
+
+/// Replay protection for Import writes (publish, negotiate, counter, confirm).
+model ImportIdempotencyRecord {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String   @map("actor_user_id") @db.Uuid
+  scope       String
+  key         String
+  resourceId  String   @map("resource_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([actorUserId, scope, key])
+  @@index([createdAt])
+  @@map("import_idempotency_records")
 }

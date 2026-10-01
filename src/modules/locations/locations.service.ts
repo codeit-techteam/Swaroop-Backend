@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { GoogleMapsClient } from './google-maps.client.js';
-import { isValidCoordinate } from './location-normalizer.js';
+import { isValidCoordinate, isWithinIndia } from './location-normalizer.js';
 import type {
   LocationServiceConfig,
   LocationSuggestion,
@@ -95,6 +95,9 @@ export class LocationsService {
     if (!isValidCoordinate(input.latitude, input.longitude)) {
       throw new LocationException('INVALID_COORDINATES');
     }
+    if (!isWithinIndia(input.latitude, input.longitude)) {
+      throw new LocationException('LOCATION_OUTSIDE_SERVICE_AREA');
+    }
     const key = `${input.latitude.toFixed(5)},${input.longitude.toFixed(5)}`;
     const cached = this.reverseCache.get(key);
     if (cached) {
@@ -109,6 +112,9 @@ export class LocationsService {
     const resolved = await this.reverseCache.getOrLoad(key, () =>
       this.google.reverseGeocode(input),
     );
+    if (resolved.countryCode && resolved.countryCode !== 'IN') {
+      throw new LocationException('LOCATION_OUTSIDE_SERVICE_AREA');
+    }
     return {
       ...resolved,
       latitude: input.latitude,

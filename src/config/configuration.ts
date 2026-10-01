@@ -54,6 +54,12 @@ export type AppConfig = {
     /** ISO 3166-1 alpha-2 region used to restrict autocomplete results. */
     regionCode: string;
   };
+  import: {
+    /** IMPORT_FEATURE_ENABLED — hides every user-facing Import route when false. */
+    enabled: boolean;
+    /** Background expiry / near-expiry sweep cadence. */
+    sweepIntervalMs: number;
+  };
 };
 
 const splitOrigins = (value: string): string[] =>
@@ -156,6 +162,14 @@ export default (): AppConfig => {
       serverApiKey: (process.env.GOOGLE_MAPS_SERVER_API_KEY ?? '').trim(),
       requestTimeoutMs: Number(process.env.GOOGLE_MAPS_TIMEOUT_MS || 6000),
       regionCode: (process.env.GOOGLE_MAPS_REGION_CODE || 'IN').toUpperCase(),
+    },
+    import: {
+      enabled: !['false', '0', 'no', 'off'].includes(
+        (process.env.IMPORT_FEATURE_ENABLED ?? 'true').trim().toLowerCase(),
+      ),
+      sweepIntervalMs: Number(
+        process.env.IMPORT_EXPIRY_SWEEP_INTERVAL_MS || 60_000,
+      ),
     },
   };
 };

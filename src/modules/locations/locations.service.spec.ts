@@ -107,6 +107,36 @@ describe('LocationsService', () => {
     expect(client.reverseGeocode).not.toHaveBeenCalled();
   });
 
+  it('rejects coordinates outside India before calling Google', async () => {
+    const { service, client } = makeService();
+    await expect(
+      service.reverseGeocode('u1', {
+        latitude: 40.7128,
+        longitude: -74.006,
+        source: 'GPS',
+      }),
+    ).rejects.toMatchObject({ code: 'LOCATION_OUTSIDE_SERVICE_AREA' });
+    expect(client.reverseGeocode).not.toHaveBeenCalled();
+  });
+
+  it('rejects border points that Google resolves to another country', async () => {
+    const { service } = makeService({
+      reverseGeocode: vi.fn().mockResolvedValue({
+        ...resolved,
+        country: 'Nepal',
+        countryCode: 'NP',
+        source: 'GPS' as const,
+      }),
+    } as never);
+    await expect(
+      service.reverseGeocode('u1', {
+        latitude: 27.7172,
+        longitude: 85.324,
+        source: 'GPS',
+      }),
+    ).rejects.toMatchObject({ code: 'LOCATION_OUTSIDE_SERVICE_AREA' });
+  });
+
   it('rate limits reverse geocode per user', async () => {
     const { service } = makeService();
     const calls = Array.from({ length: 30 }, (_, i) =>

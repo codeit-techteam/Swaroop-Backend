@@ -4,10 +4,14 @@ import type {
   SupportTicketMessage,
   User,
 } from '../../generated/prisma/client.js';
+import { allowedAgentTransitions, sourceLabel } from './support-workflow.js';
 
 type TicketWithRelations = SupportTicket & {
   messages?: SupportTicketMessage[];
-  organization?: Pick<Organization, 'id' | 'name' | 'legalName' | 'type'> | null;
+  organization?: Pick<
+    Organization,
+    'id' | 'name' | 'legalName' | 'type'
+  > | null;
   requesterUser?: Pick<
     User,
     'id' | 'displayName' | 'firstName' | 'lastName' | 'email' | 'phone'
@@ -48,12 +52,16 @@ export function toSupportTicketDto(
     row.organization?.name?.trim() ||
     null;
   const requesterName = displayName(row.requesterUser);
+  const messages = row.messages ?? [];
+  const lastMessage = messages[messages.length - 1];
 
   return {
     id: row.id,
     ticketNumber: row.ticketNumber,
     ticketId: row.ticketNumber,
     requesterType: row.requesterType,
+    channel: row.channel,
+    source: sourceLabel(row.requesterType, row.channel),
     requesterUserId: row.requesterUserId,
     requesterName,
     requesterEmail: row.requesterUser?.email ?? null,
@@ -70,11 +78,14 @@ export function toSupportTicketDto(
     attachmentName: row.attachmentName,
     assignedToName: row.assignedToName,
     assignedToUserId: row.assignedToUserId,
+    resolutionNote: row.resolutionNote,
     resolvedAt: row.resolvedAt?.toISOString() ?? null,
     closedAt: row.closedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
-    messages: (row.messages ?? []).map((m) => ({
+    lastMessageAt: lastMessage?.createdAt.toISOString() ?? null,
+    lastMessageSender: lastMessage?.sender ?? null,
+    messages: messages.map((m) => ({
       id: m.id,
       sender: m.sender,
       senderName: m.senderName,
@@ -83,12 +94,7 @@ export function toSupportTicketDto(
       createdAt: m.createdAt.toISOString(),
     })),
     ...(options?.includeInternal
-      ? {
-          source:
-            row.requesterType === 'CUSTOMER'
-              ? 'Customer'
-              : ('Seller' as const),
-        }
+      ? { allowedTransitions: allowedAgentTransitions(row.status) }
       : {}),
   };
 }
