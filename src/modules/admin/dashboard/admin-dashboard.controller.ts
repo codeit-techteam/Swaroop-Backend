@@ -1,9 +1,10 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { successResponse } from '../../../common/utils/response.util.js';
 import { Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import { ADMIN_CORE_ROLES } from '../common/admin-roles.js';
+import { AdminDashboardQueryDto } from './admin-dashboard.dto.js';
 import { AdminDashboardService } from './admin-dashboard.service.js';
 
 @ApiTags('Admin Dashboard')
@@ -16,7 +17,10 @@ export class AdminDashboardController {
 
   @Get('summary')
   @ApiOperation({ summary: 'Admin control center dashboard summary' })
-  async summary() {
-    return successResponse(await this.dashboard.summary(), 'Dashboard summary');
+  async summary(@Query() query: AdminDashboardQueryDto) {
+    return successResponse(
+      await this.dashboard.summary(query.days),
+      'Dashboard summary',
+    );
   }
 }

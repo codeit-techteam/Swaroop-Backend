@@ -19,6 +19,11 @@ export class AdminSearchService {
         purchaseOrders: [],
         payments: [],
         shipments: [],
+        importDeals: [],
+        invoices: [],
+        documents: [],
+        vehicles: [],
+        drivers: [],
       };
     }
 
@@ -35,6 +40,11 @@ export class AdminSearchService {
       purchaseOrders,
       payments,
       shipments,
+      importDeals,
+      invoices,
+      documents,
+      vehicles,
+      drivers,
     ] = await Promise.all([
       this.prisma.user.findMany({
         where: {
@@ -173,6 +183,82 @@ export class AdminSearchService {
           status: true,
         },
       }),
+      this.prisma.importDeal.findMany({
+        where: {
+          referenceNumber: { contains: term, mode: 'insensitive' },
+        },
+        take,
+        select: {
+          id: true,
+          referenceNumber: true,
+          status: true,
+          currencyCode: true,
+        },
+      }),
+      this.prisma.financeInvoice.findMany({
+        where: {
+          deletedAt: null,
+          invoiceNumber: { contains: term, mode: 'insensitive' },
+        },
+        take,
+        select: {
+          id: true,
+          invoiceNumber: true,
+          status: true,
+          totalAmount: true,
+        },
+      }),
+      this.prisma.document.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { fileName: { contains: term, mode: 'insensitive' } },
+            { originalFileName: { contains: term, mode: 'insensitive' } },
+            { documentNumber: { contains: term, mode: 'insensitive' } },
+          ],
+        },
+        take,
+        select: {
+          id: true,
+          documentNumber: true,
+          fileName: true,
+          originalFileName: true,
+          category: true,
+          status: true,
+          ownerType: true,
+        },
+      }),
+      this.prisma.vehicle.findMany({
+        where: {
+          OR: [
+            { numberPlate: { contains: term, mode: 'insensitive' } },
+            { transporterName: { contains: term, mode: 'insensitive' } },
+          ],
+        },
+        take,
+        select: {
+          id: true,
+          numberPlate: true,
+          type: true,
+          status: true,
+        },
+      }),
+      this.prisma.driver.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { name: { contains: term, mode: 'insensitive' } },
+            { licenseNumber: { contains: term, mode: 'insensitive' } },
+          ],
+        },
+        take,
+        select: {
+          id: true,
+          name: true,
+          licenseNumber: true,
+          status: true,
+        },
+      }),
     ]);
 
     return {
@@ -192,6 +278,14 @@ export class AdminSearchService {
         amount: p.amount.toString(),
       })),
       shipments,
+      importDeals,
+      invoices: invoices.map((invoice) => ({
+        ...invoice,
+        totalAmount: invoice.totalAmount.toString(),
+      })),
+      documents,
+      vehicles,
+      drivers,
     };
   }
 }

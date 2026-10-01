@@ -2,18 +2,53 @@ import { Injectable } from '@nestjs/common';
 import {
   CreditApplicationStatus,
   CreditStatus,
+  CustomerStatus,
   DocumentStatus,
+  ImportDealStatus,
+  ImportListingStatus,
+  ImportNegotiationStatus,
+  ImportSide,
   NotificationStatus,
+  OrderStatus,
+  PaymentStatus,
+  PurchaseRequestSellerMatchStatus,
+  PurchaseRequestStatus,
+  SellerStatus,
+  ShipmentStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
 import { toDecimal } from '../../payments/common/money.util.js';
 
+const ACTIVE_IMPORT: ImportListingStatus[] = [
+  ImportListingStatus.PUBLISHED,
+  ImportListingStatus.MATCHING,
+  ImportListingStatus.OFFER_RECEIVED,
+  ImportListingStatus.NEGOTIATION,
+  ImportListingStatus.MATCHED,
+];
+
+function sumOf(
+  rows: Array<{ status: string; _count: { _all: number } }>,
+  keys: string[],
+) {
+  const allowed = new Set(keys);
+  return rows.reduce(
+    (total, row) => (allowed.has(row.status) ? total + row._count._all : total),
+    0,
+  );
+}
+
+function sinceDate(days?: number) {
+  if (!days) return undefined;
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
 @Injectable()
 export class AdminDashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async summary() {
+  async summary(days?: number) {
     const adminRoleCodes = [
       RoleCode.ADMIN,
       RoleCode.SUPER_ADMIN,
@@ -79,10 +114,29 @@ export class AdminDashboardService {
     ]);
 
     const adminIds = adminUserIds.map((r) => r.userId);
-    const notificationsUnread =
+    const since = sinceDate(days);
+    const windowWhere = since ? { createdAt: { gte: since } } : {};
+    const live = { deletedAt: null, ...windowWhere };
+
+    const [
+      notificationsUnread,
+      customerStatuses,
+      sellerStatuses,
+      orderStatuses,
+      purchaseRequestStatuses,
+      counterOffered,
+      paymentStatuses,
+      shipmentStatuses,
+      activeBuyRequests,
+      activeSellOffers,
+      openNegotiations,
+      confirmedDeals,
+      recentOrders,
+      recentPurchaseRequests,
+    ] = await Promise.all([
       adminIds.length === 0
-        ? 0
-        : await this.prisma.notification.count({
+        ? Promise.resolve(0)
+        : this.prisma.notification.count({
             where: {
               userId: { in: adminIds },
               status: {
@@ -90,7 +144,98 @@ export class AdminDashboardService {
               },
               readAt: null,
             },
-          });
+          }),
+      this.prisma.customerProfile.groupBy({
+        by: ['status'],
+        where: { deletedAt: null },
+        _count: { _all: true },
+      }),
+      this.prisma.sellerProfile.groupBy({
+        by: ['status'],
+        where: { deletedAt: null },
+        _count: { _all: true },
+      }),
+      this.prisma.order.groupBy({
+        by: ['status'],
+        where: live,
+        _count: { _all: true },
+      }),
+      this.prisma.purchaseRequest.groupBy({
+        by: ['status'],
+        where: live,
+        _count: { _all: true },
+      }),
+      this.prisma.purchaseRequestSellerMatch.count({
+        where: {
+          status: PurchaseRequestSellerMatchStatus.COUNTER_OFFERED,
+          ...windowWhere,
+        },
+      }),
+      this.prisma.payment.groupBy({
+        by: ['status'],
+        where: windowWhere,
+        _count: { _all: true },
+      }),
+      this.prisma.shipment.groupBy({
+        by: ['status'],
+        where: live,
+        _count: { _all: true },
+      }),
+      this.prisma.importListing.count({
+        where: {
+          deletedAt: null,
+          side: ImportSide.BUY,
+          status: { in: ACTIVE_IMPORT },
+          ...windowWhere,
+        },
+      }),
+      this.prisma.importListing.count({
+        where: {
+          deletedAt: null,
+          side: ImportSide.SELL,
+          status: { in: ACTIVE_IMPORT },
+          ...windowWhere,
+        },
+      }),
+      this.prisma.importNegotiation.count({
+        where: { status: ImportNegotiationStatus.OPEN, ...windowWhere },
+      }),
+      this.prisma.importDeal.count({
+        where: {
+          status: {
+            in: [
+              ImportDealStatus.CONFIRMED,
+              ImportDealStatus.PARTIALLY_FULFILLED,
+            ],
+          },
+          ...windowWhere,
+        },
+      }),
+      this.prisma.order.findMany({
+        where: live,
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+        select: {
+          id: true,
+          referenceNumber: true,
+          status: true,
+          totalAmount: true,
+          createdAt: true,
+          customerOrg: { select: { name: true } },
+        },
+      }),
+      this.prisma.purchaseRequest.findMany({
+        where: live,
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+        select: {
+          id: true,
+          referenceNumber: true,
+          status: true,
+          createdAt: true,
+        },
+      }),
+    ]);
 
     return {
       users,
@@ -106,6 +251,139 @@ export class AdminDashboardService {
       shipments,
       documentsPending,
       notificationsUnread,
+      windowDays: days ?? null,
+      operations: {
+        customers: {
+          total: customers,
+          active: sumOf(customerStatuses, [CustomerStatus.ACTIVE]),
+          pendingKyc: sumOf(customerStatuses, [CustomerStatus.PENDING_KYC]),
+          suspended: sumOf(customerStatuses, [CustomerStatus.SUSPENDED]),
+        },
+        sellers: {
+          total: sellers,
+          active: sumOf(sellerStatuses, [SellerStatus.APPROVED]),
+          pendingApproval: sumOf(sellerStatuses, [
+            SellerStatus.PENDING_VERIFICATION,
+            SellerStatus.UNDER_REVIEW,
+          ]),
+          suspended: sumOf(sellerStatuses, [SellerStatus.SUSPENDED]),
+        },
+        orders: {
+          total: orderStatuses.reduce((n, row) => n + row._count._all, 0),
+          created: sumOf(orderStatuses, [
+            OrderStatus.CREATED,
+            OrderStatus.PROCUREMENT_STARTED,
+            OrderStatus.SUPPLIER_MATCHING,
+            OrderStatus.CONFIRMED,
+          ]),
+          processing: sumOf(orderStatuses, [
+            OrderStatus.PROCESSING,
+            OrderStatus.LOADING_SCHEDULED,
+            OrderStatus.LOADING_COMPLETED,
+            OrderStatus.PAYMENT_PENDING,
+            OrderStatus.PAYMENT_VERIFIED,
+          ]),
+          dispatched: sumOf(orderStatuses, [
+            OrderStatus.DISPATCH_READY,
+            OrderStatus.DISPATCHED,
+          ]),
+          delivered: sumOf(orderStatuses, [
+            OrderStatus.DELIVERED,
+            OrderStatus.COMPLETED,
+          ]),
+          cancelled: sumOf(orderStatuses, [OrderStatus.CANCELLED]),
+        },
+        purchaseRequests: {
+          total: purchaseRequestStatuses.reduce(
+            (n, row) => n + row._count._all,
+            0,
+          ),
+          created: sumOf(purchaseRequestStatuses, [
+            PurchaseRequestStatus.DRAFT,
+            PurchaseRequestStatus.SUBMITTED,
+          ]),
+          pendingSellerResponse: sumOf(purchaseRequestStatuses, [
+            PurchaseRequestStatus.UNDER_REVIEW,
+            PurchaseRequestStatus.SOURCING,
+            PurchaseRequestStatus.OFFER_RECEIVED,
+            PurchaseRequestStatus.NEGOTIATION,
+            PurchaseRequestStatus.PENDING_APPROVAL,
+          ]),
+          accepted: sumOf(purchaseRequestStatuses, [
+            PurchaseRequestStatus.APPROVED,
+            PurchaseRequestStatus.CONVERTED_TO_ORDER,
+          ]),
+          rejected: sumOf(purchaseRequestStatuses, [
+            PurchaseRequestStatus.REJECTED,
+          ]),
+          counterOffered,
+          expired: sumOf(purchaseRequestStatuses, [
+            PurchaseRequestStatus.EXPIRED,
+          ]),
+        },
+        importTrading: {
+          activeBuyRequests,
+          activeSellOffers,
+          openNegotiations,
+          confirmedDeals,
+        },
+        payments: {
+          pending: sumOf(paymentStatuses, [
+            PaymentStatus.INITIATED,
+            PaymentStatus.PENDING,
+            PaymentStatus.AUTHORIZED,
+            PaymentStatus.SUBMITTED,
+          ]),
+          verificationRequired: sumOf(paymentStatuses, [
+            PaymentStatus.UNDER_VERIFICATION,
+          ]),
+          success: sumOf(paymentStatuses, [
+            PaymentStatus.VERIFIED,
+            PaymentStatus.PAID,
+            PaymentStatus.PARTIALLY_PAID,
+          ]),
+          failed: sumOf(paymentStatuses, [
+            PaymentStatus.FAILED,
+            PaymentStatus.REJECTED,
+            PaymentStatus.CANCELLED,
+          ]),
+          refunded: sumOf(paymentStatuses, [
+            PaymentStatus.REFUNDED,
+            PaymentStatus.PARTIALLY_REFUNDED,
+          ]),
+        },
+        logistics: {
+          readyForDispatch: sumOf(shipmentStatuses, [
+            ShipmentStatus.PLANNED,
+            ShipmentStatus.SLOT_BOOKED,
+            ShipmentStatus.READY_TO_DISPATCH,
+            ShipmentStatus.LOADING,
+          ]),
+          dispatched: sumOf(shipmentStatuses, [ShipmentStatus.DISPATCHED]),
+          inTransit: sumOf(shipmentStatuses, [
+            ShipmentStatus.IN_TRANSIT,
+            ShipmentStatus.OUT_FOR_DELIVERY,
+          ]),
+          delivered: sumOf(shipmentStatuses, [
+            ShipmentStatus.DELIVERED,
+            ShipmentStatus.DELIVERY_CONFIRMED,
+          ]),
+          delayed: sumOf(shipmentStatuses, [
+            ShipmentStatus.DELAYED,
+            ShipmentStatus.EXCEPTION,
+            ShipmentStatus.FAILED,
+          ]),
+        },
+        recentOrders: recentOrders.map((order) => ({
+          id: order.id,
+          referenceNumber: order.referenceNumber,
+          status: order.status,
+          totalAmount: order.totalAmount.toString(),
+          customer: order.customerOrg.name,
+          createdAt: order.createdAt,
+        })),
+        recentPurchaseRequests: recentPurchaseRequests,
+      },
       credit: {
         pendingApplications: pendingCreditApplications,
         approvedAccounts: approvedCreditAccounts,

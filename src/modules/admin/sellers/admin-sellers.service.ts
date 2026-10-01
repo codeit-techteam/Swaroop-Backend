@@ -169,8 +169,109 @@ export class AdminSellersService {
       },
     });
 
+    const orgId = seller.organizationId;
+    const [orders, offers, dispatches, managers, importDeals, audit] =
+      await Promise.all([
+        this.prisma.order.findMany({
+          where: { deletedAt: null, sellerOrgId: orgId },
+          orderBy: { createdAt: 'desc' },
+          take: 12,
+          select: {
+            id: true,
+            referenceNumber: true,
+            status: true,
+            totalAmount: true,
+            createdAt: true,
+          },
+        }),
+        this.prisma.offer.findMany({
+          where: { deletedAt: null, sellerProfileId: id },
+          orderBy: { createdAt: 'desc' },
+          take: 12,
+          select: {
+            id: true,
+            referenceNumber: true,
+            status: true,
+            basePrice: true,
+          },
+        }),
+        this.prisma.dispatch.findMany({
+          where: { deletedAt: null, sellerOrgId: orgId },
+          orderBy: { createdAt: 'desc' },
+          take: 12,
+          select: {
+            id: true,
+            status: true,
+            quantity: true,
+            createdAt: true,
+          },
+        }),
+        this.prisma.sellerManagerAssignment.findMany({
+          where: { sellerProfileId: id },
+          orderBy: { assignedAt: 'desc' },
+          take: 20,
+          select: {
+            id: true,
+            status: true,
+            title: true,
+            isPrimary: true,
+            assignedAt: true,
+            user: {
+              select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                status: true,
+              },
+            },
+          },
+        }),
+        this.prisma.importDeal.findMany({
+          where: { sellerOrgId: orgId },
+          orderBy: { createdAt: 'desc' },
+          take: 8,
+          select: {
+            id: true,
+            referenceNumber: true,
+            status: true,
+            createdAt: true,
+          },
+        }),
+        this.prisma.auditLog.findMany({
+          where: { entityId: id },
+          orderBy: { createdAt: 'desc' },
+          take: 12,
+          select: {
+            id: true,
+            action: true,
+            createdAt: true,
+            actor: {
+              select: { email: true, firstName: true, lastName: true },
+            },
+          },
+        }),
+      ]);
+
     return {
       ...seller,
+      related: {
+        orders: orders.map((order) => ({
+          ...order,
+          totalAmount: order.totalAmount.toString(),
+        })),
+        offers: offers.map((offer) => ({
+          ...offer,
+          basePrice: offer.basePrice.toString(),
+        })),
+        dispatches: dispatches.map((dispatch) => ({
+          ...dispatch,
+          quantity: dispatch.quantity.toString(),
+        })),
+        managers,
+        importDeals,
+        audit,
+      },
       onboardingDocuments: onboardingDocuments
         .filter((doc) => {
           const meta =

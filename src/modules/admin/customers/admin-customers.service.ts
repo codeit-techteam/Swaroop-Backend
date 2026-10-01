@@ -99,7 +99,136 @@ export class AdminCustomersService {
       include: customerInclude,
     });
     if (!customer) throw new NotFoundException('Customer not found');
-    return customer;
+
+    const orgId = customer.organizationId;
+    const [
+      addresses,
+      purchaseRequests,
+      orders,
+      payments,
+      documents,
+      importDeals,
+      audit,
+    ] = await Promise.all([
+      this.prisma.address.findMany({
+        where: { organizationId: orgId, deletedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          type: true,
+          label: true,
+          line1: true,
+          city: true,
+          state: true,
+          postalCode: true,
+          formattedAddress: true,
+          isDefault: true,
+        },
+      }),
+      this.prisma.purchaseRequest.findMany({
+        where: {
+          deletedAt: null,
+          OR: [{ customerProfileId: id }, { customerOrgId: orgId }],
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          referenceNumber: true,
+          status: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.order.findMany({
+        where: { deletedAt: null, customerOrgId: orgId },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          referenceNumber: true,
+          status: true,
+          totalAmount: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.payment.findMany({
+        where: { organizationId: orgId },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          referenceNumber: true,
+          status: true,
+          amount: true,
+          currency: true,
+          method: true,
+          utr: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.document.findMany({
+        where: {
+          deletedAt: null,
+          ownerType: EntityOwnerType.CUSTOMER,
+          ownerId: id,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          documentNumber: true,
+          fileName: true,
+          originalFileName: true,
+          category: true,
+          status: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.importDeal.findMany({
+        where: { buyerOrgId: orgId },
+        orderBy: { createdAt: 'desc' },
+        take: 8,
+        select: {
+          id: true,
+          referenceNumber: true,
+          status: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.auditLog.findMany({
+        where: { entityId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          action: true,
+          createdAt: true,
+          actor: {
+            select: { email: true, firstName: true, lastName: true },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      ...customer,
+      related: {
+        addresses,
+        purchaseRequests,
+        orders: orders.map((order) => ({
+          ...order,
+          totalAmount: order.totalAmount.toString(),
+        })),
+        payments: payments.map((payment) => ({
+          ...payment,
+          amount: payment.amount.toString(),
+        })),
+        documents,
+        importDeals,
+        audit,
+      },
+    };
   }
 
   async suspend(id: string, actorUserId: string, dto: AdminCustomerActionDto) {
