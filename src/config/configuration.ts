@@ -59,6 +59,8 @@ export type AppConfig = {
     enabled: boolean;
     /** Background expiry / near-expiry sweep cadence. */
     sweepIntervalMs: number;
+    /** IMPORT_MASTER_DATA_AUTO_SEED — insert missing reference data on startup. */
+    autoSeedMasterData: boolean;
   };
   kyc: {
     pan: KycProviderConfig;
@@ -195,6 +197,11 @@ export default (): AppConfig => {
       ),
       sweepIntervalMs: Number(
         process.env.IMPORT_EXPIRY_SWEEP_INTERVAL_MS || 60_000,
+      ),
+      autoSeedMasterData: !['false', '0', 'no', 'off'].includes(
+        (process.env.IMPORT_MASTER_DATA_AUTO_SEED ?? 'true')
+          .trim()
+          .toLowerCase(),
       ),
     },
     kyc: {

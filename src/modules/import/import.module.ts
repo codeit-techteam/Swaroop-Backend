@@ -14,6 +14,7 @@ import { ImportAuditService } from './common/import-audit.service.js';
 import { ImportFeatureGuard } from './common/import-feature.guard.js';
 import { ImportIdempotencyService } from './common/import-idempotency.service.js';
 import { ImportLifecycleService } from './common/import-lifecycle.service.js';
+import { ImportMasterDataBootstrap } from './common/import-master-data.bootstrap.js';
 import { ImportMasterService } from './common/import-master.service.js';
 import { ImportNotifierService } from './common/import-notifier.service.js';
 import { ImportReferenceService } from './common/import-reference.service.js';
@@ -78,6 +79,7 @@ import { ImportShipmentsService } from './shipments/import-shipments.service.js'
     AdminImportMasterService,
     AdminImportService,
     ImportExpiryWorker,
+    ImportMasterDataBootstrap,
     { provide: ImportExtractor, useClass: UnavailableImportExtractor },
   ],
   exports: [ImportMatchingService, ImportExtractor],
