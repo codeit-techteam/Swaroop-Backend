@@ -8,12 +8,7 @@ import {
 } from '../../../generated/prisma/client.js';
 
 export type OrderProgressStage =
-  | 'PLACED'
-  | 'PROCUREMENT'
-  | 'LOADING'
-  | 'PAYMENT'
-  | 'DISPATCH'
-  | 'DELIVERY';
+  'PLACED' | 'PROCUREMENT' | 'LOADING' | 'PAYMENT' | 'DISPATCH' | 'DELIVERY';
 
 export type OrderPresentationBucket = 'ACTIVE' | 'COMPLETED' | 'CANCELLED';
 

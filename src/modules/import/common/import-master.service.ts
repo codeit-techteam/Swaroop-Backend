@@ -7,7 +7,9 @@ import {
   ImportPriceType,
   ImportQuantityUnit,
   ImportReadyStockType,
+  ImportShipmentMode,
   ImportShipmentPermission,
+  ImportShipmentStatus,
   ImportShipmentType,
   LocationType,
   MasterStatus,
@@ -138,6 +140,7 @@ export class ImportMasterService {
       countries,
       paymentTerms,
       allowCustomGrade: settings.allowCustomGrade,
+      buyRequestValidityDays: settings.buyRequestValidityDays,
       enums: {
         quantityUnits: Object.values(ImportQuantityUnit),
         priceTypes: Object.values(ImportPriceType),
@@ -148,6 +151,8 @@ export class ImportMasterService {
         inspectionTypes: Object.values(ImportInspectionType),
         readyStockTypes: Object.values(ImportReadyStockType),
         portTypes: Object.values(PortType),
+        shipmentModes: Object.values(ImportShipmentMode),
+        shipmentStatuses: Object.values(ImportShipmentStatus),
       },
     };
   }

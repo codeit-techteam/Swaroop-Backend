@@ -129,7 +129,9 @@ function resolveTimeWindow(input: CreateSlotInput): {
   endTime: string;
 } {
   if (input.timeSlot) {
-    const match = DEFAULT_TIME_WINDOWS.find((w) => w.timeSlot === input.timeSlot);
+    const match = DEFAULT_TIME_WINDOWS.find(
+      (w) => w.timeSlot === input.timeSlot,
+    );
     if (match) {
       return {
         timeSlot: match.timeSlot,
@@ -328,7 +330,7 @@ export class VehicleSlotService {
             }
           }
 
-          let resolvedDriverId = input.driverId;
+          const resolvedDriverId = input.driverId;
           if (resolvedDriverId) {
             const driver = await this.drivers.requireDriver(
               resolvedDriverId,
@@ -528,8 +530,7 @@ export class VehicleSlotService {
           (ACTIVE_SLOT_STATUSES as readonly string[]).includes(s.status),
         )
         .map(
-          (s) =>
-            `${s.warehouseId}|${s.loadingBay ?? ''}|${s.timeSlot ?? ''}`,
+          (s) => `${s.warehouseId}|${s.loadingBay ?? ''}|${s.timeSlot ?? ''}`,
         ),
     );
 
@@ -540,9 +541,7 @@ export class VehicleSlotService {
     }
     // If seller has no warehouses yet, available is 0 (not fake capacity).
     const available =
-      warehouseIds.length === 0
-        ? 0
-        : Math.max(0, capacity - occupied.size);
+      warehouseIds.length === 0 ? 0 : Math.max(0, capacity - occupied.size);
 
     return {
       date: dateKey,
@@ -623,7 +622,9 @@ export class VehicleSlotService {
         };
       });
 
-      const anyAvailable = bayStates.some((b) => b.availability === 'AVAILABLE');
+      const anyAvailable = bayStates.some(
+        (b) => b.availability === 'AVAILABLE',
+      );
       const allBooked = bayStates.every((b) => b.availability === 'BOOKED');
       let windowAvailability: 'AVAILABLE' | 'BOOKED' | 'FULL' | 'BLOCKED' =
         'AVAILABLE';
@@ -742,9 +743,12 @@ export class VehicleSlotService {
 
     const enriched = [];
     for (const d of items) {
-      const clearance = await this.gate.checkForPurchaseOrder(d.purchaseOrderId, {
-        sellerOrgId,
-      });
+      const clearance = await this.gate.checkForPurchaseOrder(
+        d.purchaseOrderId,
+        {
+          sellerOrgId,
+        },
+      );
       if (!clearance.cleared) continue;
       enriched.push({
         id: d.id,
@@ -768,9 +772,7 @@ export class VehicleSlotService {
     const slot = await this.prisma.vehicleSlot.findFirst({
       where: {
         id,
-        ...(sellerOrgId
-          ? { dispatch: { sellerOrgId, deletedAt: null } }
-          : {}),
+        ...(sellerOrgId ? { dispatch: { sellerOrgId, deletedAt: null } } : {}),
       },
       include: SLOT_INCLUDE,
     });
@@ -845,7 +847,9 @@ export class VehicleSlotService {
     return toSellerVehicleSlot(s as SlotRow);
   }
 
-  private buildWhere(params: VehicleSlotListParams): Prisma.VehicleSlotWhereInput {
+  private buildWhere(
+    params: VehicleSlotListParams,
+  ): Prisma.VehicleSlotWhereInput {
     const and: Prisma.VehicleSlotWhereInput[] = [];
 
     if (params.sellerOrgId) {

@@ -268,16 +268,16 @@ export class ProductsService {
       ...(dto.warehouseName || warehouse.name
         ? { warehouseLabel: dto.warehouseName ?? warehouse.name }
         : {}),
-      ...(Array.isArray((dto.technicalSpecs as { applications?: unknown })?.applications)
+      ...(Array.isArray(
+        (dto.technicalSpecs as { applications?: unknown })?.applications,
+      )
         ? {}
         : dto.application
           ? { applications: [dto.application] }
           : {}),
     };
 
-    const productStatus = publish
-      ? ProductStatus.ACTIVE
-      : ProductStatus.DRAFT;
+    const productStatus = publish ? ProductStatus.ACTIVE : ProductStatus.DRAFT;
     const offerStatus = publish ? OfferStatus.ACTIVE : OfferStatus.DRAFT;
     const stock = Number(dto.availableStock ?? 0);
     const unit = dto.unit ?? 'MT';
@@ -346,7 +346,9 @@ export class ProductsService {
             basePrice: dto.sellingPrice,
             currency: CurrencyCode.INR,
             pricingBasis: 'EXW',
-            deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
+            deliveryTerms: estimateDeliveryTerms(
+              warehouse.city ?? warehouse.name,
+            ),
             status: offerStatus,
             visibility: 'MARKETPLACE',
             createdById: userId,
@@ -366,7 +368,11 @@ export class ProductsService {
           },
         });
 
-        return { productId: product.id, offerId: offer.id, inventoryId: inventory.id };
+        return {
+          productId: product.id,
+          offerId: offer.id,
+          inventoryId: inventory.id,
+        };
       });
 
       await this.audit.log({
@@ -704,13 +710,16 @@ export class ProductsService {
     return this.serialize(updated);
   }
 
-
   /**
    * Update listing commercial fields: product specs, stock, price, MOQ, tiers.
    * Keeps inventory + marketplace offer quantity/price in sync.
    * When publishToMarketplace=true, activates DRAFT product+offer for customer visibility.
    */
-  async updateListing(userId: string, id: string, dto: CreateMarketplaceListingDto) {
+  async updateListing(
+    userId: string,
+    id: string,
+    dto: CreateMarketplaceListingDto,
+  ) {
     const ctx = await this.ctx(userId);
     const existing = await this.assertOwnedProduct(ctx, id);
     if (dto.gradeId && dto.gradeId !== existing.gradeId) {
@@ -784,7 +793,11 @@ export class ProductsService {
       const inventory =
         existing.inventory?.[0] ??
         (await tx.inventory.findFirst({
-          where: { productId: id, organizationId: ctx.organizationId, deletedAt: null },
+          where: {
+            productId: id,
+            organizationId: ctx.organizationId,
+            deletedAt: null,
+          },
         }));
 
       let inventoryId = inventory?.id;
@@ -840,7 +853,8 @@ export class ProductsService {
 
       // Open-ended maxQty must stay undefined (null → 0 breaks tier matching).
       const normalizeMaxQty = (value: unknown): number | undefined => {
-        if (value === null || value === undefined || value === '') return undefined;
+        if (value === null || value === undefined || value === '')
+          return undefined;
         const n = Number(value);
         return Number.isFinite(n) && n > 0 ? n : undefined;
       };
@@ -892,7 +906,9 @@ export class ProductsService {
             moq: dto.moq,
             unit,
             basePrice: nextBase,
-            deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
+            deliveryTerms: estimateDeliveryTerms(
+              warehouse.city ?? warehouse.name,
+            ),
             visibility: 'MARKETPLACE',
             ...(publish ? { status: OfferStatus.ACTIVE } : {}),
             metadata: offerMeta as Prisma.InputJsonValue,
@@ -938,7 +954,9 @@ export class ProductsService {
             basePrice: nextBase,
             currency: CurrencyCode.INR,
             pricingBasis: 'EXW',
-            deliveryTerms: estimateDeliveryTerms(warehouse.city ?? warehouse.name),
+            deliveryTerms: estimateDeliveryTerms(
+              warehouse.city ?? warehouse.name,
+            ),
             status: publish ? OfferStatus.ACTIVE : OfferStatus.DRAFT,
             visibility: 'MARKETPLACE',
             createdById: userId,
@@ -1092,6 +1110,7 @@ export function estimateDeliveryTerms(locationHint?: string | null): string {
 
 function resolveListingGstPercent(dto: CreateMarketplaceListingDto): number {
   const raw = dto.metadata?.gstPercent;
-  const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+  const n =
+    typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
   return Number.isFinite(n) && n >= 0 ? n : 18;
 }

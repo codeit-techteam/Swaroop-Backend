@@ -507,7 +507,12 @@ export class CartService {
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.CUSTOMER,
       entityId: cart.id,
-      newData: { valid, status, issueCount: issues.length, changeCount: changes.length },
+      newData: {
+        valid,
+        status,
+        issueCount: issues.length,
+        changeCount: changes.length,
+      },
     });
 
     return {

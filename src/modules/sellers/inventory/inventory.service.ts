@@ -129,9 +129,7 @@ export class InventoryService {
       gradeName: row.product.name,
       gradeCode: row.product.code,
       category:
-        row.product.grade?.category?.name ??
-        row.product.grade?.name ??
-        'Grade',
+        row.product.grade?.category?.name ?? row.product.grade?.name ?? 'Grade',
       productStatus: row.product.status,
       warehouse: row.warehouse
         ? {
@@ -167,8 +165,7 @@ export class InventoryService {
       organizationId: ctx.organizationId,
       deletedAt: null,
     };
-    const status =
-      query.status ?? this.mapStockStatusFilter(query.stockStatus);
+    const status = query.status ?? this.mapStockStatusFilter(query.stockStatus);
     if (status) where.status = status;
     if (query.productId) where.productId = query.productId;
     if (query.warehouseId) where.warehouseId = query.warehouseId;

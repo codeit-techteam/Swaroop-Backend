@@ -14,7 +14,10 @@ import { DashboardService } from './dashboard/dashboard.service.js';
 import { CustomerDocumentsController } from './documents/documents.controller.js';
 import { CustomerDocumentsService } from './documents/documents.service.js';
 import { CustomerKycController } from './kyc/customer-kyc.controller.js';
+import { CustomerKycApprovedGuard } from './kyc/customer-kyc-approved.guard.js';
 import { CustomerKycService } from './kyc/customer-kyc.service.js';
+import { CustomerKycVerificationService } from './kyc/verification/customer-kyc-verification.service.js';
+import { KycVerificationProvider } from './kyc/verification/kyc-verification.provider.js';
 import { CustomerCreditController } from './credit/customer-credit.controller.js';
 import { CustomerCreditService } from './credit/customer-credit.service.js';
 import { BulkLogisticsQuotesController } from './bulk-logistics-quotes/bulk-logistics-quotes.controller.js';
@@ -74,6 +77,9 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     DashboardService,
     CustomerDocumentsService,
     CustomerKycService,
+    CustomerKycVerificationService,
+    KycVerificationProvider,
+    CustomerKycApprovedGuard,
     CustomerCreditService,
     BulkLogisticsQuotesService,
   ],
@@ -93,6 +99,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CustomerDocumentsService,
     CustomerCreditService,
     BulkLogisticsQuotesService,
+    CustomerKycApprovedGuard,
   ],
 })
 export class CustomersModule {}

@@ -63,11 +63,7 @@ export class SellerContextService {
   ): Promise<SellerContext> {
     const existing = await resolveSellerActor(this.prisma, userId);
     if (existing) {
-      if (existing.kind === 'MANAGER') {
-        throw new ForbiddenException(
-          'Seller Managers use their assigned seller and cannot create a seller account',
-        );
-      }
+      // Managers resolve to their assigned seller; they never create one.
       return this.toContext(userId, existing.profile);
     }
 

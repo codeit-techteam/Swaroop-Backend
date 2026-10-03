@@ -154,7 +154,8 @@ export function paymentStatusLabel(input: {
 }
 
 export function activityMessage(eventType: string, referenceNumber: string) {
-  const label = EVENT_MESSAGES[eventType] ?? eventType.replaceAll('_', ' ').toLowerCase();
+  const label =
+    EVENT_MESSAGES[eventType] ?? eventType.replaceAll('_', ' ').toLowerCase();
   return `${label} · ${referenceNumber}`;
 }
 
@@ -212,7 +213,8 @@ export function deriveProcurementAction(
     actionRequired: false,
     actionType: null,
     actionReason: null,
-    urgent: priorityUrgent || (inSellerWindow && (deadlineExpired || deadlineSoon)),
+    urgent:
+      priorityUrgent || (inSellerWindow && (deadlineExpired || deadlineSoon)),
     deadlineLabel: label,
   };
 

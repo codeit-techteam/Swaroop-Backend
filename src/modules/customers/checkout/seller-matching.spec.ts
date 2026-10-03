@@ -4,7 +4,9 @@ import { SellerMatchingService } from './seller-matching.service.js';
 
 describe('seller matching rank', () => {
   it('picks the lowest unit price that can fulfil quantity', () => {
-    const service = Object.create(SellerMatchingService.prototype) as SellerMatchingService;
+    const service = Object.create(
+      SellerMatchingService.prototype,
+    ) as SellerMatchingService;
     const cheap = {
       id: 'cheap',
       organizationId: 'seller-a',
@@ -41,7 +43,9 @@ describe('seller matching rank', () => {
   });
 
   it('skips offers that cannot fulfil inventory', () => {
-    const service = Object.create(SellerMatchingService.prototype) as SellerMatchingService;
+    const service = Object.create(
+      SellerMatchingService.prototype,
+    ) as SellerMatchingService;
     const short = {
       id: 'short',
       organizationId: 'seller-a',

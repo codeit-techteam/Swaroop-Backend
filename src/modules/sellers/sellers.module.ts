@@ -43,7 +43,12 @@ import { SellerProcurementWorkbenchController } from './procurement/seller-procu
 import { SellerProcurementWorkbenchService } from './procurement/seller-procurement-workbench.service.js';
 
 @Module({
-  imports: [AuthModule, ProcurementModule, DocumentsModule, OrganizationsModule],
+  imports: [
+    AuthModule,
+    ProcurementModule,
+    DocumentsModule,
+    OrganizationsModule,
+  ],
   controllers: [
     ProfileController,
     OnboardingController,

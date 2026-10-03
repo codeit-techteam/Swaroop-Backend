@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
   EntityOwnerType,
   ManagerAssignmentStatus,
@@ -147,6 +149,21 @@ export class AdminUsersService {
         { lastName: { contains: q, mode: 'insensitive' } },
         { displayName: { contains: q, mode: 'insensitive' } },
         { loginId: { contains: q, mode: 'insensitive' } },
+        {
+          managerAssignments: {
+            some: {
+              status: ManagerAssignmentStatus.ACTIVE,
+              sellerProfile: {
+                organization: { name: { contains: q, mode: 'insensitive' } },
+              },
+            },
+          },
+        },
+        {
+          sellerProfile: {
+            organization: { name: { contains: q, mode: 'insensitive' } },
+          },
+        },
       ];
     }
 
@@ -223,21 +240,32 @@ export class AdminUsersService {
   async updateStatus(
     id: string,
     dto: UpdateUserStatusDto,
-    actorUserId: string,
+    actor: Pick<AuthenticatedUser, 'id' | 'roles'>,
   ) {
     const user = await this.findOne(id);
+    const currentCodes = user.userRoles.map((ur) => ur.role.code);
+    assertCanManageUser(actor, id, currentCodes);
     const next = mapStatusFilter(dto.status)!;
     if (user.status === next) return user;
 
-    const updated = await this.prisma.user.update({
-      where: { id },
-      data: { status: next },
-      select: userSelect,
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id },
+        data: { status: next },
+        select: userSelect,
+      });
+      if (next !== UserStatus.ACTIVE) {
+        await tx.authSession.updateMany({
+          where: { userId: id, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+      }
+      return row;
     });
 
     await this.audit.log({
       action: 'USER_STATUS_UPDATED',
-      actorUserId,
+      actorUserId: actor.id,
       entityType: EntityOwnerType.USER,
       entityId: id,
       previousData: { status: user.status },
@@ -247,14 +275,38 @@ export class AdminUsersService {
     return updated;
   }
 
-  async updateRole(id: string, dto: UpdateUserRoleDto, actorUserId: string) {
+  async updateRole(
+    id: string,
+    dto: UpdateUserRoleDto,
+    actor: Pick<AuthenticatedUser, 'id' | 'roles'>,
+  ) {
     const user = await this.findOne(id);
+    const currentCodes = user.userRoles.map((ur) => ur.role.code);
+    assertCanManageUser(actor, id, currentCodes);
+    if (
+      PRIVILEGED_ROLES.has(dto.role) &&
+      !actor.roles.includes(RoleCode.SUPER_ADMIN)
+    ) {
+      throw new ForbiddenException({
+        code: 'INSUFFICIENT_PERMISSION',
+        message: 'Only a Super Admin can grant admin roles',
+      });
+    }
+    if (
+      dto.role === RoleCode.SELLER_MANAGER ||
+      currentCodes.includes(RoleCode.SELLER_MANAGER)
+    ) {
+      throw new BadRequestException({
+        code: 'INVALID_ROLE',
+        message:
+          'Seller Manager roles are managed from the Seller Manager actions, not the generic role editor',
+      });
+    }
     const role = await this.prisma.role.findUnique({
       where: { code: dto.role },
     });
     if (!role) throw new BadRequestException(`Role ${dto.role} not found`);
 
-    const currentCodes = user.userRoles.map((ur) => ur.role.code);
     const removingSuperAdmin =
       currentCodes.includes(RoleCode.SUPER_ADMIN) &&
       dto.role !== RoleCode.SUPER_ADMIN;
@@ -287,7 +339,7 @@ export class AdminUsersService {
 
     await this.audit.log({
       action: 'USER_ROLE_UPDATED',
-      actorUserId,
+      actorUserId: actor.id,
       entityType: EntityOwnerType.USER,
       entityId: id,
       previousData: { roles: currentCodes },
@@ -340,12 +392,40 @@ function presentListUser(user: ListedUser) {
           name: sellerName,
           gst: assignment?.sellerProfile.organization.gstin ?? null,
           pan: assignment?.sellerProfile.organization.pan ?? null,
-          status: assignment?.sellerProfile.status ?? user.sellerProfile?.status,
+          status:
+            assignment?.sellerProfile.status ?? user.sellerProfile?.status,
         }
       : null,
     assignmentStatus: assignment?.status ?? null,
     isPrimary: assignment?.isPrimary ?? false,
   };
+}
+
+const PRIVILEGED_ROLES = new Set<string>([
+  RoleCode.ADMIN,
+  RoleCode.SUPER_ADMIN,
+]);
+
+export function assertCanManageUser(
+  actor: Pick<AuthenticatedUser, 'id' | 'roles'>,
+  targetUserId: string,
+  targetRoles: string[],
+) {
+  if (actor.id === targetUserId) {
+    throw new ForbiddenException({
+      code: 'INSUFFICIENT_PERMISSION',
+      message: 'You cannot change your own role or status',
+    });
+  }
+  const targetPrivileged = targetRoles.some((code) =>
+    PRIVILEGED_ROLES.has(code),
+  );
+  if (targetPrivileged && !actor.roles.includes(RoleCode.SUPER_ADMIN)) {
+    throw new ForbiddenException({
+      code: 'INSUFFICIENT_PERMISSION',
+      message: 'Only a Super Admin can change another admin account',
+    });
+  }
 }
 
 function csvCell(value: unknown) {

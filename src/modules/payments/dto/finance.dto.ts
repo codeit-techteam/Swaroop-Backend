@@ -107,7 +107,8 @@ export class SettlementListQueryDto extends PaginationQueryDto {
   })
   @IsOptional()
   @IsIn(['createdAt', 'settlementDate', 'grossAmount', 'netAmount', 'status'])
-  sortBy?: 'createdAt' | 'settlementDate' | 'grossAmount' | 'netAmount' | 'status' =
+  sortBy?:
+    'createdAt' | 'settlementDate' | 'grossAmount' | 'netAmount' | 'status' =
     'createdAt';
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'] })

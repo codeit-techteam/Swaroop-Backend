@@ -40,6 +40,13 @@ export class AdminKycQueryDto extends PaginationQueryDto {
   status?: AdminKycStatus;
 }
 
+export class AdminKycDownloadQueryDto {
+  @ApiPropertyOptional({ enum: ['inline', 'attachment'] })
+  @IsOptional()
+  @IsIn(['inline', 'attachment'])
+  disposition?: 'inline' | 'attachment';
+}
+
 export class AdminKycApproveDto {
   @ApiPropertyOptional({ example: 'All documents match GST portal records' })
   @IsOptional()

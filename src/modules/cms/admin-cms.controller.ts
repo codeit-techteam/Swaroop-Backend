@@ -50,7 +50,8 @@ export class AdminCmsController {
 
   @Post('media-upload')
   @ApiOperation({
-    summary: 'Signed upload URL for a banner creative (requires object storage)',
+    summary:
+      'Signed upload URL for a banner creative (requires object storage)',
   })
   async mediaUpload(@Body() dto: CreateCmsMediaUploadDto) {
     return successResponse(

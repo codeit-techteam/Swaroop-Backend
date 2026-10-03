@@ -1,8 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  PaymentMethod,
-  Prisma,
-} from '../../../generated/prisma/client.js';
+import { PaymentMethod, Prisma } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import { CreditEligibilityService } from '../../payments/services/credit-eligibility.service.js';
@@ -18,7 +15,10 @@ import {
   CustomerContextService,
 } from '../common/customer-context.service.js';
 import { CheckoutException } from './checkout.errors.js';
-import type { CreateCheckoutQuoteDto, QuoteFromCartDto } from './checkout.dto.js';
+import type {
+  CreateCheckoutQuoteDto,
+  QuoteFromCartDto,
+} from './checkout.dto.js';
 import {
   buildPricingVersion,
   calculateQuoteAmounts,
@@ -128,7 +128,8 @@ export class CheckoutService {
         {
           paymentOption: PaymentMethod.ADVANCE,
           title: PAYMENT_LABELS.ADVANCE,
-          description: 'Pay against the Proforma Invoice to lock the quoted price.',
+          description:
+            'Pay against the Proforma Invoice to lock the quoted price.',
           benefitLabel:
             DEFAULT_COMMERCE_PRICING.advanceDiscountBps > 0
               ? `${(DEFAULT_COMMERCE_PRICING.advanceDiscountBps / 100).toFixed(0)}% Platform Discount Eligible`
@@ -155,16 +156,22 @@ export class CheckoutService {
         {
           paymentOption: PaymentMethod.CREDIT_15,
           title: PAYMENT_LABELS.CREDIT_15,
-          description: 'PetroTrade managed working-capital credit. Seller does not extend credit.',
-          benefitLabel: credit.eligible ? 'Approved limit available' : 'Approval required',
+          description:
+            'PetroTrade managed working-capital credit. Seller does not extend credit.',
+          benefitLabel: credit.eligible
+            ? 'Approved limit available'
+            : 'Approval required',
           eligible: credit.eligible,
           discountBps: 0,
         },
         {
           paymentOption: PaymentMethod.CREDIT_30,
           title: PAYMENT_LABELS.CREDIT_30,
-          description: 'PetroTrade managed working-capital credit. Seller does not extend credit.',
-          benefitLabel: credit.eligible ? 'Approved limit available' : 'Approval required',
+          description:
+            'PetroTrade managed working-capital credit. Seller does not extend credit.',
+          benefitLabel: credit.eligible
+            ? 'Approved limit available'
+            : 'Approval required',
           eligible: credit.eligible,
           discountBps: 0,
         },
@@ -232,8 +239,15 @@ export class CheckoutService {
     });
 
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + DEFAULT_COMMERCE_PRICING.quoteTtlMs);
-    const snapshot = this.commercialSnapshot(match, amounts, paymentMethod, pricingVersion);
+    const expiresAt = new Date(
+      now.getTime() + DEFAULT_COMMERCE_PRICING.quoteTtlMs,
+    );
+    const snapshot = this.commercialSnapshot(
+      match,
+      amounts,
+      paymentMethod,
+      pricingVersion,
+    );
 
     const created = await this.prisma.checkoutQuote.create({
       data: {
@@ -285,8 +299,7 @@ export class CheckoutService {
             offerId: item.offerId,
             productId: item.productId,
             quantity: item.quantity,
-            paymentOption:
-              dto.paymentOption ?? item.paymentMethod ?? 'ADVANCE',
+            paymentOption: dto.paymentOption ?? item.paymentMethod ?? 'ADVANCE',
             shippingAddressId: dto.shippingAddressId,
             billingAddressId: dto.billingAddressId,
           });
@@ -357,7 +370,11 @@ export class CheckoutService {
     return this.toCustomerQuote(quote, match);
   }
 
-  async assertFreshQuote(userId: string, quoteId: string, tx?: Prisma.TransactionClient) {
+  async assertFreshQuote(
+    userId: string,
+    quoteId: string,
+    tx?: Prisma.TransactionClient,
+  ) {
     const ctx = await this.ctx(userId);
     const db = tx ?? this.prisma;
     const quote = await db.checkoutQuote.findFirst({
@@ -544,7 +561,8 @@ export class CheckoutService {
             id: match.offer.grade.id,
             code: match.offer.grade.code,
             name: match.offer.grade.name,
-            displayName: match.offer.grade.displayName ?? match.offer.grade.name,
+            displayName:
+              match.offer.grade.displayName ?? match.offer.grade.name,
           }
         : null,
       offer: toBlindOffer(match.offer),

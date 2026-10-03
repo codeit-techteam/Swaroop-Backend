@@ -255,7 +255,10 @@ export class AdminProcurementService {
         where: { status: 'PENDING' },
       }),
       this.prisma.purchaseRequest.count({
-        where: { deletedAt: null, status: PurchaseRequestStatus.PENDING_APPROVAL },
+        where: {
+          deletedAt: null,
+          status: PurchaseRequestStatus.PENDING_APPROVAL,
+        },
       }),
       this.prisma.purchaseRequest.count({
         where: {
@@ -315,9 +318,9 @@ export class AdminProcurementService {
       pendingApprovals,
       pendingSellerResponses,
       activeNegotiations: negotiation,
-      openPoValue: (openPoValue._sum.totalAmount ?? new Prisma.Decimal(0)).toFixed(
-        2,
-      ),
+      openPoValue: (
+        openPoValue._sum.totalAmount ?? new Prisma.Decimal(0)
+      ).toFixed(2),
       counts: {
         all: total,
         needsAction,
@@ -677,7 +680,9 @@ export class AdminProcurementService {
       const customer = query.customer.trim();
       and.push({
         OR: [
-          { customerOrg: { name: { contains: customer, mode: 'insensitive' } } },
+          {
+            customerOrg: { name: { contains: customer, mode: 'insensitive' } },
+          },
           {
             customerOrg: {
               legalName: { contains: customer, mode: 'insensitive' },
@@ -739,18 +744,26 @@ export class AdminProcurementService {
             items: {
               some: {
                 OR: [
-                  { grade: { name: { contains: search, mode: 'insensitive' } } },
-                  { grade: { code: { contains: search, mode: 'insensitive' } } },
+                  {
+                    grade: { name: { contains: search, mode: 'insensitive' } },
+                  },
+                  {
+                    grade: { code: { contains: search, mode: 'insensitive' } },
+                  },
                   {
                     grade: {
                       displayName: { contains: search, mode: 'insensitive' },
                     },
                   },
                   {
-                    product: { name: { contains: search, mode: 'insensitive' } },
+                    product: {
+                      name: { contains: search, mode: 'insensitive' },
+                    },
                   },
                   {
-                    product: { code: { contains: search, mode: 'insensitive' } },
+                    product: {
+                      code: { contains: search, mode: 'insensitive' },
+                    },
                   },
                 ],
               },
@@ -776,7 +789,8 @@ export class AdminProcurementService {
   ): Prisma.PurchaseRequestOrderByWithRelationInput {
     const direction = query.sortOrder === 'asc' ? 'asc' : 'desc';
     if (query.sortBy === 'updatedAt') return { updatedAt: direction };
-    if (query.sortBy === 'referenceNumber') return { referenceNumber: direction };
+    if (query.sortBy === 'referenceNumber')
+      return { referenceNumber: direction };
     if (query.sortBy === 'priority') return { priority: direction };
     return { createdAt: direction };
   }
@@ -827,7 +841,8 @@ export class AdminProcurementService {
       firstItem?.grade.name ??
       firstItem?.grade.code ??
       '—';
-    const productName = firstItem?.product?.name ?? firstItem?.product?.code ?? '—';
+    const productName =
+      firstItem?.product?.name ?? firstItem?.product?.code ?? '—';
 
     return {
       id: pr.id,
@@ -883,7 +898,8 @@ export class AdminProcurementService {
               ? {
                   id: pr.sellerOrg.sellerProfile.id,
                   status: pr.sellerOrg.sellerProfile.status,
-                  kycStatus: pr.sellerOrg.sellerProfile.onboarding?.status ?? null,
+                  kycStatus:
+                    pr.sellerOrg.sellerProfile.onboarding?.status ?? null,
                   user: pr.sellerOrg.sellerProfile.user,
                 }
               : null,
@@ -973,9 +989,7 @@ export class AdminProcurementService {
   }
 }
 
-function money(
-  value: Prisma.Decimal | number | string | null | undefined,
-) {
+function money(value: Prisma.Decimal | number | string | null | undefined) {
   if (value == null || value === '') return null;
   try {
     return new Prisma.Decimal(value).toFixed(2);

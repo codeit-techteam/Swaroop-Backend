@@ -23,7 +23,8 @@ export class CreateCheckoutQuoteDto {
   productId?: string;
 
   @ApiPropertyOptional({
-    description: 'Specific marketplace offer. If omitted, backend matches the best seller offer.',
+    description:
+      'Specific marketplace offer. If omitted, backend matches the best seller offer.',
   })
   @IsOptional()
   @IsUUID()

@@ -27,12 +27,17 @@ export class CustomerNotificationsController {
   constructor(private readonly notifications: NotificationService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List in-app notifications for the authenticated customer' })
+  @ApiOperation({
+    summary: 'List in-app notifications for the authenticated customer',
+  })
   async list(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: AdminNotificationsQueryDto,
   ) {
-    const { items, meta } = await this.notifications.listForUser(user.id, query);
+    const { items, meta } = await this.notifications.listForUser(
+      user.id,
+      query,
+    );
     return successResponse(items, 'Notifications retrieved', meta);
   }
 
@@ -78,12 +83,17 @@ export class SellerNotificationsController {
   constructor(private readonly notifications: NotificationService) {}
 
   @Get()
-  @ApiOperation({ summary: 'List in-app notifications for the authenticated seller' })
+  @ApiOperation({
+    summary: 'List in-app notifications for the authenticated seller',
+  })
   async list(
     @CurrentUser() user: AuthenticatedUser,
     @Query() query: AdminNotificationsQueryDto,
   ) {
-    const { items, meta } = await this.notifications.listForUser(user.id, query);
+    const { items, meta } = await this.notifications.listForUser(
+      user.id,
+      query,
+    );
     return successResponse(items, 'Notifications retrieved', meta);
   }
 

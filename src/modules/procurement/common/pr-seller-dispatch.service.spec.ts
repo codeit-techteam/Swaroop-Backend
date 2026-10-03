@@ -94,10 +94,7 @@ describe('PrSellerDispatchService', () => {
 
     matching.matchPurchaseRequest.mockResolvedValueOnce({
       matchesCreated: 2,
-      matches: [
-        { organizationId: 'org-a' },
-        { organizationId: 'org-b' },
-      ],
+      matches: [{ organizationId: 'org-a' }, { organizationId: 'org-b' }],
       primarySellerOrgId: 'org-a',
     });
 

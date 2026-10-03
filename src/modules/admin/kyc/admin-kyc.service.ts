@@ -1,19 +1,29 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import {
   DocumentStatus,
   EntityOwnerType,
+  KycVerificationStatus,
   Prisma,
   SellerOnboardingStatus,
   SellerStatus,
   VerificationStatus,
+  type KycVerification,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { StorageService } from '../../../storage/storage.service.js';
 import { NotificationService } from '../../notifications/notification.service.js';
 import { DocumentStateService } from '../../documents/common/document-state.service.js';
+import { contentDisposition } from '../../documents/services/documents-core.service.js';
+import { lockCustomerKyc } from '../../customers/kyc/customer-kyc.lock.js';
+import {
+  latestVerifications,
+  toVerificationView,
+} from '../../customers/kyc/verification/kyc-verification.records.js';
 import {
   openChangeRequest,
   resolvedChangeRequest,
@@ -113,6 +123,8 @@ const sellerSelect = {
       gstin: true,
       pan: true,
       verificationStatus: true,
+      businessType: true,
+      constitutionType: true,
     },
   },
   onboarding: {
@@ -183,6 +195,44 @@ function iso(value: Date | string | null | undefined): string | null {
   return value instanceof Date ? value.toISOString() : value;
 }
 
+/** Signed links for audit/version views are short-lived; the UI re-requests on click. */
+const VERSION_SIGNED_URL_SECONDS = 300;
+
+/** Audit fields safe to show in the admin timeline (no storage keys, no raw identifiers). */
+const AUDIT_DETAIL_KEYS = [
+  'slot',
+  'version',
+  'identifier',
+  'type',
+  'status',
+  'failureCode',
+  'reason',
+  'kycStatus',
+  'resubmission',
+  'fileName',
+  'previousStatus',
+] as const;
+
+type AuditDetailValue = string | number | boolean | null;
+
+function auditDetails(...sources: unknown[]): Record<string, AuditDetailValue> {
+  const details: Record<string, AuditDetailValue> = {};
+  for (const source of sources) {
+    const record = readJsonObject(source);
+    for (const key of AUDIT_DETAIL_KEYS) {
+      const value = record[key];
+      if (
+        typeof value === 'string' ||
+        typeof value === 'number' ||
+        typeof value === 'boolean'
+      ) {
+        details[key] = value;
+      }
+    }
+  }
+  return details;
+}
+
 @Injectable()
 export class AdminKycService {
   constructor(
@@ -191,6 +241,7 @@ export class AdminKycService {
     private readonly notifications: NotificationService,
     private readonly documentState: DocumentStateService,
     private readonly sellers: AdminSellersService,
+    private readonly storage: StorageService,
   ) {}
 
   async list(query: AdminKycQueryDto) {
@@ -221,9 +272,10 @@ export class AdminKycService {
         select: sellerSelect,
       });
       if (!seller) throw new NotFoundException('Seller not found');
-      const [docs, banks] = await Promise.all([
+      const [docs, banks, history] = await Promise.all([
         this.kycDocuments('SELLER', [id]),
         this.bankSummaries([seller.organizationId]),
+        this.documentHistory('SELLER', id),
       ]);
       const ownDocs = docs.get(id) ?? [];
       const row = this.toSellerRow(seller, ownDocs, banks);
@@ -231,6 +283,10 @@ export class AdminKycService {
       const address = readJsonObject(onboarding?.addressData);
       return {
         ...row,
+        documentHistory: this.groupHistory(
+          SELLER_ONBOARDING_DOCUMENT_SLOTS,
+          history,
+        ),
         slots: this.slotViews(SELLER_ONBOARDING_DOCUMENT_SLOTS, ownDocs),
         blockers: this.approvalBlockers(
           SELLER_ONBOARDING_DOCUMENT_SLOTS,
@@ -259,19 +315,218 @@ export class AdminKycService {
       select: customerSelect,
     });
     if (!customer) throw new NotFoundException('Customer not found');
-    const [docs, banks] = await Promise.all([
-      this.kycDocuments('CUSTOMER', [id]),
-      this.bankSummaries([customer.organizationId]),
-    ]);
+    const [docs, banks, latest, verificationHistory, documentHistory] =
+      await Promise.all([
+        this.kycDocuments('CUSTOMER', [id]),
+        this.bankSummaries([customer.organizationId]),
+        latestVerifications(this.prisma, EntityOwnerType.CUSTOMER, id),
+        this.prisma.kycVerification.findMany({
+          where: { ownerType: EntityOwnerType.CUSTOMER, ownerId: id },
+          orderBy: { createdAt: 'desc' },
+          take: 20,
+        }),
+        this.documentHistory('CUSTOMER', id),
+      ]);
     const ownDocs = docs.get(id) ?? [];
+    const gst = latest.gst ? toVerificationView(latest.gst).details : {};
+    const org = customer.organization;
     return {
       ...this.toCustomerRow(customer, ownDocs, banks),
       slots: this.slotViews(CUSTOMER_KYC_DOCUMENT_SLOTS, ownDocs),
-      blockers: this.approvalBlockers(CUSTOMER_KYC_DOCUMENT_SLOTS, ownDocs),
+      blockers: [
+        ...this.approvalBlockers(CUSTOMER_KYC_DOCUMENT_SLOTS, ownDocs),
+        ...this.verificationBlockers(latest),
+      ],
+      warnings: this.verificationWarnings(latest),
       details: {
-        legalName: customer.organization.legalName,
-        address: null,
+        legalName: gst.legalName ?? org.legalName,
+        address: gst.address ?? null,
       },
+      customer: {
+        id: customer.id,
+        userId: customer.userId,
+        name: contactName(customer.user),
+        email: customer.user.email,
+        phone: customer.user.phone,
+        status: customer.status,
+      },
+      business: {
+        name: org.name,
+        legalName: gst.legalName ?? org.legalName,
+        tradeName: gst.tradeName ?? null,
+        businessType: org.businessType ?? gst.taxpayerType ?? null,
+        constitution: org.constitutionType ?? gst.constitution ?? null,
+        address: gst.address ?? null,
+        state: gst.state ?? null,
+        pincode: gst.pincode ?? null,
+      },
+      verifications: {
+        pan: latest.pan ? toVerificationView(latest.pan) : null,
+        gst: latest.gst ? toVerificationView(latest.gst) : null,
+        history: verificationHistory.map(toVerificationView),
+      },
+      documentHistory: this.groupHistory(
+        CUSTOMER_KYC_DOCUMENT_SLOTS,
+        documentHistory,
+      ),
+    };
+  }
+
+  /** Every confirmed version of every KYC file, superseded ones included. */
+  async auditTrail(entityType: AdminKycEntityType, id: string) {
+    const owner =
+      entityType === 'CUSTOMER'
+        ? await this.prisma.customerProfile.findFirst({
+            where: { id, deletedAt: null },
+            select: { userId: true },
+          })
+        : await this.prisma.sellerProfile.findFirst({
+            where: { id, deletedAt: null },
+            select: { userId: true },
+          });
+    if (!owner) {
+      throw new NotFoundException(
+        entityType === 'CUSTOMER' ? 'Customer not found' : 'Seller not found',
+      );
+    }
+    const ownerType =
+      entityType === 'CUSTOMER'
+        ? EntityOwnerType.CUSTOMER
+        : EntityOwnerType.SELLER;
+    const documentIds = (
+      await this.prisma.document.findMany({
+        where: {
+          ownerType,
+          ownerId: id,
+          metadata: {
+            path: ['purpose'],
+            equals:
+              entityType === 'CUSTOMER'
+                ? CUSTOMER_KYC_DOCUMENT_PURPOSE
+                : SELLER_ONBOARDING_DOCUMENT_PURPOSE,
+          },
+        },
+        select: { id: true },
+      })
+    ).map((doc) => doc.id);
+
+    const logs = await this.prisma.auditLog.findMany({
+      where: {
+        OR: [
+          { entityType: ownerType, entityId: id },
+          ...(documentIds.length
+            ? [
+                {
+                  entityType: EntityOwnerType.DOCUMENT,
+                  entityId: { in: documentIds },
+                },
+              ]
+            : []),
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: {
+        id: true,
+        action: true,
+        actorUserId: true,
+        entityType: true,
+        entityId: true,
+        metadata: true,
+        previousData: true,
+        newData: true,
+        createdAt: true,
+        actor: {
+          select: {
+            firstName: true,
+            lastName: true,
+            displayName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return logs.map((log) => {
+      const role = !log.actorUserId
+        ? 'SYSTEM'
+        : log.actorUserId === owner.userId
+          ? entityType
+          : (str(readJsonObject(log.metadata).actorRole) ?? 'ADMIN');
+      return {
+        id: log.id,
+        action: log.action,
+        entityType: log.entityType,
+        entityId: log.entityId,
+        actor: {
+          id: log.actorUserId,
+          name: log.actor
+            ? (contactName({ ...log.actor, phone: null }) ?? log.actor.email)
+            : null,
+          role,
+        },
+        details: auditDetails(log.previousData, log.metadata, log.newData),
+        createdAt: log.createdAt.toISOString(),
+      };
+    });
+  }
+
+  /** Signed URL for any KYC file version, including ones the customer has since replaced. */
+  async downloadVersion(
+    entityType: AdminKycEntityType,
+    id: string,
+    documentId: string,
+    actorUserId: string,
+    disposition: 'inline' | 'attachment',
+  ) {
+    const doc = await this.prisma.document.findFirst({
+      where: {
+        id: documentId,
+        ownerType:
+          entityType === 'CUSTOMER'
+            ? EntityOwnerType.CUSTOMER
+            : EntityOwnerType.SELLER,
+        ownerId: id,
+        metadata: {
+          path: ['purpose'],
+          equals:
+            entityType === 'CUSTOMER'
+              ? CUSTOMER_KYC_DOCUMENT_PURPOSE
+              : SELLER_ONBOARDING_DOCUMENT_PURPOSE,
+        },
+      },
+    });
+    if (!doc || readJsonObject(doc.metadata).r2Confirmed !== true) {
+      throw new NotFoundException('Document version not found');
+    }
+    if (!(await this.storage.exists(doc.storageKey))) {
+      throw new NotFoundException(
+        'The file for this document version is no longer in storage.',
+      );
+    }
+    const fileName = doc.originalFileName ?? doc.fileName;
+    const url = await this.storage.getSignedUrl({
+      key: doc.storageKey,
+      operation: 'get',
+      expiresInSeconds: VERSION_SIGNED_URL_SECONDS,
+      responseContentDisposition: contentDisposition(disposition, fileName),
+      responseContentType: doc.mimeType ?? undefined,
+    });
+    await this.audit.log({
+      action:
+        disposition === 'inline' ? 'DOCUMENT_PREVIEWED' : 'DOCUMENT_DOWNLOADED',
+      actorUserId,
+      organizationId: doc.organizationId ?? undefined,
+      entityType: EntityOwnerType.DOCUMENT,
+      entityId: doc.id,
+      metadata: { actorRole: 'ADMIN', version: doc.version },
+    });
+    return {
+      id: doc.id,
+      url,
+      fileName,
+      mimeType: doc.mimeType,
+      expiresInSeconds: VERSION_SIGNED_URL_SECONDS,
     };
   }
 
@@ -287,23 +542,51 @@ export class AdminKycService {
     }
 
     const customer = await this.requireCustomer(id);
-    const kyc = readCustomerKycState(customer.metadata);
-    if (kyc.status === 'APPROVED') {
-      throw new BadRequestException('Customer KYC is already approved');
-    }
-    const docs = (await this.kycDocuments('CUSTOMER', [id])).get(id) ?? [];
-    const blockers = this.approvalBlockers(CUSTOMER_KYC_DOCUMENT_SLOTS, docs);
+    const initial = readCustomerKycState(customer.metadata);
+    this.assertCanApprove(initial.status);
+    const [docs, verifications] = await Promise.all([
+      this.kycDocuments('CUSTOMER', [id]).then((map) => map.get(id) ?? []),
+      latestVerifications(this.prisma, EntityOwnerType.CUSTOMER, id),
+    ]);
+    const blockers = [
+      ...this.approvalBlockers(CUSTOMER_KYC_DOCUMENT_SLOTS, docs),
+      ...this.verificationBlockers(verifications),
+    ];
     if (blockers.length) {
       throw new BadRequestException(
-        `KYC cannot be approved until documents are complete: ${blockers.join(', ')}`,
+        `KYC cannot be approved yet: ${blockers.join(', ')}`,
       );
     }
     const pendingIds = this.currentDocuments(CUSTOMER_KYC_DOCUMENT_SLOTS, docs)
       .filter((doc) => PENDING_DOCUMENT_STATUSES.has(doc.status))
       .map((doc) => doc.id);
+    const manualIds = [verifications.pan, verifications.gst]
+      .filter(
+        (row): row is KycVerification =>
+          row?.status === KycVerificationStatus.MANUAL_REVIEW,
+      )
+      .map((row) => row.id);
 
     const now = new Date();
-    await this.prisma.$transaction(async (tx) => {
+    const kyc = await this.prisma.$transaction(async (tx) => {
+      const locked = await lockCustomerKyc(tx, id);
+      this.assertCanApprove(locked.kyc.status, true);
+      if (manualIds.length) {
+        // Approving with a manual-review verification is the compliance team
+        // confirming the PAN/GSTIN against the uploaded documents.
+        await tx.kycVerification.updateMany({
+          where: {
+            id: { in: manualIds },
+            status: KycVerificationStatus.MANUAL_REVIEW,
+          },
+          data: {
+            status: KycVerificationStatus.VERIFIED,
+            verifiedAt: now,
+            reviewedById: actorUserId,
+            reviewedAt: now,
+          },
+        });
+      }
       if (pendingIds.length) {
         await tx.document.updateMany({
           where: { id: { in: pendingIds } },
@@ -321,13 +604,13 @@ export class AdminKycService {
       await tx.customerProfile.update({
         where: { id },
         data: {
-          metadata: withCustomerKycState(customer.metadata, {
+          metadata: withCustomerKycState(locked.metadata, {
             status: 'APPROVED',
             reviewedAt: now.toISOString(),
             reviewedById: actorUserId,
             reviewNotes: dto.notes ?? null,
             rejectedReason: null,
-            changeRequest: resolvedChangeRequest(kyc.changeRequest, now),
+            changeRequest: resolvedChangeRequest(locked.kyc.changeRequest, now),
           }) as Prisma.InputJsonValue,
         },
       });
@@ -338,6 +621,7 @@ export class AdminKycService {
           verifiedAt: now,
         },
       });
+      return locked.kyc;
     });
 
     await this.audit.log({
@@ -347,7 +631,12 @@ export class AdminKycService {
       entityType: EntityOwnerType.CUSTOMER,
       entityId: id,
       previousData: { kycStatus: kyc.status },
-      newData: { kycStatus: 'APPROVED', verifiedDocumentIds: pendingIds },
+      newData: {
+        kycStatus: 'APPROVED',
+        verifiedDocumentIds: pendingIds,
+        manuallyVerifiedIds: manualIds,
+      },
+      metadata: { actorRole: 'ADMIN' },
     });
     await this.notifications.create({
       userId: customer.userId,
@@ -374,19 +663,27 @@ export class AdminKycService {
     }
 
     const customer = await this.requireCustomer(id);
-    const kyc = readCustomerKycState(customer.metadata);
+    if (readCustomerKycState(customer.metadata).status === 'REJECTED') {
+      throw new BadRequestException('Customer KYC is already rejected');
+    }
     const now = new Date();
-    await this.prisma.$transaction(async (tx) => {
+    const kyc = await this.prisma.$transaction(async (tx) => {
+      const locked = await lockCustomerKyc(tx, id);
+      if (locked.kyc.status === 'REJECTED') {
+        throw new ConflictException(
+          'This KYC was just rejected by another reviewer. Refresh to see the latest status.',
+        );
+      }
       await tx.customerProfile.update({
         where: { id },
         data: {
-          metadata: withCustomerKycState(customer.metadata, {
+          metadata: withCustomerKycState(locked.metadata, {
             status: 'REJECTED',
             reviewedAt: now.toISOString(),
             reviewedById: actorUserId,
             reviewNotes: dto.reason,
             rejectedReason: dto.reason,
-            changeRequest: resolvedChangeRequest(kyc.changeRequest, now),
+            changeRequest: resolvedChangeRequest(locked.kyc.changeRequest, now),
           }) as Prisma.InputJsonValue,
         },
       });
@@ -394,6 +691,7 @@ export class AdminKycService {
         where: { id: customer.organizationId },
         data: { verificationStatus: VerificationStatus.REJECTED },
       });
+      return locked.kyc;
     });
 
     await this.audit.log({
@@ -404,12 +702,13 @@ export class AdminKycService {
       entityId: id,
       previousData: { kycStatus: kyc.status },
       newData: { kycStatus: 'REJECTED', reason: dto.reason },
+      metadata: { actorRole: 'ADMIN' },
     });
     await this.notifications.create({
       userId: customer.userId,
       organizationId: customer.organizationId,
-      title: 'KYC rejected',
-      body: dto.reason,
+      title: 'KYC verification requires changes',
+      body: `${dto.reason} Update your documents and resubmit.`,
       entityType: EntityOwnerType.CUSTOMER,
       entityId: id,
       metadata: { type: 'KYC_REJECTED' },
@@ -430,8 +729,7 @@ export class AdminKycService {
     }
 
     const customer = await this.requireCustomer(id);
-    const kyc = readCustomerKycState(customer.metadata);
-    if (kyc.status === 'APPROVED') {
+    if (readCustomerKycState(customer.metadata).status === 'APPROVED') {
       throw new BadRequestException(
         'Customer KYC is already approved and cannot be sent back',
       );
@@ -466,7 +764,13 @@ export class AdminKycService {
       resolvedAt: null,
     };
 
-    await this.prisma.$transaction(async (tx) => {
+    const kyc = await this.prisma.$transaction(async (tx) => {
+      const locked = await lockCustomerKyc(tx, id);
+      if (locked.kyc.status === 'APPROVED') {
+        throw new ConflictException(
+          'This KYC was just approved by another reviewer. Refresh to see the latest status.',
+        );
+      }
       for (const doc of selected) {
         if (doc.status === DocumentStatus.REJECTED) continue;
         await tx.document.update({
@@ -485,7 +789,7 @@ export class AdminKycService {
       await tx.customerProfile.update({
         where: { id },
         data: {
-          metadata: withCustomerKycState(customer.metadata, {
+          metadata: withCustomerKycState(locked.metadata, {
             status: 'CHANGES_REQUESTED',
             reviewedAt: now.toISOString(),
             reviewedById: actorUserId,
@@ -499,6 +803,7 @@ export class AdminKycService {
         where: { id: customer.organizationId },
         data: { verificationStatus: VerificationStatus.PENDING },
       });
+      return locked.kyc;
     });
 
     await this.audit.log({
@@ -509,6 +814,7 @@ export class AdminKycService {
       entityId: id,
       previousData: { kycStatus: kyc.status },
       newData: { kycStatus: 'CHANGES_REQUESTED', reason, documentIds },
+      metadata: { actorRole: 'ADMIN' },
     });
 
     const names = selected
@@ -531,6 +837,129 @@ export class AdminKycService {
     });
 
     return this.detail(entityType, id);
+  }
+
+  /** Only a KYC the customer has submitted (and not withdrawn by a decision) can be approved. */
+  private assertCanApprove(status: CustomerKycState['status'], locked = false) {
+    if (status === 'SUBMITTED') return;
+    if (locked) {
+      throw new ConflictException(
+        status === 'APPROVED'
+          ? 'This KYC was just approved by another reviewer.'
+          : 'This KYC changed while you were reviewing it. Refresh to see the latest status.',
+      );
+    }
+    if (status === 'APPROVED') {
+      throw new BadRequestException('Customer KYC is already approved');
+    }
+    throw new BadRequestException(
+      'Only KYC submitted for review can be approved. Wait for the customer to submit or resubmit.',
+    );
+  }
+
+  private verificationBlockers(verifications: {
+    pan: KycVerification | null;
+    gst: KycVerification | null;
+  }): string[] {
+    const blockers: string[] = [];
+    for (const [label, row] of [
+      ['PAN', verifications.pan],
+      ['GST', verifications.gst],
+    ] as const) {
+      if (row?.status === KycVerificationStatus.FAILED) {
+        blockers.push(`${label} verification failed`);
+      }
+      if (row?.status === KycVerificationStatus.VERIFYING) {
+        blockers.push(`${label} verification in progress`);
+      }
+    }
+    return blockers;
+  }
+
+  /** Non-blocking notes the reviewer must acknowledge before approving. */
+  private verificationWarnings(verifications: {
+    pan: KycVerification | null;
+    gst: KycVerification | null;
+  }): string[] {
+    const warnings: string[] = [];
+    for (const [label, row, doc] of [
+      ['PAN', verifications.pan, 'PAN card'],
+      ['GSTIN', verifications.gst, 'GST certificate'],
+    ] as const) {
+      if (!row) {
+        warnings.push(
+          `${label} was not checked by the verification service (submitted before automatic verification). Check it against the ${doc}.`,
+        );
+      } else if (row.status === KycVerificationStatus.MANUAL_REVIEW) {
+        warnings.push(
+          `${label} ${row.identifierMasked} needs manual verification. Approving confirms you checked it against the ${doc}.`,
+        );
+      }
+    }
+    return warnings;
+  }
+
+  private async documentHistory(
+    entityType: AdminKycEntityType,
+    ownerId: string,
+  ) {
+    const rows = await this.prisma.document.findMany({
+      where: {
+        ownerType:
+          entityType === 'SELLER'
+            ? EntityOwnerType.SELLER
+            : EntityOwnerType.CUSTOMER,
+        ownerId,
+        metadata: {
+          path: ['purpose'],
+          equals:
+            entityType === 'SELLER'
+              ? SELLER_ONBOARDING_DOCUMENT_PURPOSE
+              : CUSTOMER_KYC_DOCUMENT_PURPOSE,
+        },
+      },
+      select: {
+        id: true,
+        version: true,
+        status: true,
+        fileName: true,
+        originalFileName: true,
+        mimeType: true,
+        fileSizeBytes: true,
+        rejectionReason: true,
+        metadata: true,
+        createdAt: true,
+        deletedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return rows.filter(
+      (row) => readJsonObject(row.metadata).r2Confirmed === true,
+    );
+  }
+
+  private groupHistory(
+    slots: readonly SlotDefinition[],
+    rows: Awaited<ReturnType<AdminKycService['documentHistory']>>,
+  ) {
+    return slots.map((def) => ({
+      slot: def.slot,
+      name: def.name,
+      versions: rows
+        .filter((row) => readJsonObject(row.metadata).slot === def.slot)
+        .map((row) => ({
+          id: row.id,
+          version: row.version,
+          status: row.status,
+          fileName: row.originalFileName ?? row.fileName,
+          mimeType: row.mimeType,
+          fileSizeBytes: row.fileSizeBytes?.toString() ?? null,
+          rejectionReason: row.rejectionReason,
+          uploadSource: str(readJsonObject(row.metadata).uploadSource),
+          uploadedAt: row.createdAt.toISOString(),
+          current: row.deletedAt === null,
+        })),
+    }));
   }
 
   private async requireCustomer(id: string) {

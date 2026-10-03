@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
@@ -16,10 +17,13 @@ import { RoleCode } from '../../../common/enums/domain.enums.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { CryptoService } from '../../auth/services/crypto.service.js';
 import {
+  MANAGER_ASSIGNABLE_SELLER_STATUSES,
   MANAGER_PRESETS,
+  ManagerErrorCode,
   SELLER_MANAGER_PERMISSIONS,
   assertAssignablePermissions,
   assertPasswordStrength,
+  isSellerAssignable,
   normalizeIndianMobile,
   splitDisplayName,
 } from '../../sellers/managers/seller-access.js';
@@ -30,8 +34,28 @@ import type {
 
 const INVITE_TTL_MS = 1000 * 60 * 60 * 24 * 3;
 
+export type ManagerActor = {
+  id: string;
+  ipAddress?: string;
+  userAgent?: string;
+  requestId?: string;
+};
+
+function fail(
+  Exception:
+    | typeof BadRequestException
+    | typeof ConflictException
+    | typeof NotFoundException,
+  code: ManagerErrorCode,
+  message: string,
+): never {
+  throw new Exception({ code, message });
+}
+
 @Injectable()
 export class AdminManagerService implements OnModuleInit {
+  private readonly logger = new Logger(AdminManagerService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
@@ -52,52 +76,56 @@ export class AdminManagerService implements OnModuleInit {
 
   catalog() {
     return {
+      role: RoleCode.SELLER_MANAGER,
       permissions: SELLER_MANAGER_PERMISSIONS,
       presets: Object.entries(MANAGER_PRESETS).map(([id, preset]) => ({
         id,
         label: preset.label,
         permissions: preset.permissions,
       })),
+      defaultPreset: 'OPERATIONS',
+      assignableSellerStatuses: MANAGER_ASSIGNABLE_SELLER_STATUSES,
+      invitationTtlHours: INVITE_TTL_MS / 3_600_000,
     };
   }
 
-  async create(dto: CreateSellerManagerDto, actorUserId: string) {
+  async create(dto: CreateSellerManagerDto, actor: ManagerActor) {
     if (dto.role !== RoleCode.SELLER_MANAGER) {
-      throw new BadRequestException(
+      fail(
+        BadRequestException,
+        ManagerErrorCode.INVALID_ROLE,
         'This endpoint only creates Seller Manager accounts',
       );
     }
     const email = dto.email.trim().toLowerCase();
     const phone = this.phone(dto.phone);
     const name = splitDisplayName(dto.name);
-    let permissions: string[];
-    try {
-      permissions = assertAssignablePermissions(dto.permissions);
-    } catch (error) {
-      throw new BadRequestException(
-        error instanceof Error ? error.message : 'Invalid permissions',
-      );
+    if (name.displayName.length < 2) {
+      throw new BadRequestException('Full name is required');
     }
+    const permissions = this.permissions(dto.permissions);
 
-    const seller = await this.prisma.sellerProfile.findFirst({
-      where: { id: dto.sellerId, deletedAt: null },
-      include: { organization: true },
-    });
-    if (!seller) throw new NotFoundException('Seller not found');
+    const seller = await this.requireAssignableSeller(
+      this.prisma,
+      dto.sellerId,
+    );
 
     const duplicate = await this.prisma.user.findFirst({
-      where: {
-        deletedAt: null,
-        OR: [{ email }, { phone }],
-      },
+      where: { OR: [{ email }, { phone }] },
       select: { email: true, phone: true },
     });
     if (duplicate?.email === email) {
-      throw new ConflictException('An account with this email already exists.');
+      fail(
+        ConflictException,
+        ManagerErrorCode.EMAIL_ALREADY_EXISTS,
+        'This email is already registered.',
+      );
     }
     if (duplicate?.phone === phone) {
-      throw new ConflictException(
-        'An account with this mobile number already exists.',
+      fail(
+        ConflictException,
+        ManagerErrorCode.MOBILE_ALREADY_EXISTS,
+        'This mobile number is already registered.',
       );
     }
 
@@ -105,12 +133,18 @@ export class AdminManagerService implements OnModuleInit {
     let passwordHash: string | null = null;
     if (accessMethod === 'TEMPORARY_PASSWORD') {
       if (!dto.temporaryPassword) {
-        throw new BadRequestException('Temporary password is required');
+        fail(
+          BadRequestException,
+          ManagerErrorCode.WEAK_PASSWORD,
+          'Temporary password is required',
+        );
       }
       try {
         assertPasswordStrength(dto.temporaryPassword);
       } catch (error) {
-        throw new BadRequestException(
+        fail(
+          BadRequestException,
+          ManagerErrorCode.WEAK_PASSWORD,
           error instanceof Error ? error.message : 'Weak password',
         );
       }
@@ -124,21 +158,26 @@ export class AdminManagerService implements OnModuleInit {
       throw new BadRequestException('SELLER_MANAGER role is not configured');
     }
 
-    const activePrimary = await this.prisma.sellerManagerAssignment.findFirst({
-      where: {
-        sellerProfileId: seller.id,
-        status: ManagerAssignmentStatus.ACTIVE,
-        isPrimary: true,
-      },
-      select: { id: true },
-    });
-    const isPrimary = dto.isPrimary ?? !activePrimary;
     const rawToken =
-      accessMethod === 'INVITATION' ? this.crypto.generateSecureToken(32) : null;
+      accessMethod === 'INVITATION'
+        ? this.crypto.generateSecureToken(32)
+        : null;
     const tokenHash = rawToken ? this.crypto.hashToken(rawToken) : null;
+    const inviteExpiresAt = new Date(Date.now() + INVITE_TTL_MS);
 
+    let created: { id: string; loginId: string | null; status: UserStatus };
+    let isPrimary: boolean;
     try {
-      const created = await this.prisma.$transaction(async (tx) => {
+      ({ created, isPrimary } = await this.prisma.$transaction(async (tx) => {
+        const activePrimary = await tx.sellerManagerAssignment.findFirst({
+          where: {
+            sellerProfileId: seller.id,
+            status: ManagerAssignmentStatus.ACTIVE,
+            isPrimary: true,
+          },
+          select: { id: true },
+        });
+        const primary = dto.isPrimary ?? !activePrimary;
         const loginId = await this.nextLoginId(tx);
         const user = await tx.user.create({
           data: {
@@ -157,11 +196,12 @@ export class AdminManagerService implements OnModuleInit {
             emailVerified: false,
             phoneVerified: false,
           },
+          select: { id: true, loginId: true, status: true },
         });
         await tx.userRole.create({
           data: { userId: user.id, roleId: role.id },
         });
-        if (isPrimary) {
+        if (primary) {
           await tx.sellerManagerAssignment.updateMany({
             where: {
               sellerProfileId: seller.id,
@@ -175,10 +215,10 @@ export class AdminManagerService implements OnModuleInit {
           data: {
             userId: user.id,
             sellerProfileId: seller.id,
-            isPrimary,
+            isPrimary: primary,
             status: ManagerAssignmentStatus.ACTIVE,
             title: dto.title?.trim() || null,
-            assignedById: actorUserId,
+            assignedById: actor.id,
             assignedAt: new Date(),
           },
         });
@@ -197,85 +237,93 @@ export class AdminManagerService implements OnModuleInit {
               userId: user.id,
               tokenHash,
               purpose: 'INVITATION',
-              expiresAt: new Date(Date.now() + INVITE_TTL_MS),
+              expiresAt: inviteExpiresAt,
             },
           });
         }
         await tx.auditLog.create({
           data: {
-            action: 'MANAGER_CREATED',
-            actorUserId,
-            organizationId: seller.organizationId,
-            entityType: EntityOwnerType.USER,
-            entityId: user.id,
+            ...this.auditBase(actor, seller.organizationId, user.id),
+            action: 'SELLER_MANAGER_CREATED',
             newData: {
               loginId,
               email,
+              role: RoleCode.SELLER_MANAGER,
               sellerId: seller.id,
+              sellerName: seller.organization.name,
               permissions,
               accessMethod,
-              isPrimary,
+              isPrimary: primary,
             },
           },
         });
         await tx.auditLog.create({
           data: {
+            ...this.auditBase(actor, seller.organizationId, user.id),
             action: 'MANAGER_ASSIGNED_TO_SELLER',
-            actorUserId,
-            organizationId: seller.organizationId,
-            entityType: EntityOwnerType.USER,
-            entityId: user.id,
-            metadata: { sellerId: seller.id, isPrimary },
+            newData: { sellerId: seller.id, isPrimary: primary },
           },
         });
-        return user;
-      });
-
-      return {
-        id: created.id,
-        name: name.displayName,
-        email,
-        phone,
-        loginId: created.loginId,
-        role: RoleCode.SELLER_MANAGER,
-        status: created.status,
-        seller: {
-          id: seller.id,
-          name: seller.organization.name,
-          gst: seller.organization.gstin,
-          pan: seller.organization.pan,
-          status: seller.status,
-        },
-        permissions,
-        isPrimary,
-        accessMethod,
-        invitation:
-          rawToken == null
-            ? null
-            : {
-                token: rawToken,
-                expiresAt: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
-                email,
-                message:
-                  'Share this one-time setup link securely. Email delivery is not configured, and the token will not be shown again.',
-              },
-        temporaryPassword:
-          accessMethod === 'TEMPORARY_PASSWORD' ? dto.temporaryPassword : undefined,
-      };
+        if (tokenHash) {
+          await tx.auditLog.create({
+            data: {
+              ...this.auditBase(actor, seller.organizationId, user.id),
+              action: 'MANAGER_INVITATION_CREATED',
+              newData: { expiresAt: inviteExpiresAt.toISOString() },
+            },
+          });
+        }
+        return { created: user, isPrimary: primary };
+      }));
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new ConflictException(
-          'An account with this email, mobile number, or login ID already exists.',
-        );
-      }
+      this.rethrowUniqueViolation(error);
       throw error;
     }
+
+    this.logger.log({
+      event: 'seller_manager.created',
+      managerId: created.id,
+      sellerId: seller.id,
+      actorUserId: actor.id,
+      requestId: actor.requestId,
+      accessMethod,
+      permissionCount: permissions.length,
+    });
+
+    return {
+      id: created.id,
+      name: name.displayName,
+      email,
+      phone,
+      loginId: created.loginId,
+      role: RoleCode.SELLER_MANAGER,
+      status: created.status,
+      seller: {
+        id: seller.id,
+        code: seller.organization.code,
+        name: seller.organization.name,
+        gst: seller.organization.gstin,
+        pan: seller.organization.pan,
+        status: seller.status,
+      },
+      permissions,
+      isPrimary,
+      accessMethod,
+      invitation:
+        rawToken == null
+          ? null
+          : {
+              token: rawToken,
+              expiresAt: inviteExpiresAt.toISOString(),
+              email,
+              delivery: 'MANUAL' as const,
+              message:
+                'Email delivery is not configured. Share this one-time setup link with the manager securely. It will not be shown again.',
+            },
+    };
   }
 
-  async update(id: string, dto: UpdateManagerDto, actorUserId: string) {
+  async update(id: string, dto: UpdateManagerDto, actor: ManagerActor) {
     const user = await this.requireManager(id);
     const data: Prisma.UserUpdateInput = {};
     if (dto.name) {
@@ -284,114 +332,160 @@ export class AdminManagerService implements OnModuleInit {
       data.firstName = name.firstName;
       data.lastName = name.lastName;
     }
-    if (dto.phone) data.phone = this.phone(dto.phone);
-
-    let permissions: string[] | undefined;
-    if (dto.permissions) {
-      try {
-        permissions = assertAssignablePermissions(dto.permissions);
-      } catch (error) {
-        throw new BadRequestException(
-          error instanceof Error ? error.message : 'Invalid permissions',
-        );
+    if (dto.phone) {
+      const phone = this.phone(dto.phone);
+      if (phone !== user.phone) {
+        const taken = await this.prisma.user.findFirst({
+          where: { phone, id: { not: id } },
+          select: { id: true },
+        });
+        if (taken) {
+          fail(
+            ConflictException,
+            ManagerErrorCode.MOBILE_ALREADY_EXISTS,
+            'This mobile number is already registered.',
+          );
+        }
+        data.phone = phone;
       }
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      if (Object.keys(data).length) {
-        await tx.user.update({ where: { id }, data });
-      }
-      if (permissions) {
-        await tx.userPermissionGrant.deleteMany({ where: { userId: id } });
-        if (permissions.length) {
-          await tx.userPermissionGrant.createMany({
-            data: permissions.map((code) => ({
-              id: randomUUID(),
-              userId: id,
-              code,
-            })),
-          });
-        }
-      }
-      if (dto.sellerId && dto.sellerId !== user.assignment?.sellerProfileId) {
-        const seller = await tx.sellerProfile.findFirst({
-          where: { id: dto.sellerId, deletedAt: null },
-        });
-        if (!seller) throw new NotFoundException('Seller not found');
-        if (user.assignment) {
-          await tx.sellerManagerAssignment.update({
-            where: { id: user.assignment.id },
+    const permissions = dto.permissions
+      ? this.permissions(dto.permissions)
+      : undefined;
+    const previousPermissions = user.permissionGrants.map((row) => row.code);
+    const reassigning =
+      Boolean(dto.sellerId) &&
+      (dto.sellerId !== user.assignment?.sellerProfileId ||
+        user.assignment?.status !== ManagerAssignmentStatus.ACTIVE);
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        if (Object.keys(data).length) {
+          await tx.user.update({ where: { id }, data });
+          await tx.auditLog.create({
             data: {
-              status: ManagerAssignmentStatus.INACTIVE,
-              isPrimary: false,
-              deactivatedAt: new Date(),
+              ...this.auditBase(actor, null, id),
+              action: 'MANAGER_UPDATED',
+              newData: {
+                name: dto.name,
+                phone: data.phone ? '[updated]' : undefined,
+              },
             },
           });
         }
-        const primaryExists = await tx.sellerManagerAssignment.findFirst({
-          where: {
-            sellerProfileId: seller.id,
-            status: ManagerAssignmentStatus.ACTIVE,
-            isPrimary: true,
-          },
-        });
-        await tx.sellerManagerAssignment.create({
-          data: {
-            userId: id,
-            sellerProfileId: seller.id,
-            isPrimary: dto.isPrimary ?? !primaryExists,
-            status: ManagerAssignmentStatus.ACTIVE,
-            assignedById: actorUserId,
-            assignedAt: new Date(),
-            title: dto.title,
-          },
-        });
-        await tx.authSession.updateMany({
-          where: { userId: id, revokedAt: null },
-          data: { revokedAt: new Date() },
-        });
-      } else if (dto.isPrimary === true && user.assignment) {
-        await this.setPrimaryTx(tx, id, user.assignment.sellerProfileId);
-      }
-      await tx.auditLog.create({
-        data: {
-          action: permissions
-            ? 'MANAGER_PERMISSION_UPDATED'
-            : dto.sellerId
-              ? 'MANAGER_ASSIGNED_TO_SELLER'
-              : 'MANAGER_UPDATED',
-          actorUserId,
-          entityType: EntityOwnerType.USER,
-          entityId: id,
-          newData: {
-            name: dto.name,
-            phone: dto.phone ? '[updated]' : undefined,
-            sellerId: dto.sellerId,
-            permissions,
-          },
-        },
+        if (permissions) {
+          await tx.userPermissionGrant.deleteMany({ where: { userId: id } });
+          if (permissions.length) {
+            await tx.userPermissionGrant.createMany({
+              data: permissions.map((code) => ({
+                id: randomUUID(),
+                userId: id,
+                code,
+              })),
+            });
+          }
+          await tx.auditLog.create({
+            data: {
+              ...this.auditBase(actor, null, id),
+              action: 'MANAGER_PERMISSION_UPDATED',
+              previousData: { permissions: previousPermissions },
+              newData: { permissions },
+            },
+          });
+        }
+        if (reassigning && dto.sellerId) {
+          const seller = await this.requireAssignableSeller(tx, dto.sellerId);
+          if (user.assignment?.status === ManagerAssignmentStatus.ACTIVE) {
+            await tx.sellerManagerAssignment.update({
+              where: { id: user.assignment.id },
+              data: {
+                status: ManagerAssignmentStatus.INACTIVE,
+                isPrimary: false,
+                deactivatedAt: new Date(),
+              },
+            });
+          }
+          const primaryExists = await tx.sellerManagerAssignment.findFirst({
+            where: {
+              sellerProfileId: seller.id,
+              status: ManagerAssignmentStatus.ACTIVE,
+              isPrimary: true,
+            },
+          });
+          await tx.sellerManagerAssignment.create({
+            data: {
+              userId: id,
+              sellerProfileId: seller.id,
+              isPrimary: dto.isPrimary ?? !primaryExists,
+              status: ManagerAssignmentStatus.ACTIVE,
+              assignedById: actor.id,
+              assignedAt: new Date(),
+              title: dto.title ?? user.assignment?.title ?? null,
+            },
+          });
+          // Old seller access ends now: every session must sign in again.
+          await tx.authSession.updateMany({
+            where: { userId: id, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+          await tx.auditLog.create({
+            data: {
+              ...this.auditBase(actor, seller.organizationId, id),
+              action: 'MANAGER_ASSIGNED_TO_SELLER',
+              previousData: {
+                sellerId: user.assignment?.sellerProfileId ?? null,
+              },
+              newData: { sellerId: seller.id },
+            },
+          });
+        } else if (dto.isPrimary === true && user.assignment) {
+          await this.setPrimaryTx(tx, id, user.assignment.sellerProfileId);
+        }
+        if (dto.title !== undefined && !reassigning && user.assignment) {
+          await tx.sellerManagerAssignment.update({
+            where: { id: user.assignment.id },
+            data: { title: dto.title.trim() || null },
+          });
+        }
       });
+    } catch (error) {
+      this.rethrowUniqueViolation(error);
+      throw error;
+    }
+
+    this.logger.log({
+      event: 'seller_manager.updated',
+      managerId: id,
+      actorUserId: actor.id,
+      requestId: actor.requestId,
+      permissionsChanged: Boolean(permissions),
+      reassigned: reassigning,
     });
 
     return this.detail(id);
   }
 
-  async setPrimary(id: string, actorUserId: string) {
+  async setPrimary(id: string, actor: ManagerActor) {
     const user = await this.requireManager(id);
     if (!user.assignment || user.assignment.status !== 'ACTIVE') {
-      throw new BadRequestException('Manager has no active seller assignment');
+      fail(
+        BadRequestException,
+        ManagerErrorCode.INVALID_STATE,
+        'Manager has no active seller assignment',
+      );
     }
+    const sellerProfileId = user.assignment.sellerProfileId;
     await this.prisma.$transaction(async (tx) => {
-      await this.setPrimaryTx(tx, id, user.assignment!.sellerProfileId);
+      await this.setPrimaryTx(tx, id, sellerProfileId);
       await tx.auditLog.create({
         data: {
+          ...this.auditBase(actor, null, id),
           action: 'MANAGER_UPDATED',
-          actorUserId,
-          entityType: EntityOwnerType.USER,
-          entityId: id,
           metadata: {
             isPrimary: true,
-            sellerId: user.assignment!.sellerProfileId,
+            sellerId: sellerProfileId,
+            requestId: actor.requestId,
           },
         },
       });
@@ -399,54 +493,70 @@ export class AdminManagerService implements OnModuleInit {
     return this.detail(id);
   }
 
-  async activate(id: string, actorUserId: string) {
+  async activate(id: string, actor: ManagerActor) {
     const user = await this.requireManager(id);
     if (!user.passwordHash) {
-      throw new BadRequestException(
+      fail(
+        BadRequestException,
+        ManagerErrorCode.INVALID_STATE,
         'Manager must set a password from the invitation before the account can be activated',
       );
     }
-    if (user.assignment?.status === 'REVOKED') {
-      throw new BadRequestException(
+    if (!user.assignment || user.assignment.status === 'REVOKED') {
+      fail(
+        BadRequestException,
+        ManagerErrorCode.INVALID_STATE,
         'Access was revoked. Assign the seller again before activating.',
       );
     }
+    const assignment = user.assignment;
     await this.prisma.$transaction(async (tx) => {
-      await tx.user.update({
-        where: { id },
-        data: { status: UserStatus.ACTIVE },
-      });
-      if (user.assignment && user.assignment.status !== 'ACTIVE') {
+      if (assignment.status !== 'ACTIVE') {
+        await this.requireAssignableSeller(tx, assignment.sellerProfileId);
         await tx.sellerManagerAssignment.update({
-          where: { id: user.assignment.id },
+          where: { id: assignment.id },
           data: {
             status: ManagerAssignmentStatus.ACTIVE,
             deactivatedAt: null,
           },
         });
       }
+      await tx.user.update({
+        where: { id },
+        data: { status: UserStatus.ACTIVE },
+      });
       await tx.auditLog.create({
         data: {
+          ...this.auditBase(actor, null, id),
           action: 'MANAGER_ACTIVATED',
-          actorUserId,
-          entityType: EntityOwnerType.USER,
-          entityId: id,
+          previousData: { status: user.status },
         },
       });
+    });
+    this.logger.log({
+      event: 'seller_manager.activated',
+      managerId: id,
+      actorUserId: actor.id,
+      requestId: actor.requestId,
     });
     return this.detail(id);
   }
 
-  async deactivate(id: string, actorUserId: string) {
-    return this.closeAccess(id, actorUserId, 'deactivate');
+  async deactivate(id: string, actor: ManagerActor) {
+    return this.closeAccess(id, actor, 'deactivate');
   }
 
-  async revoke(id: string, actorUserId: string) {
-    return this.closeAccess(id, actorUserId, 'revoke');
+  async revoke(id: string, actor: ManagerActor) {
+    return this.closeAccess(id, actor, 'revoke');
   }
 
-  async resetPassword(id: string, actorUserId: string) {
-    await this.requireManager(id);
+  /**
+   * Issues a one-time link. Managers who never set a password get a new
+   * invitation; others get a password reset. Either way old links stop working.
+   */
+  async resetPassword(id: string, actor: ManagerActor) {
+    const user = await this.requireManager(id);
+    const purpose = user.passwordHash ? 'PASSWORD_RESET' : 'INVITATION';
     const rawToken = this.crypto.generateSecureToken(32);
     const tokenHash = this.crypto.hashToken(rawToken);
     const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
@@ -456,12 +566,7 @@ export class AdminManagerService implements OnModuleInit {
         data: { usedAt: new Date() },
       });
       await tx.passwordResetToken.create({
-        data: {
-          userId: id,
-          tokenHash,
-          purpose: 'PASSWORD_RESET',
-          expiresAt,
-        },
+        data: { userId: id, tokenHash, purpose, expiresAt },
       });
       await tx.authSession.updateMany({
         where: { userId: id, revokedAt: null },
@@ -469,16 +574,31 @@ export class AdminManagerService implements OnModuleInit {
       });
       await tx.auditLog.create({
         data: {
-          action: 'MANAGER_PASSWORD_RESET_REQUESTED',
-          actorUserId,
-          entityType: EntityOwnerType.USER,
-          entityId: id,
+          ...this.auditBase(actor, null, id),
+          action:
+            purpose === 'INVITATION'
+              ? 'MANAGER_INVITATION_RESENT'
+              : 'MANAGER_PASSWORD_RESET_REQUESTED',
+          newData: { expiresAt: expiresAt.toISOString() },
         },
       });
     });
+    this.logger.log({
+      event:
+        purpose === 'INVITATION'
+          ? 'seller_manager.invitation_resent'
+          : 'seller_manager.password_reset_requested',
+      managerId: id,
+      actorUserId: actor.id,
+      requestId: actor.requestId,
+    });
     return {
+      purpose,
+      delivery: 'MANUAL' as const,
       message:
-        'Password reset link created. Existing sessions were signed out. The token is shown once.',
+        purpose === 'INVITATION'
+          ? 'New invitation link created. Earlier links no longer work. Share it securely; it is shown once.'
+          : 'Password reset link created. Existing sessions were signed out. Share it securely; it is shown once.',
       token: rawToken,
       expiresAt: expiresAt.toISOString(),
     };
@@ -490,7 +610,7 @@ export class AdminManagerService implements OnModuleInit {
       include: managerInclude,
     });
     if (!user) throw new NotFoundException('User not found');
-    const [loginCount, activity] = await Promise.all([
+    const [loginCount, activity, pendingLink] = await Promise.all([
       this.prisma.authSession.count({ where: { userId: id } }),
       this.prisma.auditLog.findMany({
         where: {
@@ -508,15 +628,21 @@ export class AdminManagerService implements OnModuleInit {
           actorUserId: true,
           metadata: true,
           newData: true,
+          actor: { select: { displayName: true, email: true } },
         },
       }),
+      this.prisma.passwordResetToken.findFirst({
+        where: { userId: id, usedAt: null, expiresAt: { gt: new Date() } },
+        orderBy: { createdAt: 'desc' },
+        select: { purpose: true, expiresAt: true, createdAt: true },
+      }),
     ]);
-    return presentManager(user, { loginCount, activity });
+    return presentManager(user, { loginCount, activity, pendingLink });
   }
 
   private async closeAccess(
     id: string,
-    actorUserId: string,
+    actor: ManagerActor,
     mode: 'deactivate' | 'revoke',
   ) {
     const user = await this.requireManager(id);
@@ -528,7 +654,7 @@ export class AdminManagerService implements OnModuleInit {
             mode === 'revoke' ? UserStatus.SUSPENDED : UserStatus.INACTIVE,
         },
       });
-      if (user.assignment) {
+      if (user.assignment && user.assignment.status === 'ACTIVE') {
         await tx.sellerManagerAssignment.update({
           where: { id: user.assignment.id },
           data: {
@@ -545,17 +671,120 @@ export class AdminManagerService implements OnModuleInit {
         where: { userId: id, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      // An unused invitation must not let a closed account back in.
+      await tx.passwordResetToken.updateMany({
+        where: { userId: id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
       await tx.auditLog.create({
         data: {
+          ...this.auditBase(actor, null, id),
           action: mode === 'revoke' ? 'MANAGER_REVOKED' : 'MANAGER_DEACTIVATED',
-          actorUserId,
-          entityType: EntityOwnerType.USER,
-          entityId: id,
-          metadata: { sellerId: user.assignment?.sellerProfileId ?? null },
+          previousData: { status: user.status },
+          metadata: {
+            sellerId: user.assignment?.sellerProfileId ?? null,
+            requestId: actor.requestId,
+          },
         },
       });
     });
+    this.logger.log({
+      event:
+        mode === 'revoke'
+          ? 'seller_manager.revoked'
+          : 'seller_manager.deactivated',
+      managerId: id,
+      actorUserId: actor.id,
+      requestId: actor.requestId,
+    });
     return this.detail(id);
+  }
+
+  private async requireAssignableSeller(
+    client: Pick<PrismaService, 'sellerProfile'> | Prisma.TransactionClient,
+    sellerId: string,
+  ) {
+    const seller = await client.sellerProfile.findFirst({
+      where: { id: sellerId, deletedAt: null },
+      include: { organization: true },
+    });
+    if (!seller || seller.organization.deletedAt) {
+      fail(
+        NotFoundException,
+        ManagerErrorCode.SELLER_NOT_FOUND,
+        'Seller not found',
+      );
+    }
+    if (!isSellerAssignable(seller.status)) {
+      fail(
+        BadRequestException,
+        ManagerErrorCode.SELLER_NOT_ACTIVE,
+        `Seller ${seller.organization.name} is ${seller.status.toLowerCase().replace(/_/g, ' ')}. Only approved sellers can be assigned a manager.`,
+      );
+    }
+    return seller;
+  }
+
+  private permissions(codes: string[]) {
+    try {
+      return assertAssignablePermissions(codes);
+    } catch (error) {
+      fail(
+        BadRequestException,
+        ManagerErrorCode.INVALID_PERMISSIONS,
+        error instanceof Error ? error.message : 'Invalid permissions',
+      );
+    }
+  }
+
+  private auditBase(
+    actor: ManagerActor,
+    organizationId: string | null,
+    entityId: string,
+  ) {
+    return {
+      actorUserId: actor.id,
+      organizationId,
+      entityType: EntityOwnerType.USER,
+      entityId,
+      ipAddress: actor.ipAddress ?? null,
+      userAgent: actor.userAgent ?? null,
+      metadata: actor.requestId ? { requestId: actor.requestId } : undefined,
+    };
+  }
+
+  private rethrowUniqueViolation(error: unknown) {
+    if (
+      !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+      error.code !== 'P2002'
+    ) {
+      return;
+    }
+    const target = JSON.stringify(error.meta ?? {});
+    if (target.includes('email')) {
+      fail(
+        ConflictException,
+        ManagerErrorCode.EMAIL_ALREADY_EXISTS,
+        'This email is already registered.',
+      );
+    }
+    if (target.includes('phone')) {
+      fail(
+        ConflictException,
+        ManagerErrorCode.MOBILE_ALREADY_EXISTS,
+        'This mobile number is already registered.',
+      );
+    }
+    if (target.includes('seller_manager_one_active')) {
+      fail(
+        ConflictException,
+        ManagerErrorCode.MANAGER_ALREADY_ASSIGNED,
+        'This manager already has an active seller assignment.',
+      );
+    }
+    throw new ConflictException(
+      'An account with this email, mobile number, or login ID already exists.',
+    );
   }
 
   private async setPrimaryTx(
@@ -587,42 +816,32 @@ export class AdminManagerService implements OnModuleInit {
       where: { id, deletedAt: null },
       include: {
         userRoles: { include: { role: true } },
+        permissionGrants: { select: { code: true } },
         managerAssignments: {
-          where: {
-            status: {
-              in: [
-                ManagerAssignmentStatus.ACTIVE,
-                ManagerAssignmentStatus.INACTIVE,
-                ManagerAssignmentStatus.REVOKED,
-              ],
-            },
-          },
           orderBy: { assignedAt: 'desc' },
           take: 1,
         },
       },
     });
     if (!user) throw new NotFoundException('User not found');
-    const full = await this.prisma.user.findFirst({
-      where: { id },
-      select: { passwordHash: true },
-    });
     const roles = user.userRoles.map((row) => row.role.code);
     if (!roles.includes(RoleCode.SELLER_MANAGER)) {
-      throw new BadRequestException('User is not a Seller Manager');
+      fail(
+        BadRequestException,
+        ManagerErrorCode.NOT_A_MANAGER,
+        'User is not a Seller Manager',
+      );
     }
-    return {
-      ...user,
-      passwordHash: full?.passwordHash ?? null,
-      assignment: user.managerAssignments[0] ?? null,
-    };
+    return { ...user, assignment: user.managerAssignments[0] ?? null };
   }
 
   private phone(input: string) {
     try {
       return normalizeIndianMobile(input);
     } catch (error) {
-      throw new BadRequestException(
+      fail(
+        BadRequestException,
+        ManagerErrorCode.INVALID_MOBILE,
         error instanceof Error ? error.message : 'Invalid mobile number',
       );
     }
@@ -646,6 +865,9 @@ const managerInclude = {
   managerAssignments: {
     orderBy: { assignedAt: 'desc' as const },
     include: {
+      assignedBy: {
+        select: { id: true, displayName: true, email: true },
+      },
       sellerProfile: {
         select: {
           id: true,
@@ -653,6 +875,7 @@ const managerInclude = {
           organization: {
             select: {
               id: true,
+              code: true,
               name: true,
               legalName: true,
               gstin: true,
@@ -679,7 +902,13 @@ export function presentManager(
       actorUserId: string | null;
       metadata: Prisma.JsonValue;
       newData: Prisma.JsonValue;
+      actor?: { displayName: string | null; email: string | null } | null;
     }>;
+    pendingLink?: {
+      purpose: string;
+      expiresAt: Date;
+      createdAt: Date;
+    } | null;
   },
 ) {
   const assignment =
@@ -687,6 +916,9 @@ export function presentManager(
     user.managerAssignments[0] ??
     null;
   const seller = assignment?.sellerProfile;
+  const firstAssignment =
+    user.managerAssignments[user.managerAssignments.length - 1] ?? null;
+  const createdBy = firstAssignment?.assignedBy ?? null;
   return {
     id: user.id,
     name:
@@ -704,12 +936,20 @@ export function presentManager(
     roles: user.userRoles.map((row) => row.role.code),
     status: user.status,
     mustChangePassword: user.mustChangePassword,
+    hasPassword: Boolean(user.passwordHash),
     lastLoginAt: user.lastLoginAt,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
+    createdBy: createdBy
+      ? {
+          id: createdBy.id,
+          name: createdBy.displayName || createdBy.email || 'Admin',
+        }
+      : null,
     seller: seller
       ? {
           id: seller.id,
+          code: seller.organization.code,
           name: seller.organization.name,
           legalName: seller.organization.legalName,
           gst: seller.organization.gstin,
@@ -729,8 +969,23 @@ export function presentManager(
         }
       : null,
     permissions: user.permissionGrants.map((grant) => grant.code),
+    pendingLink: extra?.pendingLink
+      ? {
+          purpose: extra.pendingLink.purpose,
+          expiresAt: extra.pendingLink.expiresAt,
+          createdAt: extra.pendingLink.createdAt,
+        }
+      : null,
     loginCount: extra?.loginCount ?? null,
-    activity: extra?.activity ?? [],
+    activity: (extra?.activity ?? []).map((row) => ({
+      id: row.id,
+      action: row.action,
+      createdAt: row.createdAt,
+      actorUserId: row.actorUserId,
+      actorName: row.actor?.displayName || row.actor?.email || null,
+      metadata: row.metadata,
+      newData: row.newData,
+    })),
   };
 }
 

@@ -122,7 +122,9 @@ export class OnboardingController {
   }
 
   @Get('documents/:id/download')
-  @ApiOperation({ summary: 'Signed download URL for a stored onboarding document' })
+  @ApiOperation({
+    summary: 'Signed download URL for a stored onboarding document',
+  })
   async downloadDocument(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
@@ -135,7 +137,9 @@ export class OnboardingController {
 
   @Delete('documents/:id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Remove an onboarding document from R2 and the database' })
+  @ApiOperation({
+    summary: 'Remove an onboarding document from R2 and the database',
+  })
   async removeDocument(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,

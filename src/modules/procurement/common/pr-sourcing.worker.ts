@@ -52,9 +52,7 @@ export class PrSourcingWorker implements OnModuleInit, OnModuleDestroy {
       void this.safeSweep();
     }, safeInterval);
     this.timer.unref?.();
-    this.logger.log(
-      `PrSourcingWorker started (interval=${safeInterval}ms)`,
-    );
+    this.logger.log(`PrSourcingWorker started (interval=${safeInterval}ms)`);
   }
 
   onModuleDestroy() {

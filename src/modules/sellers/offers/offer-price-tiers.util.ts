@@ -31,7 +31,8 @@ export function assertNonOverlappingPriceTiers(
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1]!;
     const curr = sorted[i]!;
-    const prevMax = prev.maxQty == null ? Number.POSITIVE_INFINITY : prev.maxQty;
+    const prevMax =
+      prev.maxQty == null ? Number.POSITIVE_INFINITY : prev.maxQty;
     if (curr.minQty <= prevMax) {
       throw new Error(
         'INVALID_BULK_PRICE_RANGE: quantity ranges must not overlap',

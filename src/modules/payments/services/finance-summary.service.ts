@@ -101,16 +101,10 @@ export class FinanceSummaryService {
     ];
     const settledAmount = settlementCounts
       .filter((r) => r.status === SettlementStatus.RELEASED)
-      .reduce(
-        (sum, r) => sum.plus(toDecimal(r._sum.netAmount)),
-        toDecimal(0),
-      );
+      .reduce((sum, r) => sum.plus(toDecimal(r._sum.netAmount)), toDecimal(0));
     const pendingSettlementAmount = settlementCounts
       .filter((r) => outstandingStatuses.includes(r.status))
-      .reduce(
-        (sum, r) => sum.plus(toDecimal(r._sum.netAmount)),
-        toDecimal(0),
-      );
+      .reduce((sum, r) => sum.plus(toDecimal(r._sum.netAmount)), toDecimal(0));
 
     return {
       role: 'SELLER' as const,

@@ -1,8 +1,10 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DocumentCategory,
   DocumentStatus,
+  KycVerificationStatus,
+  KycVerificationType,
   SellerOnboardingStatus,
   SellerStatus,
   VerificationStatus,
@@ -75,9 +77,29 @@ function customer(kyc: Record<string, unknown> = { status: 'SUBMITTED' }) {
   };
 }
 
+function verificationRow(
+  type: KycVerificationType,
+  status: KycVerificationStatus,
+) {
+  return {
+    id: `ver-${type}`,
+    type,
+    status,
+    identifierMasked: 'masked',
+    provider: 'manual',
+    result: null,
+    failureCode: null,
+    failureReason: null,
+    verifiedAt: null,
+    reviewedAt: null,
+    createdAt: new Date('2026-09-27T09:00:00.000Z'),
+  };
+}
+
 describe('AdminKycService', () => {
   const prisma = {
     $transaction: vi.fn(),
+    $queryRaw: vi.fn(),
     sellerProfile: { findMany: vi.fn(), findFirst: vi.fn() },
     customerProfile: {
       findMany: vi.fn(),
@@ -87,7 +109,14 @@ describe('AdminKycService', () => {
     document: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
     organization: { update: vi.fn() },
     bankAccount: { findMany: vi.fn() },
+    kycVerification: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    auditLog: { findMany: vi.fn() },
   };
+  const storage = { getSignedDownloadUrl: vi.fn() };
   const audit = { log: vi.fn() };
   const notifications = { create: vi.fn() };
   const sellers = {
@@ -106,12 +135,153 @@ describe('AdminKycService', () => {
     prisma.document.findMany.mockResolvedValue([]);
     prisma.sellerProfile.findMany.mockResolvedValue([]);
     prisma.customerProfile.findMany.mockResolvedValue([]);
+    prisma.kycVerification.findFirst.mockResolvedValue(null);
+    prisma.kycVerification.findMany.mockResolvedValue([]);
+    prisma.$queryRaw.mockResolvedValue([
+      { metadata: { kyc: { status: 'SUBMITTED' } } },
+    ]);
     service = new AdminKycService(
       prisma as never,
       audit as never,
       notifications as never,
       new DocumentStateService(),
       sellers as never,
+      storage as never,
+    );
+  });
+
+  it('approves and confirms manual-review verifications as the reviewer', async () => {
+    prisma.customerProfile.findFirst.mockResolvedValue(customer());
+    prisma.document.findMany.mockResolvedValue([
+      kycDoc('pan'),
+      kycDoc('gst'),
+      kycDoc('aadhaar'),
+    ]);
+    prisma.kycVerification.findFirst.mockImplementation(
+      async (args: { where: { type: KycVerificationType } }) =>
+        verificationRow(
+          args.where.type,
+          args.where.type === KycVerificationType.GST
+            ? KycVerificationStatus.MANUAL_REVIEW
+            : KycVerificationStatus.VERIFIED,
+        ),
+    );
+    const detail = vi.spyOn(service, 'detail').mockResolvedValue({} as never);
+
+    await service.approve('CUSTOMER', 'cust-1', 'admin-1', {});
+
+    expect(prisma.kycVerification.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['ver-GST'] },
+        status: KycVerificationStatus.MANUAL_REVIEW,
+      },
+      data: expect.objectContaining({
+        status: KycVerificationStatus.VERIFIED,
+        reviewedById: 'admin-1',
+      }),
+    });
+    const metadata = prisma.customerProfile.update.mock.calls[0][0].data
+      .metadata as { kyc: Record<string, unknown> };
+    expect(metadata.kyc.status).toBe('APPROVED');
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ type: 'KYC_APPROVED' }),
+      }),
+    );
+    expect(detail).toHaveBeenCalled();
+  });
+
+  it('blocks approval while a PAN or GST verification has failed', async () => {
+    prisma.customerProfile.findFirst.mockResolvedValue(customer());
+    prisma.document.findMany.mockResolvedValue([
+      kycDoc('pan'),
+      kycDoc('gst'),
+      kycDoc('aadhaar'),
+    ]);
+    prisma.kycVerification.findFirst.mockImplementation(
+      async (args: { where: { type: KycVerificationType } }) =>
+        verificationRow(
+          args.where.type,
+          args.where.type === KycVerificationType.PAN
+            ? KycVerificationStatus.FAILED
+            : KycVerificationStatus.VERIFIED,
+        ),
+    );
+
+    await expect(
+      service.approve('CUSTOMER', 'cust-1', 'admin-1', {}),
+    ).rejects.toThrow(/PAN verification failed/);
+    expect(prisma.customerProfile.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses to approve KYC that was not submitted for review', async () => {
+    prisma.customerProfile.findFirst.mockResolvedValue(
+      customer({ status: 'CHANGES_REQUESTED' }),
+    );
+    await expect(
+      service.approve('CUSTOMER', 'cust-1', 'admin-1', {}),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('reports a conflict when another reviewer acted first', async () => {
+    prisma.customerProfile.findFirst.mockResolvedValue(customer());
+    prisma.document.findMany.mockResolvedValue([
+      kycDoc('pan'),
+      kycDoc('gst'),
+      kycDoc('aadhaar'),
+    ]);
+    prisma.$queryRaw.mockResolvedValue([
+      { metadata: { kyc: { status: 'REJECTED' } } },
+    ]);
+
+    await expect(
+      service.approve('CUSTOMER', 'cust-1', 'admin-1', {}),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.customerProfile.update).not.toHaveBeenCalled();
+    expect(audit.log).not.toHaveBeenCalled();
+  });
+
+  it('returns an audit trail with only whitelisted, non-sensitive details', async () => {
+    prisma.customerProfile.findFirst.mockResolvedValue(customer());
+    prisma.document.findMany.mockResolvedValue([{ id: 'doc-pan' }]);
+    prisma.auditLog.findMany.mockResolvedValue([
+      {
+        id: 'log-1',
+        action: 'CUSTOMER_KYC_PAN_VERIFIED',
+        actorUserId: 'user-1',
+        entityType: 'CUSTOMER',
+        entityId: 'cust-1',
+        metadata: { identifier: 'AA•••••39F', actorRole: 'CUSTOMER' },
+        previousData: null,
+        newData: { status: 'VERIFIED', pan: 'AAPFU0939F', storageKey: 'k' },
+        createdAt: new Date('2026-09-27T10:00:00.000Z'),
+        actor: { ...user, displayName: null },
+      },
+      {
+        id: 'log-2',
+        action: 'CUSTOMER_KYC_REJECTED',
+        actorUserId: 'admin-9',
+        entityType: 'CUSTOMER',
+        entityId: 'cust-1',
+        metadata: { actorRole: 'ADMIN' },
+        previousData: { kycStatus: 'SUBMITTED' },
+        newData: { kycStatus: 'REJECTED', reason: 'Expired GST' },
+        createdAt: new Date('2026-09-27T11:00:00.000Z'),
+        actor: null,
+      },
+    ]);
+
+    const trail = await service.auditTrail('CUSTOMER', 'cust-1');
+
+    expect(trail[0].actor.role).toBe('CUSTOMER');
+    expect(trail[0].details).toEqual(
+      expect.objectContaining({ identifier: 'AA•••••39F', status: 'VERIFIED' }),
+    );
+    expect(JSON.stringify(trail)).not.toContain('AAPFU0939F');
+    expect(JSON.stringify(trail)).not.toContain('storageKey');
+    expect(trail[1].actor.role).toBe('ADMIN');
+    expect(trail[1].details).toEqual(
+      expect.objectContaining({ reason: 'Expired GST', kycStatus: 'REJECTED' }),
     );
   });
 

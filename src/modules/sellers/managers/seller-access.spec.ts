@@ -15,9 +15,9 @@ describe('seller manager access', () => {
   });
 
   it('accepts seller panel permissions', () => {
-    expect(
-      assertAssignablePermissions(['orders.view', 'orders.view']),
-    ).toEqual(['orders.view', 'profile.view']);
+    expect(assertAssignablePermissions(['orders.view', 'orders.view'])).toEqual(
+      ['orders.view', 'profile.view'],
+    );
   });
 
   it('normalizes Indian mobiles and rejects others', () => {
@@ -33,21 +33,21 @@ describe('seller manager access', () => {
   });
 
   it('maps seller routes to permissions and denies other sellers and admin', () => {
-    expect(
-      permissionForManagerRequest('GET', '/api/v1/seller/orders'),
-    ).toBe('orders.view');
+    expect(permissionForManagerRequest('GET', '/api/v1/seller/orders')).toBe(
+      'orders.view',
+    );
     expect(
       permissionForManagerRequest('POST', '/api/v1/seller/dispatches'),
     ).toBe('logistics.manage');
     expect(
       permissionForManagerRequest('GET', '/api/v1/seller/onboarding'),
     ).toBe(SELLER_ACCESS_DENY);
-    expect(
-      permissionForManagerRequest('GET', '/api/v1/admin/users'),
-    ).toBe(SELLER_ACCESS_DENY);
-    expect(
-      permissionForManagerRequest('GET', '/api/v1/customer/orders'),
-    ).toBe(SELLER_ACCESS_DENY);
+    expect(permissionForManagerRequest('GET', '/api/v1/admin/users')).toBe(
+      SELLER_ACCESS_DENY,
+    );
+    expect(permissionForManagerRequest('GET', '/api/v1/customer/orders')).toBe(
+      SELLER_ACCESS_DENY,
+    );
     expect(
       permissionForManagerRequest('POST', '/api/v1/seller/orders/abc'),
     ).toBe('orders.manage');

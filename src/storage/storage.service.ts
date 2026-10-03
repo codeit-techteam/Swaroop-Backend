@@ -93,9 +93,7 @@ export class StorageService {
    * HTTPS / data URLs pass through. Object keys use the public CDN base
    * when configured, otherwise a short-lived signed GET URL.
    */
-  async resolveMediaUrl(
-    mediaKey?: string | null,
-  ): Promise<string | null> {
+  async resolveMediaUrl(mediaKey?: string | null): Promise<string | null> {
     if (!mediaKey) return null;
     if (/^(https?:|data:|blob:)/i.test(mediaKey)) return mediaKey;
 

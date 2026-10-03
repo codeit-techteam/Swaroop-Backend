@@ -324,7 +324,7 @@ export class PurchaseRequestsService {
 
     if (process.env.NODE_ENV !== 'production') {
       // Dev-only auth trace — never log tokens/secrets.
-      // eslint-disable-next-line no-console
+
       console.debug(
         `[PurchaseRequest] Authenticated user: ${userId} Role: SELLER SellerOrg: ${ctx.organizationId} Request ID: ${id}`,
       );

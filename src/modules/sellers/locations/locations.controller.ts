@@ -5,7 +5,10 @@ import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
-import { SetCurrentLocationDto, SaveLocationFromGeoDto } from '../offers/offers.dto.js';
+import {
+  SetCurrentLocationDto,
+  SaveLocationFromGeoDto,
+} from '../offers/offers.dto.js';
 import { SellerLocationsService } from './locations.service.js';
 
 @ApiTags('Seller Locations')
@@ -18,7 +21,8 @@ export class SellerLocationsController {
 
   @Get()
   @ApiOperation({
-    summary: 'List seller operating locations (warehouses with inventory/offers)',
+    summary:
+      'List seller operating locations (warehouses with inventory/offers)',
   })
   async list(@CurrentUser() user: AuthenticatedUser) {
     return successResponse(

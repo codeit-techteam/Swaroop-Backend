@@ -195,17 +195,27 @@ export class AdminOffersService {
       soldOut,
       total,
     ] = await Promise.all([
-      this.prisma.offer.count({ where: { ...base, status: OfferStatus.ACTIVE } }),
-      this.prisma.offer.count({ where: { ...base, status: OfferStatus.DRAFT } }),
-      this.prisma.offer.count({ where: { ...base, status: OfferStatus.PAUSED } }),
-      this.prisma.offer.count({ where: { ...base, status: OfferStatus.EXPIRED } }),
+      this.prisma.offer.count({
+        where: { ...base, status: OfferStatus.ACTIVE },
+      }),
+      this.prisma.offer.count({
+        where: { ...base, status: OfferStatus.DRAFT },
+      }),
+      this.prisma.offer.count({
+        where: { ...base, status: OfferStatus.PAUSED },
+      }),
+      this.prisma.offer.count({
+        where: { ...base, status: OfferStatus.EXPIRED },
+      }),
       this.prisma.offer.count({
         where: { ...base, status: OfferStatus.PENDING_REVIEW },
       }),
       this.prisma.offer.count({
         where: { ...base, status: OfferStatus.REJECTED },
       }),
-      this.prisma.offer.count({ where: { ...base, status: OfferStatus.CLOSED } }),
+      this.prisma.offer.count({
+        where: { ...base, status: OfferStatus.CLOSED },
+      }),
       this.prisma.offer.count({
         where: {
           ...base,

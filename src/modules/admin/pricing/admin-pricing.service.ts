@@ -208,8 +208,7 @@ export class AdminPricingService {
             }
           : null,
         customer: r.purchaseRequest?.customerOrg ?? null,
-        seller:
-          r.purchaseRequest?.sellerOrg ?? r.offer?.organization ?? null,
+        seller: r.purchaseRequest?.sellerOrg ?? r.offer?.organization ?? null,
       })),
       meta: paginationMeta(page, limit, total),
     };

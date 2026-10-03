@@ -43,6 +43,7 @@ import {
 } from '../listings/import-listing.mapper.js';
 import { ImportMatchingService } from '../matching/import-matching.service.js';
 import { DocumentsCoreService } from '../../documents/services/documents-core.service.js';
+import { ImportShipmentsService } from '../shipments/import-shipments.service.js';
 import {
   IMPORT_AUDIT_ENTITY_TYPES,
   type AdminDealsQueryDto,
@@ -118,6 +119,7 @@ export class AdminImportService {
     private readonly notifier: ImportNotifierService,
     private readonly matching: ImportMatchingService,
     private readonly documents: DocumentsCoreService,
+    private readonly shipments: ImportShipmentsService,
   ) {}
 
   private lifecycleActor(actor: AdminActor): LifecycleActor {
@@ -212,6 +214,7 @@ export class AdminImportService {
       value,
       topProducts,
       recent,
+      shipmentsByStatus,
     ] = await Promise.all([
       this.prisma.importListing.groupBy({
         by: ['side', 'status'],
@@ -260,6 +263,10 @@ export class AdminImportService {
         take: 8,
         include: LISTING_INCLUDE,
       }),
+      this.prisma.importShipment.groupBy({
+        by: ['status'],
+        _count: { _all: true },
+      }),
     ]);
 
     const categories = await this.prisma.gradeCategory.findMany({
@@ -279,6 +286,11 @@ export class AdminImportService {
     const deals = Object.fromEntries(
       dealsByStatus.map((g) => [g.status, g._count._all]),
     );
+    const shipments: Record<string, number> = Object.fromEntries(
+      shipmentsByStatus.map((g) => [g.status, g._count._all]),
+    );
+    const sum = (counts: Record<string, number>) =>
+      Object.values(counts).reduce((a, b) => a + b, 0);
 
     return {
       serverTime: now,
@@ -295,6 +307,23 @@ export class AdminImportService {
         (deals.FULFILLED ?? 0),
       expiredListings:
         (listingCounts.BUY.EXPIRED ?? 0) + (listingCounts.SELL.EXPIRED ?? 0),
+      cancelledListings:
+        (listingCounts.BUY.CANCELLED ?? 0) +
+        (listingCounts.SELL.CANCELLED ?? 0),
+      totalBuyRequests: sum(listingCounts.BUY) - (listingCounts.BUY.DRAFT ?? 0),
+      totalSellOffers:
+        sum(listingCounts.SELL) - (listingCounts.SELL.DRAFT ?? 0),
+      dealsCancelled: deals.CANCELLED ?? 0,
+      shipmentsInTransit:
+        (shipments.SHIPPED ?? 0) +
+        (shipments.IN_TRANSIT ?? 0) +
+        (shipments.ARRIVED ?? 0) +
+        (shipments.CUSTOMS_CLEARANCE ?? 0) +
+        (shipments.OUT_FOR_DELIVERY ?? 0),
+      shipmentsBooked: shipments.BOOKED ?? 0,
+      shipmentsDelivered: shipments.DELIVERED ?? 0,
+      shipmentExceptions: shipments.EXCEPTION ?? 0,
+      shipmentsByStatus: shipments,
       confirmedVolumeMt: decimalString(volume[0]?.metric_tons ?? null) ?? '0',
       confirmedValueByCurrency: value.map((v) => ({
         currencyCode: v.currency_code,
@@ -751,13 +780,19 @@ export class AdminImportService {
     const listingIds = [deal.buyListingId, deal.sellListingId].filter(
       (v): v is string => Boolean(v),
     );
+    const shipments = await this.shipments.forDeal(id, 'ADMIN');
     const [documents, auditTrail] = await Promise.all([
       this.findDocuments({
         ownerType: EntityOwnerType.IMPORT_LISTING,
         ownerId: { in: listingIds },
         deletedAt: null,
       }),
-      this.auditTrailFor([id, deal.negotiationId, ...listingIds]),
+      this.auditTrailFor([
+        id,
+        deal.negotiationId,
+        ...listingIds,
+        ...shipments.map((s) => s.id),
+      ]),
     ]);
     const n = deal.negotiation;
     return {
@@ -792,8 +827,18 @@ export class AdminImportService {
         note: e.note,
         createdAt: e.createdAt,
       })),
+      shipments,
       documents,
       auditTrail,
+    };
+  }
+
+  /** Shipment with its full audit trail (who changed what, from which side). */
+  async shipmentDetail(id: string) {
+    const shipment = await this.shipments.adminGet(id);
+    return {
+      ...shipment,
+      auditTrail: await this.auditTrailFor([id]),
     };
   }
 
@@ -981,7 +1026,7 @@ export class AdminImportService {
     const search = resolveSearch(query);
     if (search) {
       const contains = { contains: search, mode: Prisma.QueryMode.insensitive };
-      const [listings, negotiations, deals] = await Promise.all([
+      const [listings, negotiations, deals, shipmentHits] = await Promise.all([
         this.prisma.importListing.findMany({
           where: { referenceNumber: contains },
           select: { id: true },
@@ -997,13 +1042,20 @@ export class AdminImportService {
           select: { id: true },
           take: 100,
         }),
+        this.prisma.importShipment.findMany({
+          where: { referenceNumber: contains },
+          select: { id: true },
+          take: 100,
+        }),
       ]);
       and.push({
         OR: [
           { action: contains },
           {
             entityId: {
-              in: [...listings, ...negotiations, ...deals].map((r) => r.id),
+              in: [...listings, ...negotiations, ...deals, ...shipmentHits].map(
+                (r) => r.id,
+              ),
             },
           },
         ],
@@ -1032,7 +1084,7 @@ export class AdminImportService {
           .map((r) => r.entityId!),
       ),
     ];
-    const [listings, negotiations, deals] = await Promise.all([
+    const [listings, negotiations, deals, shipmentRefs] = await Promise.all([
       this.prisma.importListing.findMany({
         where: { id: { in: idsOf(EntityOwnerType.IMPORT_LISTING) } },
         select: { id: true, referenceNumber: true, side: true },
@@ -1043,6 +1095,10 @@ export class AdminImportService {
       }),
       this.prisma.importDeal.findMany({
         where: { id: { in: idsOf(EntityOwnerType.IMPORT_DEAL) } },
+        select: { id: true, referenceNumber: true },
+      }),
+      this.prisma.importShipment.findMany({
+        where: { id: { in: idsOf(EntityOwnerType.IMPORT_SHIPMENT) } },
         select: { id: true, referenceNumber: true },
       }),
     ]);
@@ -1056,6 +1112,8 @@ export class AdminImportService {
       refs.set(n.id, { referenceNumber: n.referenceNumber });
     for (const d of deals)
       refs.set(d.id, { referenceNumber: d.referenceNumber });
+    for (const sh of shipmentRefs)
+      refs.set(sh.id, { referenceNumber: sh.referenceNumber });
 
     return {
       items: rows.map((r) => ({

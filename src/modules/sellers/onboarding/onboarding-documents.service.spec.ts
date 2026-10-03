@@ -108,9 +108,9 @@ describe('OnboardingDocumentsService', () => {
       'aadhaar',
       'cancelledCheque',
     ]);
-    expect(result.slots.every((slot) => slot.required && slot.document === null)).toBe(
-      true,
-    );
+    expect(
+      result.slots.every((slot) => slot.required && slot.document === null),
+    ).toBe(true);
   });
 
   it('refuses to confirm when the object is not in R2', async () => {

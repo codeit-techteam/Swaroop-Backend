@@ -50,8 +50,12 @@ export function moneyString(value: Prisma.Decimal | number | string): string {
   return round2(value).toFixed(2);
 }
 
-export function unitPriceString(value: Prisma.Decimal | number | string): string {
-  return toDecimal(value).toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP).toFixed(4);
+export function unitPriceString(
+  value: Prisma.Decimal | number | string,
+): string {
+  return toDecimal(value)
+    .toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP)
+    .toFixed(4);
 }
 
 export function platformDiscountBps(
@@ -131,7 +135,9 @@ export function assertQuantityRules(input: {
 }): void {
   const quantity = toDecimal(input.quantity);
   if (quantity.lte(0)) {
-    throw Object.assign(new Error('INVALID_QUANTITY'), { code: 'INVALID_QUANTITY' });
+    throw Object.assign(new Error('INVALID_QUANTITY'), {
+      code: 'INVALID_QUANTITY',
+    });
   }
   const moq = input.moq == null ? new Prisma.Decimal(0) : toDecimal(input.moq);
   if (quantity.lt(moq)) {

@@ -217,13 +217,7 @@ export class AuthService {
         },
       });
 
-      return this.completeOtpLogin(
-        tx,
-        identifier,
-        identifierType,
-        dto,
-        meta,
-      );
+      return this.completeOtpLogin(tx, identifier, identifierType, dto, meta);
     });
 
     await this.bootstrapDemoIfNeeded(result.user.id);
@@ -253,6 +247,8 @@ export class AuthService {
       );
     }
 
+    await this.assertManagerHasSeller(user.id);
+
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLoginAt: new Date() },
@@ -262,7 +258,11 @@ export class AuthService {
     await this.bootstrapDemoIfNeeded(user.id);
     const publicUser = await this.toPublicUser(user.id);
     if (publicUser.roles.includes(RoleCode.SELLER_MANAGER)) {
-      await this.auditManagerEvent('MANAGER_LOGIN', user.id, publicUser.sellerId);
+      await this.auditManagerEvent(
+        'MANAGER_LOGIN',
+        user.id,
+        publicUser.sellerId,
+      );
     }
     return { user: publicUser, ...tokens };
   }
@@ -455,13 +455,17 @@ export class AuthService {
     await this.prisma.$transaction(async (tx: DbClient) => {
       await tx.user.update({
         where: { id: user.id },
-        data: { passwordHash },
+        data: { passwordHash, mustChangePassword: false },
       });
       await tx.authSession.updateMany({
         where: { userId: user.id, revokedAt: null },
         data: { revokedAt: new Date() },
       });
     });
+
+    if (user.roles.includes(RoleCode.SELLER_MANAGER)) {
+      await this.auditManagerEvent('MANAGER_PASSWORD_CHANGED', user.id);
+    }
 
     return { message: 'Password changed successfully. Please sign in again.' };
   }
@@ -534,17 +538,43 @@ export class AuthService {
     }
 
     const passwordHash = await this.crypto.hashPassword(dto.newPassword);
+    const owner = await this.prisma.user.findUnique({
+      where: { id: record.userId },
+      select: { status: true, deletedAt: true },
+    });
+    if (!owner || owner.deletedAt) {
+      throw new AuthException(
+        AuthErrorCode.AUTH_TOKEN_EXPIRED,
+        'Invalid or expired reset token',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
 
     await this.prisma.$transaction(async (tx: DbClient) => {
-      await tx.passwordResetToken.update({
-        where: { id: record.id },
+      const consumed = await tx.passwordResetToken.updateMany({
+        where: { id: record.id, usedAt: null },
+        data: { usedAt: new Date() },
+      });
+      if (consumed.count !== 1) {
+        throw new AuthException(
+          AuthErrorCode.AUTH_TOKEN_EXPIRED,
+          'Invalid or expired reset token',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+      await tx.passwordResetToken.updateMany({
+        where: { userId: record.userId, usedAt: null },
         data: { usedAt: new Date() },
       });
       await tx.user.update({
         where: { id: record.userId },
         data: {
           passwordHash,
-          status: UserStatus.ACTIVE,
+          // Accepting an invitation activates a pending account. A suspended,
+          // blocked, or deactivated account stays closed until an admin acts.
+          ...(owner.status === UserStatus.PENDING
+            ? { status: UserStatus.ACTIVE }
+            : {}),
           mustChangePassword: false,
         },
       });
@@ -554,7 +584,24 @@ export class AuthService {
       });
     });
 
-    return { message: 'Password reset successfully' };
+    if (record.purpose === 'INVITATION') {
+      await this.auditManagerEvent(
+        'MANAGER_INVITATION_ACCEPTED',
+        record.userId,
+      );
+      this.logger.log({
+        event: 'seller_manager.invitation_accepted',
+        userId: record.userId,
+      });
+    }
+
+    return {
+      message:
+        owner.status === UserStatus.PENDING ||
+        owner.status === UserStatus.ACTIVE
+          ? 'Password reset successfully'
+          : 'Password saved. This account is not active; contact your administrator.',
+    };
   }
 
   private isFixedDevOtpEnabled(): boolean {
@@ -660,7 +707,8 @@ export class AuthService {
           passwordHash,
           status: UserStatus.ACTIVE,
           phoneVerified: identifierType === OtpIdentifierType.PHONE,
-          emailVerified: identifierType === OtpIdentifierType.EMAIL || isDemoPhone,
+          emailVerified:
+            identifierType === OtpIdentifierType.EMAIL || isDemoPhone,
           userRoles: {
             create: roleCodes.map((code) => ({
               role: { connect: { code } },
@@ -670,6 +718,19 @@ export class AuthService {
       });
     } else {
       this.assertUserCanAuthenticate(user);
+      if (user.status === UserStatus.PENDING) {
+        const pendingManager = await tx.userRole.findFirst({
+          where: { userId: user.id, role: { code: RoleCode.SELLER_MANAGER } },
+          select: { id: true },
+        });
+        if (pendingManager) {
+          throw new AuthException(
+            AuthErrorCode.AUTH_ACCOUNT_PENDING,
+            'Activate your Seller Manager account from the invitation link first',
+            HttpStatus.FORBIDDEN,
+          );
+        }
+      }
       user = await tx.user.update({
         where: { id: user.id },
         data: {
@@ -914,6 +975,34 @@ export class AuthService {
     if (email) return this.prisma.user.findUnique({ where: { email } });
     if (phone) return this.prisma.user.findUnique({ where: { phone } });
     return null;
+  }
+
+  private async assertManagerHasSeller(userId: string) {
+    const [managerRole, ownerProfile, assignment] = await Promise.all([
+      this.prisma.userRole.findFirst({
+        where: { userId, role: { code: RoleCode.SELLER_MANAGER } },
+        select: { id: true },
+      }),
+      this.prisma.sellerProfile.findFirst({
+        where: { userId, deletedAt: null },
+        select: { id: true },
+      }),
+      this.prisma.sellerManagerAssignment.findFirst({
+        where: {
+          userId,
+          status: 'ACTIVE',
+          sellerProfile: { deletedAt: null },
+        },
+        select: { id: true },
+      }),
+    ]);
+    if (managerRole && !ownerProfile && !assignment) {
+      throw new AuthException(
+        AuthErrorCode.AUTH_FORBIDDEN,
+        'No active seller is assigned to this account. Contact your administrator.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
   }
 
   private async auditManagerEvent(

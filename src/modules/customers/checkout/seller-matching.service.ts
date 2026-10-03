@@ -14,7 +14,8 @@ import {
 import { CheckoutException } from './checkout.errors.js';
 import { assertQuantityRules } from './commerce-pricing.js';
 
-export type MatchStrategy = 'EXPLICIT_OFFER' | 'PRODUCT_BEST_PRICE' | 'GRADE_BEST_PRICE';
+export type MatchStrategy =
+  'EXPLICIT_OFFER' | 'PRODUCT_BEST_PRICE' | 'GRADE_BEST_PRICE';
 
 export const quoteOfferInclude = {
   product: {
@@ -99,7 +100,11 @@ export class SellerMatchingService {
     const productOffers = await this.listActiveOffers(db, {
       productId: product.id,
     });
-    const productMatch = this.pickBest(productOffers, quantity, input.increment);
+    const productMatch = this.pickBest(
+      productOffers,
+      quantity,
+      input.increment,
+    );
     if (productMatch) {
       return { ...productMatch, strategy: 'PRODUCT_BEST_PRICE' };
     }
@@ -123,7 +128,8 @@ export class SellerMatchingService {
     quantity: number,
     increment?: string,
   ): Omit<SellerMatch, 'strategy'> | null {
-    const ranked: Array<{ offer: MatchedOffer; unitPrice: Prisma.Decimal }> = [];
+    const ranked: Array<{ offer: MatchedOffer; unitPrice: Prisma.Decimal }> =
+      [];
     for (const offer of offers) {
       try {
         this.assertOffer(offer, quantity, increment);
@@ -169,7 +175,10 @@ export class SellerMatchingService {
     }
   }
 
-  private async loadOffer(db: TxClient, offerId: string): Promise<MatchedOffer> {
+  private async loadOffer(
+    db: TxClient,
+    offerId: string,
+  ): Promise<MatchedOffer> {
     const offer = await db.offer.findFirst({
       where: { id: offerId, deletedAt: null },
       include: quoteOfferInclude,

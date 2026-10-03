@@ -20,10 +20,12 @@ export type ProductDocumentCategory =
   (typeof PRODUCT_DOCUMENT_CATEGORIES)[number];
 
 /** MDS is an alias used in seller UX; map to MSDS in Prisma. */
-export const PRODUCT_DOCUMENT_CATEGORY_ALIASES: Record<string, DocumentCategory> =
-  {
-    MDS: DocumentCategory.MSDS,
-  };
+export const PRODUCT_DOCUMENT_CATEGORY_ALIASES: Record<
+  string,
+  DocumentCategory
+> = {
+  MDS: DocumentCategory.MSDS,
+};
 
 export const PRODUCT_DOCUMENT_MIME_TYPES = [
   'application/pdf',

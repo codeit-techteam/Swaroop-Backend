@@ -2,10 +2,7 @@ import { DispatchStatus } from '../../../generated/prisma/client.js';
 
 /** UI tabs on Seller Dispatch screen → backend status sets */
 export type SellerDispatchTab =
-  | 'ready'
-  | 'scheduled'
-  | 'loading'
-  | 'dispatched';
+  'ready' | 'scheduled' | 'loading' | 'dispatched';
 
 export const SELLER_DISPATCH_TAB_STATUSES: Record<
   SellerDispatchTab,

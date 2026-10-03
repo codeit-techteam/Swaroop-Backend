@@ -4,11 +4,25 @@ import { PaginationQueryDto } from '../../master-data/common/pagination.js';
 
 export class CustomerOrdersQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({
-    enum: ['ACTIVE', 'COMPLETED', 'CANCELLED', 'active', 'completed', 'cancelled'],
+    enum: [
+      'ACTIVE',
+      'COMPLETED',
+      'CANCELLED',
+      'active',
+      'completed',
+      'cancelled',
+    ],
   })
   @IsOptional()
   @IsString()
-  @IsIn(['ACTIVE', 'COMPLETED', 'CANCELLED', 'active', 'completed', 'cancelled'])
+  @IsIn([
+    'ACTIVE',
+    'COMPLETED',
+    'CANCELLED',
+    'active',
+    'completed',
+    'cancelled',
+  ])
   status?: string;
 
   @ApiPropertyOptional({ description: 'Filter by payment status' })

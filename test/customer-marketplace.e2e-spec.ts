@@ -184,13 +184,19 @@ describe('Customer Marketplace (e2e)', () => {
     expect(quote.paymentOption).toBe('ADVANCE');
     expect(quote.totalAmount).toBeTruthy();
     expect(quote.pricingVersion).toBeTruthy();
-    expect(JSON.stringify(quote)).not.toMatch(/sellerOrgId|sellerName|seller@test/i);
+    expect(JSON.stringify(quote)).not.toMatch(
+      /sellerOrgId|sellerName|seller@test/i,
+    );
 
     const options = await request(app.getHttpServer())
       .get('/api/v1/customer/checkout/payment-options')
       .set('Authorization', `Bearer ${customerToken}`);
     expect(options.status).toBe(200);
-    expect(options.body.data.options.some((o: { paymentOption: string }) => o.paymentOption === 'ADVANCE')).toBe(true);
+    expect(
+      options.body.data.options.some(
+        (o: { paymentOption: string }) => o.paymentOption === 'ADVANCE',
+      ),
+    ).toBe(true);
     expect(JSON.stringify(options.body.data)).toMatch(/PetroTrade/);
 
     const create = await request(app.getHttpServer())

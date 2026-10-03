@@ -16,6 +16,7 @@ import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
+import { CustomerKycApprovedGuard } from '../kyc/customer-kyc-approved.guard.js';
 import {
   CreatePurchaseRequestDto,
   CustomerCounterOfferDto,
@@ -34,6 +35,7 @@ export class PurchaseRequestsController {
   ) {}
 
   @Post()
+  @UseGuards(CustomerKycApprovedGuard)
   @ApiOperation({
     summary:
       'Create purchase request from checkout quote or cart (one PR per matched seller org)',
@@ -126,6 +128,7 @@ export class PurchaseRequestsController {
 
   @Post(':id/accept-counter')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(CustomerKycApprovedGuard)
   @ApiOperation({ summary: 'Accept latest seller counter-offer → creates PO' })
   async acceptCounter(
     @CurrentUser() user: AuthenticatedUser,

@@ -7,13 +7,16 @@ import {
 import {
   DocumentStatus,
   EntityOwnerType,
+  KycVerificationStatus,
   Prisma,
   StorageProvider,
   VerificationStatus,
   type Document,
+  type KycVerification,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { StorageService } from '../../../storage/storage.service.js';
+import { NotificationService } from '../../notifications/notification.service.js';
 import {
   assertFileSize,
   assertMime,
@@ -37,16 +40,41 @@ import type {
   CreateCustomerKycDocumentDto,
   SubmitCustomerKycDto,
 } from './customer-kyc.dto.js';
+import { lockCustomerKyc } from './customer-kyc.lock.js';
 import {
   CUSTOMER_KYC_DOCUMENT_PURPOSE,
   CUSTOMER_KYC_DOCUMENT_SLOTS,
   isCustomerKycDocumentMeta,
+  isCustomerKycVerified,
   readCustomerKycState,
   resolveCustomerKycSlot,
   withCustomerKycState,
   type CustomerKycDocumentSlot,
   type CustomerKycStatus,
 } from './customer-kyc.slots.js';
+import {
+  hashIdentifier,
+  panFromGstin,
+} from './verification/kyc-identifiers.js';
+import {
+  latestVerifications,
+  toVerificationView,
+  verificationSatisfied,
+} from './verification/kyc-verification.records.js';
+
+type ChecklistState = 'done' | 'pending' | 'attention' | 'todo';
+
+type ChecklistItem = {
+  key: 'pan' | 'gst' | 'documents' | 'review';
+  label: string;
+  state: ChecklistState;
+  detail: string;
+};
+
+type Verifications = {
+  pan: KycVerification | null;
+  gst: KycVerification | null;
+};
 
 const ACTIVE_STATUSES: DocumentStatus[] = [
   DocumentStatus.UPLOADED,
@@ -71,11 +99,12 @@ export class CustomerKycService {
     private readonly storage: StorageService,
     private readonly state: DocumentStateService,
     private readonly audit: CustomerAuditService,
+    private readonly notifications: NotificationService,
   ) {}
 
   async overview(userId: string) {
     const ctx = await this.customerContext.getOrCreateCustomer(userId);
-    const [profile, organization] = await Promise.all([
+    const [profile, organization, verifications] = await Promise.all([
       this.prisma.customerProfile.findUniqueOrThrow({
         where: { id: ctx.customerProfileId },
         select: { metadata: true },
@@ -90,6 +119,11 @@ export class CustomerKycService {
           verificationStatus: true,
         },
       }),
+      latestVerifications(
+        this.prisma,
+        EntityOwnerType.CUSTOMER,
+        ctx.customerProfileId,
+      ),
     ]);
     const kyc = readCustomerKycState(profile.metadata);
     const changeRequest =
@@ -98,7 +132,8 @@ export class CustomerKycService {
         : null;
 
     const slots = [];
-    const missingRequired: string[] = [];
+    const missingDocuments: string[] = [];
+    let rejectedDocuments = 0;
     for (const def of CUSTOMER_KYC_DOCUMENT_SLOTS) {
       const rows = await this.findSlotDocuments(ctx, def.slot);
       const current =
@@ -109,8 +144,9 @@ export class CustomerKycService {
             isR2Confirmed(readJsonObject(row.metadata)),
         );
       if (def.required && (!current || !this.countsAsStored(current))) {
-        missingRequired.push(def.name);
+        missingDocuments.push(def.name);
       }
+      if (current?.status === DocumentStatus.REJECTED) rejectedDocuments += 1;
       slots.push({
         slot: def.slot,
         category: def.category,
@@ -123,16 +159,37 @@ export class CustomerKycService {
     }
 
     const locked = LOCKED_KYC_STATUSES.has(kyc.status);
+    const kycVerified = isCustomerKycVerified(
+      kyc.status,
+      organization.verificationStatus,
+    );
+    const verificationBlockers = this.verificationBlockers(
+      verifications,
+      organization.gstin,
+    );
+    const missingRequired = [...verificationBlockers, ...missingDocuments];
     return {
       status: kyc.status,
+      kycVerified,
       submittedAt: kyc.submittedAt,
       reviewedAt: kyc.reviewedAt,
       reviewNotes: kyc.reviewNotes,
       rejectedReason: kyc.status === 'REJECTED' ? kyc.rejectedReason : null,
       changeRequest,
       locked,
-      canSubmit: !locked && missingRequired.length === 0,
+      canSubmit: !locked && !kycVerified && missingRequired.length === 0,
       missingRequired,
+      verifications: {
+        pan: verifications.pan ? toVerificationView(verifications.pan) : null,
+        gst: verifications.gst ? toVerificationView(verifications.gst) : null,
+      },
+      checklist: this.checklist({
+        status: kyc.status,
+        kycVerified,
+        verifications,
+        missingDocuments,
+        rejectedDocuments,
+      }),
       organization: {
         name: organization.name,
         legalName: organization.legalName,
@@ -156,6 +213,7 @@ export class CustomerKycService {
     const ctx = await this.customerContext.getOrCreateCustomer(userId);
     await this.assertSlotWritable(ctx, slotDef.slot);
     await this.discardUnconfirmed(ctx, slotDef.slot);
+    const previous = await this.latestStoredVersion(ctx, slotDef.slot);
 
     const created = await this.documents.create({
       organizationId: ctx.organizationId,
@@ -183,13 +241,30 @@ export class CustomerKycService {
       );
     }
 
+    const version = previous ? previous.version + 1 : 1;
+    if (previous) {
+      await this.prisma.document.update({
+        where: { id: created.id },
+        data: {
+          version,
+          rootDocumentId: previous.rootDocumentId ?? previous.id,
+          previousDocumentId: previous.id,
+        },
+      });
+    }
+
     await this.audit.log({
       action: 'CUSTOMER_KYC_DOCUMENT_UPLOAD_STARTED',
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.DOCUMENT,
       entityId: created.id,
-      metadata: { slot: slotDef.slot, category: slotDef.category },
+      metadata: {
+        actorRole: 'CUSTOMER',
+        slot: slotDef.slot,
+        category: slotDef.category,
+        version,
+      },
     });
 
     return {
@@ -243,19 +318,24 @@ export class CustomerKycService {
       },
     });
 
-    await this.archivePrevious(ctx, slot, updated.id);
+    const replacedIds = await this.supersedePrevious(ctx, slot, updated.id);
 
     await this.audit.log({
-      action: 'CUSTOMER_KYC_DOCUMENT_STORED',
+      action: replacedIds.length
+        ? 'CUSTOMER_KYC_DOCUMENT_REPLACED'
+        : 'CUSTOMER_KYC_DOCUMENT_UPLOADED',
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.DOCUMENT,
       entityId: updated.id,
       metadata: {
+        actorRole: 'CUSTOMER',
         slot,
         category: updated.category,
+        version: updated.version,
+        replacedDocumentIds: replacedIds,
+        fileName: updated.originalFileName ?? updated.fileName,
         storageProvider: StorageProvider.CLOUDFLARE_R2,
-        storageKey: updated.storageKey,
       },
     });
 
@@ -267,12 +347,18 @@ export class CustomerKycService {
       userId,
       documentId,
     );
-    if (await this.isLocked(ctx)) {
+    const status = await this.kycStatus(ctx);
+    if (LOCKED_KYC_STATUSES.has(status)) {
       throw new BadRequestException(
         'KYC documents are locked while under review. Only rejected documents can be replaced.',
       );
     }
-    await this.archiveDocument(doc, { deleteObject: true });
+    // Files from a KYC that was ever submitted may have been reviewed, so the
+    // object is kept for audit; only never-submitted drafts are deleted.
+    const deleteObject =
+      status === 'NOT_SUBMITTED' ||
+      !isR2Confirmed(readJsonObject(doc.metadata));
+    await this.archiveDocument(doc, { deleteObject });
 
     await this.audit.log({
       action: 'CUSTOMER_KYC_DOCUMENT_REMOVED',
@@ -280,7 +366,11 @@ export class CustomerKycService {
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.DOCUMENT,
       entityId: doc.id,
-      metadata: { slot: meta.slot },
+      metadata: {
+        actorRole: 'CUSTOMER',
+        slot: meta.slot,
+        storageObjectDeleted: deleteObject,
+      },
     });
 
     return { id: doc.id, deleted: true };
@@ -304,17 +394,34 @@ export class CustomerKycService {
 
   async submit(userId: string, dto: SubmitCustomerKycDto) {
     const ctx = await this.customerContext.getOrCreateCustomer(userId);
-    const profile = await this.prisma.customerProfile.findUniqueOrThrow({
-      where: { id: ctx.customerProfileId },
-      select: { metadata: true },
-    });
-    const kyc = readCustomerKycState(profile.metadata);
-    if (kyc.status === 'APPROVED') {
+    const initialStatus = await this.kycStatus(ctx);
+    if (initialStatus === 'APPROVED') {
       throw new BadRequestException('KYC is already approved');
     }
-    if (kyc.status === 'SUBMITTED') {
-      throw new BadRequestException('KYC is already under review');
+    // A repeated submit (double click, retry after a timeout) is a no-op.
+    if (initialStatus === 'SUBMITTED') return this.overview(userId);
+
+    const [verifications, organization] = await Promise.all([
+      latestVerifications(
+        this.prisma,
+        EntityOwnerType.CUSTOMER,
+        ctx.customerProfileId,
+      ),
+      this.prisma.organization.findUniqueOrThrow({
+        where: { id: ctx.organizationId },
+        select: { gstin: true },
+      }),
+    ]);
+    const blockers = this.verificationBlockers(
+      verifications,
+      organization.gstin,
+    );
+    if (blockers.length) {
+      throw new BadRequestException(
+        `Complete these steps before submitting: ${blockers.join(', ')}`,
+      );
     }
+    this.assertMatchesVerified(dto, verifications);
 
     const missing: string[] = [];
     for (const def of CUSTOMER_KYC_DOCUMENT_SLOTS) {
@@ -331,12 +438,24 @@ export class CustomerKycService {
       );
     }
 
+    // GST-verified legal name wins over whatever the customer typed.
+    const verifiedLegalName =
+      verifications.gst?.status === KycVerificationStatus.VERIFIED
+        ? toVerificationView(verifications.gst).details.legalName
+        : null;
+    const businessName = dto.businessName?.trim() || null;
+
     const now = new Date();
-    await this.prisma.$transaction(async (tx) => {
+    const previousStatus = await this.prisma.$transaction(async (tx) => {
+      const { metadata, kyc } = await lockCustomerKyc(
+        tx,
+        ctx.customerProfileId,
+      );
+      if (LOCKED_KYC_STATUSES.has(kyc.status)) return null;
       await tx.customerProfile.update({
         where: { id: ctx.customerProfileId },
         data: {
-          metadata: withCustomerKycState(profile.metadata, {
+          metadata: withCustomerKycState(metadata, {
             status: 'SUBMITTED',
             submittedAt: now.toISOString(),
             rejectedReason: null,
@@ -348,38 +467,210 @@ export class CustomerKycService {
         where: { id: ctx.organizationId },
         data: {
           verificationStatus: VerificationStatus.UNDER_REVIEW,
-          ...(dto.businessName?.trim()
-            ? {
-                name: dto.businessName.trim(),
-                legalName: dto.businessName.trim(),
-              }
+          ...(businessName ? { name: businessName } : {}),
+          ...(verifiedLegalName || businessName
+            ? { legalName: verifiedLegalName ?? businessName }
             : {}),
-          ...(dto.gstin ? { gstin: dto.gstin } : {}),
-          ...(dto.pan ? { pan: dto.pan } : {}),
         },
       });
+      return kyc.status;
     });
 
+    // Another request submitted (or an admin decided) while this one ran.
+    if (previousStatus === null) return this.overview(userId);
+
+    const resubmission = previousStatus !== 'NOT_SUBMITTED';
     await this.audit.log({
-      action: 'CUSTOMER_KYC_SUBMITTED',
+      action: resubmission
+        ? 'CUSTOMER_KYC_RESUBMITTED'
+        : 'CUSTOMER_KYC_SUBMITTED',
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.CUSTOMER,
       entityId: ctx.customerProfileId,
-      metadata: { resubmission: kyc.status !== 'NOT_SUBMITTED' },
+      metadata: {
+        actorRole: 'CUSTOMER',
+        resubmission,
+        previousStatus,
+        panVerification: verifications.pan?.status ?? null,
+        gstVerification: verifications.gst?.status ?? null,
+      },
+    });
+    await this.notifications.create({
+      userId,
+      organizationId: ctx.organizationId,
+      title: resubmission ? 'KYC resubmitted' : 'KYC submitted',
+      body: "Your business KYC is under review. We'll notify you as soon as the PetroTrade compliance team has verified it.",
+      entityType: EntityOwnerType.CUSTOMER,
+      entityId: ctx.customerProfileId,
+      metadata: { type: 'KYC_SUBMITTED', resubmission },
     });
 
     return this.overview(userId);
   }
 
-  private async isLocked(ctx: CustomerContext): Promise<boolean> {
+  /**
+   * Human-readable steps that must be done before submission. Verification
+   * rows hold only hashes, so the GSTIN comes from the organization, which
+   * only ever receives accepted identifiers.
+   */
+  private verificationBlockers(
+    { pan, gst }: Verifications,
+    organizationGstin: string | null,
+  ): string[] {
+    const blockers: string[] = [];
+    if (!verificationSatisfied(pan)) {
+      blockers.push(
+        pan?.status === KycVerificationStatus.FAILED
+          ? 'PAN verification (failed)'
+          : 'PAN verification',
+      );
+    }
+    const gstCurrent =
+      verificationSatisfied(gst) &&
+      Boolean(organizationGstin) &&
+      hashIdentifier('GST', organizationGstin!) === gst!.identifierHash;
+    if (!gstCurrent) {
+      blockers.push(
+        gst?.status === KycVerificationStatus.FAILED
+          ? 'GST verification (failed)'
+          : 'GST verification',
+      );
+    }
+    if (
+      verificationSatisfied(pan) &&
+      gstCurrent &&
+      pan!.identifierHash !==
+        hashIdentifier('PAN', panFromGstin(organizationGstin!))
+    ) {
+      blockers.push('GSTIN must belong to the verified PAN');
+    }
+    return blockers;
+  }
+
+  private assertMatchesVerified(
+    dto: SubmitCustomerKycDto,
+    { pan, gst }: Verifications,
+  ) {
+    if (
+      dto.pan &&
+      pan &&
+      hashIdentifier('PAN', dto.pan) !== pan.identifierHash
+    ) {
+      throw new BadRequestException(
+        'The PAN entered has not been verified. Verify it before submitting.',
+      );
+    }
+    if (
+      dto.gstin &&
+      gst &&
+      hashIdentifier('GST', dto.gstin) !== gst.identifierHash
+    ) {
+      throw new BadRequestException(
+        'The GSTIN entered has not been verified. Verify it before submitting.',
+      );
+    }
+  }
+
+  private checklist(input: {
+    status: CustomerKycStatus;
+    kycVerified: boolean;
+    verifications: Verifications;
+    missingDocuments: string[];
+    rejectedDocuments: number;
+  }): ChecklistItem[] {
+    const { status, kycVerified, verifications } = input;
+    const identity = (
+      key: 'pan' | 'gst',
+      label: string,
+      row: KycVerification | null,
+    ): ChecklistItem => {
+      if (kycVerified || row?.status === KycVerificationStatus.VERIFIED) {
+        return { key, label, state: 'done', detail: `${label} verified` };
+      }
+      if (!row) {
+        return {
+          key,
+          label,
+          state: 'todo',
+          detail: `Enter and verify your ${label}`,
+        };
+      }
+      const view = toVerificationView(row);
+      if (row.status === KycVerificationStatus.FAILED) {
+        return { key, label, state: 'attention', detail: view.message };
+      }
+      return {
+        key,
+        label,
+        state: 'pending',
+        detail:
+          row.status === KycVerificationStatus.VERIFYING
+            ? view.message
+            : 'Will be verified by the compliance team',
+      };
+    };
+
+    const documents: ChecklistItem = kycVerified
+      ? {
+          key: 'documents',
+          label: 'Documents',
+          state: 'done',
+          detail: 'Documents verified',
+        }
+      : input.rejectedDocuments
+        ? {
+            key: 'documents',
+            label: 'Documents',
+            state: 'attention',
+            detail: `${input.rejectedDocuments} document(s) need a new upload`,
+          }
+        : input.missingDocuments.length
+          ? {
+              key: 'documents',
+              label: 'Documents',
+              state: 'todo',
+              detail: `Upload ${input.missingDocuments.join(', ')}`,
+            }
+          : {
+              key: 'documents',
+              label: 'Documents',
+              state: 'done',
+              detail: 'Required documents uploaded',
+            };
+
+    const reviewByStatus: Record<
+      CustomerKycStatus,
+      Omit<ChecklistItem, 'key' | 'label'>
+    > = {
+      NOT_SUBMITTED: { state: 'todo', detail: 'Submit your KYC for review' },
+      SUBMITTED: { state: 'pending', detail: 'Admin review pending' },
+      CHANGES_REQUESTED: { state: 'attention', detail: 'Changes requested' },
+      REJECTED: { state: 'attention', detail: 'KYC needs correction' },
+      APPROVED: { state: 'done', detail: 'KYC approved' },
+    };
+    const review = kycVerified
+      ? reviewByStatus.APPROVED
+      : reviewByStatus[status];
+
+    return [
+      identity('pan', 'PAN', verifications.pan),
+      identity('gst', 'GST', verifications.gst),
+      documents,
+      { key: 'review', label: 'Admin review', ...review },
+    ];
+  }
+
+  private async kycStatus(ctx: CustomerContext): Promise<CustomerKycStatus> {
     const profile = await this.prisma.customerProfile.findUnique({
       where: { id: ctx.customerProfileId },
       select: { metadata: true },
     });
-    return LOCKED_KYC_STATUSES.has(
-      readCustomerKycState(profile?.metadata).status,
-    );
+    return readCustomerKycState(profile?.metadata).status;
+  }
+
+  private async isLocked(ctx: CustomerContext): Promise<boolean> {
+    return LOCKED_KYC_STATUSES.has(await this.kycStatus(ctx));
   }
 
   /**
@@ -475,6 +766,35 @@ export class CustomerKycService {
     );
   }
 
+  /** Newest confirmed file for the slot, including superseded ones, to chain versions. */
+  private async latestStoredVersion(
+    ctx: CustomerContext,
+    slot: CustomerKycDocumentSlot,
+  ) {
+    const def = resolveCustomerKycSlot(slot);
+    if (!def) return null;
+    return this.prisma.document.findFirst({
+      where: {
+        organizationId: ctx.organizationId,
+        ownerType: EntityOwnerType.CUSTOMER,
+        ownerId: ctx.customerProfileId,
+        category: def.category,
+        AND: [
+          {
+            metadata: {
+              path: ['purpose'],
+              equals: CUSTOMER_KYC_DOCUMENT_PURPOSE,
+            },
+          },
+          { metadata: { path: ['slot'], equals: slot } },
+          { metadata: { path: ['r2Confirmed'], equals: true } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, version: true, rootDocumentId: true },
+    });
+  }
+
   private async discardUnconfirmed(
     ctx: CustomerContext,
     slot: CustomerKycDocumentSlot,
@@ -486,16 +806,33 @@ export class CustomerKycService {
     }
   }
 
-  private async archivePrevious(
+  /**
+   * Older versions leave the active set but keep their storage object, so the
+   * admin audit trail can still open every version the customer sent.
+   */
+  private async supersedePrevious(
     ctx: CustomerContext,
     slot: CustomerKycDocumentSlot,
     keepId: string,
-  ) {
+  ): Promise<string[]> {
     const rows = await this.findSlotDocuments(ctx, slot);
+    const superseded: string[] = [];
     for (const row of rows) {
-      if (row.id === keepId) continue;
-      await this.archiveDocument(row, { deleteObject: false });
+      if (row.id === keepId || row.deletedAt) continue;
+      const canReplace =
+        row.status === DocumentStatus.VERIFIED ||
+        row.status === DocumentStatus.REJECTED;
+      const status = canReplace
+        ? DocumentStatus.REPLACED
+        : DocumentStatus.ARCHIVED;
+      this.state.assertTransition(row.status, status);
+      await this.prisma.document.update({
+        where: { id: row.id },
+        data: { deletedAt: new Date(), status },
+      });
+      superseded.push(row.id);
     }
+    return superseded;
   }
 
   private async archiveDocument(

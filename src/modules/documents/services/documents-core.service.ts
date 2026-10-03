@@ -95,7 +95,7 @@ export type DownloadOptions = {
 /** Metadata keys that identify which workflow owns a document; never overwritten on replace. */
 const IMMUTABLE_METADATA_KEYS = ['purpose', 'slot'] as const;
 
-function contentDisposition(
+export function contentDisposition(
   disposition: 'inline' | 'attachment',
   fileName: string,
 ): string {

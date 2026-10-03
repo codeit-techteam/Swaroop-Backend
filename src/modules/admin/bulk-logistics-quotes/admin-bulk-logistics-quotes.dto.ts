@@ -1,5 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 import { BulkLogisticsQuoteStatus } from '../../../generated/prisma/client.js';
 import { AdminListQueryDto } from '../common/admin-query.dto.js';
 

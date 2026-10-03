@@ -223,7 +223,9 @@ export class CreateMarketplaceListingDto extends CreateProductDto {
   @MaxLength(120)
   polymerType?: string;
 
-  @ApiPropertyOptional({ description: 'Warehouse display name (resolved or created)' })
+  @ApiPropertyOptional({
+    description: 'Warehouse display name (resolved or created)',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(200)

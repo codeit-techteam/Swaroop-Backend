@@ -49,6 +49,8 @@ describe('resolveSellerActor', () => {
       sellerProfile: { findFirst: vi.fn().mockResolvedValue(null) },
       sellerManagerAssignment: { findFirst: vi.fn().mockResolvedValue(null) },
     };
-    await expect(resolveSellerActor(prisma as never, 'manager-1')).resolves.toBeNull();
+    await expect(
+      resolveSellerActor(prisma as never, 'manager-1'),
+    ).resolves.toBeNull();
   });
 });

@@ -206,8 +206,14 @@ export class ImportListingsService {
     ];
   }
 
-  /** Only fields present in the request are written; identity/status never come from the client. */
-  private toData(dto: ImportListingFieldsDto): Partial<ListingData> {
+  /**
+   * Only fields present in the request are written; identity/status never come
+   * from the client. BUY validity is server-managed, so it is never accepted.
+   */
+  private toData(
+    dto: ImportListingFieldsDto,
+    side: ImportSide,
+  ): Partial<ListingData> {
     const data: Partial<ListingData> = {
       categoryId: dto.categoryId,
       gradeId: dto.gradeId,
@@ -261,8 +267,9 @@ export class ImportListingsService {
           : toDecimal(dto.maximumQuantity),
       readyStockType: dto.readyStockType,
       remarks: trimOrNull(dto.remarks),
-      validFrom: toInstant(dto.validFrom),
-      validUntil: toInstant(dto.validUntil),
+      validFrom: side === ImportSide.BUY ? undefined : toInstant(dto.validFrom),
+      validUntil:
+        side === ImportSide.BUY ? undefined : toInstant(dto.validUntil),
       rawInput: dto.rawInput,
     };
     for (const key of Object.keys(data) as Array<keyof ListingData>) {
@@ -318,6 +325,16 @@ export class ImportListingsService {
     });
   }
 
+  /** BUY requests open now and close after the Admin-configured number of days. */
+  private async buyRequestValidity(now: Date) {
+    const { buyRequestValidityDays } = await this.settings.get();
+    return {
+      validFrom: now,
+      validUntil: new Date(now.getTime() + buyRequestValidityDays * 86_400_000),
+      nearExpiryNotifiedAt: null,
+    };
+  }
+
   /** Server time decides expiry: an overdue open listing is expired on read. */
   private async expireIfDue(
     listing: ListingWithRelations,
@@ -353,7 +370,7 @@ export class ImportListingsService {
   ) {
     const actor = await this.actors.resolve(user);
     const owner = this.owner(actor, side);
-    const data = this.toData(dto);
+    const data = this.toData(dto, side);
     const docIds = [...new Set(dto.documentRequirementIds ?? [])];
     const merged = { ...blankListing(side), ...data } as ImportListing;
     const resolved = await this.check(merged, docIds, 'draft');
@@ -434,7 +451,7 @@ export class ImportListingsService {
       });
     }
 
-    const data = this.toData(dto);
+    const data = this.toData(dto, side);
     if (!isDraft) {
       const locked: ImportFieldError[] = [];
       for (const field of LOCKED_AFTER_PUBLISH) {
@@ -701,6 +718,10 @@ export class ImportListingsService {
     owner.canTrade();
     const resolved = await this.check(listing, this.docIds(listing), 'publish');
     const now = new Date();
+    const validity =
+      side === ImportSide.BUY
+        ? await this.buyRequestValidity(now)
+        : { validFrom: listing.validFrom ?? now };
 
     await this.prisma.$transaction(async (tx) => {
       const res = await tx.importListing.updateMany({
@@ -712,7 +733,7 @@ export class ImportListingsService {
         data: {
           status: ImportListingStatus.PUBLISHED,
           publishedAt: now,
-          validFrom: listing.validFrom ?? now,
+          ...validity,
           currencyCode: resolved.currencyCode,
           snapshot: resolved.snapshot as unknown as Prisma.InputJsonValue,
           updatedById: actor.userId,

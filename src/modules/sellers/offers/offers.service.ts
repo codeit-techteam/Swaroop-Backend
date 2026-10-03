@@ -167,10 +167,7 @@ export class OffersService {
       where: {
         id: warehouseId,
         deletedAt: null,
-        OR: [
-          { organizationId: ctx.organizationId },
-          { organizationId: null },
-        ],
+        OR: [{ organizationId: ctx.organizationId }, { organizationId: null }],
       },
     });
     if (!warehouse) {
@@ -223,7 +220,7 @@ export class OffersService {
       throw new BadRequestException('Selling price must be greater than 0');
     }
 
-    let inventoryId = dto.inventoryId;
+    const inventoryId = dto.inventoryId;
     let warehouseId = dto.warehouseId;
 
     if (inventoryId) {
@@ -284,8 +281,7 @@ export class OffersService {
         currency: dto.currency ?? CurrencyCode.INR,
         pricingBasis: dto.pricingBasis,
         paymentTerms: sanitizeSellerPaymentTerms(dto.paymentTerms) as
-          | Prisma.InputJsonValue
-          | undefined,
+          Prisma.InputJsonValue | undefined,
         deliveryTerms: dto.deliveryTerms,
         validFrom: validity.validFrom,
         validUntil: validity.validUntil,
@@ -652,8 +648,7 @@ export class OffersService {
             dto.paymentTerms === undefined
               ? undefined
               : (sanitizeSellerPaymentTerms(dto.paymentTerms) as
-                  | Prisma.InputJsonValue
-                  | undefined),
+                  Prisma.InputJsonValue | undefined),
           deliveryTerms: dto.deliveryTerms,
           validFrom: validity ? validity.validFrom : undefined,
           validUntil: validity ? validity.validUntil : undefined,
@@ -768,9 +763,7 @@ export class OffersService {
     const ctx = await this.ctx(userId);
     const offer = await this.assertOwned(ctx, id);
     if (ctx.status !== SellerStatus.APPROVED) {
-      throw new BadRequestException(
-        'Only APPROVED sellers can resume offers',
-      );
+      throw new BadRequestException('Only APPROVED sellers can resume offers');
     }
     if (offer.status !== OfferStatus.PAUSED) {
       throw new BadRequestException(

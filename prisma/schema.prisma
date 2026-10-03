@@ -723,8 +723,21 @@ enum EntityOwnerType {
   IMPORT_NEGOTIATION
   IMPORT_DEAL
   IMPORT_MASTER
+  IMPORT_SHIPMENT
   SUPPORT_TICKET
   OTHER
+}
+
+enum KycVerificationType {
+  PAN
+  GST
+}
+
+enum KycVerificationStatus {
+  VERIFYING
+  VERIFIED
+  FAILED
+  MANUAL_REVIEW
 }
 
 // =============================================================================
@@ -849,6 +862,8 @@ model Organization {
   importNegotiationsAsSeller ImportNegotiation[] @relation("ImportNegotiationSellerOrg")
   importDealsAsBuyer         ImportDeal[]        @relation("ImportDealBuyerOrg")
   importDealsAsSeller        ImportDeal[]        @relation("ImportDealSellerOrg")
+  importShipmentsAsBuyer     ImportShipment[]    @relation("ImportShipmentBuyerOrg")
+  importShipmentsAsSeller    ImportShipment[]    @relation("ImportShipmentSellerOrg")
 
   @@index([type])
   @@index([status])
@@ -1391,6 +1406,36 @@ model SellerVerification {
 
   @@index([overallStatus])
   @@map("seller_verifications")
+}
+
+/// One PAN / GSTIN verification attempt against the configured provider.
+/// The raw identifier is never stored here: only a SHA-256 hash (dedupe) and a masked form.
+model KycVerification {
+  id               String                @id @default(uuid()) @db.Uuid
+  organizationId   String                @map("organization_id") @db.Uuid
+  ownerType        EntityOwnerType       @map("owner_type")
+  ownerId          String                @map("owner_id") @db.Uuid
+  type             KycVerificationType
+  status           KycVerificationStatus @default(VERIFYING)
+  identifierHash   String                @map("identifier_hash")
+  identifierMasked String                @map("identifier_masked")
+  provider         String
+  /// Normalized, non-secret result fields shown to the customer and admin (legal name, GST status, ...).
+  result           Json?
+  failureCode      String?               @map("failure_code")
+  failureReason    String?               @map("failure_reason")
+  requestedById    String?               @map("requested_by_id") @db.Uuid
+  verifiedAt       DateTime?             @map("verified_at")
+  reviewedById     String?               @map("reviewed_by_id") @db.Uuid
+  reviewedAt       DateTime?             @map("reviewed_at")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+
+  @@index([ownerType, ownerId, type, createdAt])
+  @@index([organizationId])
+  @@index([identifierHash])
+  @@index([status])
+  @@map("kyc_verifications")
 }
 
 model SellerComplianceProfile {
@@ -3568,6 +3613,26 @@ enum ImportDealStatus {
   CANCELLED
 }
 
+enum ImportShipmentStatus {
+  BOOKED
+  SHIPPED
+  IN_TRANSIT
+  ARRIVED
+  CUSTOMS_CLEARANCE
+  OUT_FOR_DELIVERY
+  DELIVERED
+  EXCEPTION
+  CANCELLED
+}
+
+enum ImportShipmentMode {
+  SEA
+  AIR
+  ROAD
+  RAIL
+  MULTIMODAL
+}
+
 model Currency {
   id            String       @id @default(uuid()) @db.Uuid
   code          String       @unique
@@ -3695,6 +3760,8 @@ model ImportSettings {
   allowCustomGrade     Boolean  @default(true) @map("allow_custom_grade")
   nearExpiryHours      Int      @default(24) @map("near_expiry_hours")
   negotiationTtlHours  Int      @default(72) @map("negotiation_ttl_hours")
+  /// BUY requests carry no customer-entered validity; they close this many days after publish.
+  buyRequestValidityDays Int    @default(30) @map("buy_request_validity_days")
   notificationChannels String[] @default(["IN_APP"]) @map("notification_channels")
   updatedById          String?  @map("updated_by_id") @db.Uuid
   createdAt            DateTime @default(now()) @map("created_at")
@@ -3976,11 +4043,81 @@ model ImportDeal {
   sellListing ImportListing?    @relation("ImportDealSell", fields: [sellListingId], references: [id])
   buyerOrg    Organization      @relation("ImportDealBuyerOrg", fields: [buyerOrgId], references: [id])
   sellerOrg   Organization      @relation("ImportDealSellerOrg", fields: [sellerOrgId], references: [id])
+  shipments   ImportShipment[]
 
   @@index([buyerOrgId, status])
   @@index([sellerOrgId, status])
   @@index([status, createdAt])
   @@map("import_deals")
+}
+
+/// Physical movement of (part of) a confirmed deal. Created and progressed only by
+/// the seller party or Admin; carrier credentials never leave the backend.
+model ImportShipment {
+  id                  String               @id @default(uuid()) @db.Uuid
+  referenceNumber     String               @unique @map("reference_number")
+  dealId              String               @map("deal_id") @db.Uuid
+  buyerOrgId          String               @map("buyer_org_id") @db.Uuid
+  sellerOrgId         String               @map("seller_org_id") @db.Uuid
+  status              ImportShipmentStatus @default(BOOKED)
+  mode                ImportShipmentMode   @default(SEA)
+  quantity            Decimal              @db.Decimal(18, 3)
+  quantityUnit        ImportQuantityUnit   @map("quantity_unit")
+  carrierName         String?              @map("carrier_name")
+  /// B/L, AWB or LR number, depending on mode.
+  trackingNumber      String?              @map("tracking_number")
+  vesselName          String?              @map("vessel_name")
+  voyageNumber        String?              @map("voyage_number")
+  containerNumbers    String[]             @default([]) @map("container_numbers")
+  originLocation      String?              @map("origin_location")
+  destinationLocation String?              @map("destination_location")
+  etd                 DateTime?
+  eta                 DateTime?
+  departedAt          DateTime?            @map("departed_at")
+  arrivedAt           DateTime?            @map("arrived_at")
+  deliveredAt         DateTime?            @map("delivered_at")
+  cancelledAt         DateTime?            @map("cancelled_at")
+  exceptionReason     String?              @map("exception_reason")
+  remarks             String?              @db.Text
+  version             Int                  @default(1)
+  createdById         String?              @map("created_by_id") @db.Uuid
+  updatedById         String?              @map("updated_by_id") @db.Uuid
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  deal      ImportDeal            @relation(fields: [dealId], references: [id])
+  buyerOrg  Organization          @relation("ImportShipmentBuyerOrg", fields: [buyerOrgId], references: [id])
+  sellerOrg Organization          @relation("ImportShipmentSellerOrg", fields: [sellerOrgId], references: [id])
+  events    ImportShipmentEvent[]
+
+  @@index([dealId])
+  @@index([buyerOrgId, status])
+  @@index([sellerOrgId, status])
+  @@index([status, updatedAt])
+  @@index([trackingNumber])
+  @@map("import_shipments")
+}
+
+/// Append-only tracking history for an Import shipment.
+model ImportShipmentEvent {
+  id             String                @id @default(uuid()) @db.Uuid
+  shipmentId     String                @map("shipment_id") @db.Uuid
+  status         ImportShipmentStatus
+  previousStatus ImportShipmentStatus? @map("previous_status")
+  location       String?
+  description    String?               @db.Text
+  occurredAt     DateTime              @map("occurred_at")
+  actorParty     ImportTradeParty      @map("actor_party")
+  actorUserId    String?               @map("actor_user_id") @db.Uuid
+  /// MANUAL today; reserved for backend carrier integrations.
+  source         String                @default("MANUAL")
+  metadata       Json?
+  createdAt      DateTime              @default(now()) @map("created_at")
+
+  shipment ImportShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+
+  @@index([shipmentId, occurredAt])
+  @@map("import_shipment_events")
 }
 
 /// Replay protection for Import writes (publish, negotiate, counter, confirm).

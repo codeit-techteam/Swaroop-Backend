@@ -46,12 +46,15 @@ export class PrSourcingLifecycleService {
   ) {}
 
   async sweep(): Promise<SourcingSweepResult> {
-    const [expiredPurchaseRequests, expiredCounterOffers, warnedPurchaseRequests] =
-      await Promise.all([
-        this.expireDuePurchaseRequests(),
-        this.expireDueCounterOffers(),
-        this.warnApproachingDeadlines(),
-      ]);
+    const [
+      expiredPurchaseRequests,
+      expiredCounterOffers,
+      warnedPurchaseRequests,
+    ] = await Promise.all([
+      this.expireDuePurchaseRequests(),
+      this.expireDueCounterOffers(),
+      this.warnApproachingDeadlines(),
+    ]);
 
     if (
       expiredPurchaseRequests > 0 ||
@@ -83,10 +86,7 @@ export class PrSourcingLifecycleService {
         OR: [
           { responseDeadline: { lt: now } },
           {
-            AND: [
-              { responseDeadline: null },
-              { expiresAt: { lt: now } },
-            ],
+            AND: [{ responseDeadline: null }, { expiresAt: { lt: now } }],
           },
         ],
       },

@@ -63,6 +63,7 @@ export const REFERENCE_PREFIX = {
   SELL: 'ISO',
   NEGOTIATION: 'INE',
   DEAL: 'IDL',
+  SHIPMENT: 'ISH',
 } as const;
 
 export const REFERENCE_SEQUENCE = {
@@ -70,6 +71,7 @@ export const REFERENCE_SEQUENCE = {
   SELL: 'import_sell_ref_seq',
   NEGOTIATION: 'import_negotiation_ref_seq',
   DEAL: 'import_deal_ref_seq',
+  SHIPMENT: 'import_shipment_ref_seq',
 } as const;
 
 export type ReferenceKind = keyof typeof REFERENCE_PREFIX;
@@ -105,6 +107,8 @@ export const IMPORT_NOTIFICATION_EVENTS = {
   PRICE_CHANGED: 'IMPORT_PRICE_CHANGED',
   SHIPMENT_CHANGED: 'IMPORT_SHIPMENT_CHANGED',
   PAYMENT_TERMS_CHANGED: 'IMPORT_PAYMENT_TERMS_CHANGED',
+  SHIPMENT_CREATED: 'IMPORT_SHIPMENT_CREATED',
+  SHIPMENT_STATUS_CHANGED: 'IMPORT_SHIPMENT_STATUS_CHANGED',
   NEAR_EXPIRY: 'IMPORT_LISTING_NEAR_EXPIRY',
   EXPIRED: 'IMPORT_LISTING_EXPIRED',
 } as const;

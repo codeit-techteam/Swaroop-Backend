@@ -16,10 +16,7 @@ import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
-import {
-  CreateCheckoutQuoteDto,
-  QuoteFromCartDto,
-} from './checkout.dto.js';
+import { CreateCheckoutQuoteDto, QuoteFromCartDto } from './checkout.dto.js';
 import { CheckoutService } from './checkout.service.js';
 
 @ApiTags('Customer Checkout')
@@ -31,7 +28,9 @@ export class CheckoutController {
   constructor(private readonly checkout: CheckoutService) {}
 
   @Get('addresses')
-  @ApiOperation({ summary: 'List customer organization shipping/billing addresses' })
+  @ApiOperation({
+    summary: 'List customer organization shipping/billing addresses',
+  })
   async addresses(@CurrentUser() user: AuthenticatedUser) {
     return successResponse(
       await this.checkout.listAddresses(user.id),

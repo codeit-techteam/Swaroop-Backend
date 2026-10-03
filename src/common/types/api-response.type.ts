@@ -13,5 +13,6 @@ export type ApiErrorResponse = {
   code?: string;
   timestamp: string;
   path: string;
+  requestId?: string;
   details?: unknown;
 };

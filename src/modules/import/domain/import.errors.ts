@@ -24,6 +24,7 @@ export type ImportErrorCode =
   | 'NEGOTIATION_NOT_FOUND'
   | 'OFFER_EXPIRED'
   | 'DEAL_NOT_FOUND'
+  | 'SHIPMENT_NOT_FOUND'
   | 'IMPORT_MASTER_CONFLICT';
 
 const STATUS: Record<ImportErrorCode, number> = {
@@ -50,6 +51,7 @@ const STATUS: Record<ImportErrorCode, number> = {
   NEGOTIATION_NOT_FOUND: HttpStatus.NOT_FOUND,
   OFFER_EXPIRED: HttpStatus.CONFLICT,
   DEAL_NOT_FOUND: HttpStatus.NOT_FOUND,
+  SHIPMENT_NOT_FOUND: HttpStatus.NOT_FOUND,
   IMPORT_MASTER_CONFLICT: HttpStatus.CONFLICT,
 };
 
@@ -84,6 +86,7 @@ const MESSAGES: Record<ImportErrorCode, string> = {
   NEGOTIATION_NOT_FOUND: 'Negotiation not found.',
   OFFER_EXPIRED: 'This offer has expired.',
   DEAL_NOT_FOUND: 'Deal not found.',
+  SHIPMENT_NOT_FOUND: 'Shipment not found.',
   IMPORT_MASTER_CONFLICT: 'A record with this code already exists.',
 };
 

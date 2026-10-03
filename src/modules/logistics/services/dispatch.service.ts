@@ -392,10 +392,7 @@ export class DispatchService {
     return enriched!;
   }
 
-  async listTimeline(
-    dispatchId: string,
-    opts?: { sellerOrgId?: string },
-  ) {
+  async listTimeline(dispatchId: string, opts?: { sellerOrgId?: string }) {
     await this.get(dispatchId, { sellerOrgId: opts?.sellerOrgId });
     const events = await this.prisma.logisticsEvent.findMany({
       where: { dispatchId },
@@ -412,7 +409,11 @@ export class DispatchService {
 
   private async attachOriginWarehouses<
     T extends { originWarehouseId: string | null },
-  >(items: T[]): Promise<Array<T & { originWarehouse: DispatchWithRelations['originWarehouse'] }>> {
+  >(
+    items: T[],
+  ): Promise<
+    Array<T & { originWarehouse: DispatchWithRelations['originWarehouse'] }>
+  > {
     const ids = [
       ...new Set(
         items

@@ -156,7 +156,10 @@ export class ImportExpiryWorker implements OnModuleInit, OnModuleDestroy {
           organizationId: l.ownerOrgId,
           event: IMPORT_NOTIFICATION_EVENTS.NEAR_EXPIRY,
           title: `Import ${label} expiring soon`,
-          body: `Your ${label} ${l.referenceNumber} expires at ${l.validUntil!.toISOString()} (server time). Extend validity to keep it live.`,
+          body:
+            l.side === ImportSide.BUY
+              ? `Your RFQ ${l.referenceNumber} closes at ${l.validUntil!.toISOString()} (server time). Create a new request if you still need this material.`
+              : `Your offer ${l.referenceNumber} expires at ${l.validUntil!.toISOString()} (server time). Extend validity to keep it live.`,
           entityType: EntityOwnerType.IMPORT_LISTING,
           entityId: l.id,
           metadata: {

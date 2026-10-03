@@ -60,7 +60,33 @@ export type AppConfig = {
     /** Background expiry / near-expiry sweep cadence. */
     sweepIntervalMs: number;
   };
+  kyc: {
+    pan: KycProviderConfig;
+    gst: KycProviderConfig;
+    requestTimeoutMs: number;
+    /** Verification attempts allowed per user and identifier type per hour. */
+    verifyAttemptsPerHour: number;
+    /** KYC document upload sessions allowed per user per hour. */
+    uploadsPerHour: number;
+    /** When true, ordering / purchase-request APIs reject customers without approved KYC. */
+    enforceForTrading: boolean;
+  };
 };
+
+export type KycProviderConfig = {
+  /** Provider label stored on each verification row (e.g. "surepass"). */
+  name: string;
+  url: string;
+  apiKey: string;
+  clientId: string;
+};
+
+const kycProvider = (prefix: 'PAN' | 'GST'): AppConfig['kyc']['pan'] => ({
+  name: (process.env[`${prefix}_VERIFICATION_PROVIDER`] || 'http').trim(),
+  url: (process.env[`${prefix}_VERIFICATION_API_URL`] ?? '').trim(),
+  apiKey: (process.env[`${prefix}_VERIFICATION_API_KEY`] ?? '').trim(),
+  clientId: (process.env[`${prefix}_VERIFICATION_CLIENT_ID`] ?? '').trim(),
+});
 
 const splitOrigins = (value: string): string[] =>
   value
@@ -169,6 +195,20 @@ export default (): AppConfig => {
       ),
       sweepIntervalMs: Number(
         process.env.IMPORT_EXPIRY_SWEEP_INTERVAL_MS || 60_000,
+      ),
+    },
+    kyc: {
+      pan: kycProvider('PAN'),
+      gst: kycProvider('GST'),
+      requestTimeoutMs: Number(
+        process.env.KYC_VERIFICATION_TIMEOUT_MS || 10_000,
+      ),
+      verifyAttemptsPerHour: Number(
+        process.env.KYC_VERIFY_ATTEMPTS_PER_HOUR || 10,
+      ),
+      uploadsPerHour: Number(process.env.KYC_UPLOADS_PER_HOUR || 30),
+      enforceForTrading: ['true', '1', 'yes', 'on'].includes(
+        (process.env.KYC_ENFORCE_FOR_TRADING ?? 'false').trim().toLowerCase(),
       ),
     },
   };

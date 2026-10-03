@@ -17,6 +17,7 @@ export type ResolvedImportSettings = {
   allowCustomGrade: boolean;
   nearExpiryHours: number;
   negotiationTtlHours: number;
+  buyRequestValidityDays: number;
   notificationChannels: string[];
   updatedAt: Date | null;
   updatedById: string | null;
@@ -67,6 +68,9 @@ export class ImportSettingsService {
         ...(patch.negotiationTtlHours !== undefined
           ? { negotiationTtlHours: patch.negotiationTtlHours }
           : {}),
+        ...(patch.buyRequestValidityDays !== undefined
+          ? { buyRequestValidityDays: patch.buyRequestValidityDays }
+          : {}),
         ...(patch.notificationChannels
           ? { notificationChannels: patch.notificationChannels }
           : {}),
@@ -83,6 +87,7 @@ export class ImportSettingsService {
       allowCustomGrade: row.allowCustomGrade,
       nearExpiryHours: row.nearExpiryHours,
       negotiationTtlHours: row.negotiationTtlHours,
+      buyRequestValidityDays: row.buyRequestValidityDays,
       notificationChannels: row.notificationChannels,
       updatedAt: row.updatedAt,
       updatedById: row.updatedById,

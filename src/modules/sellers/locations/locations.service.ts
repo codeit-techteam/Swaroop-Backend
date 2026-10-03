@@ -161,21 +161,15 @@ export class SellerLocationsService {
       where: { sellerProfileId },
       select: { locationData: true, addressData: true },
     });
-    const location = this.asRecord(onboarding?.locationData) as OnboardingLocationPayload;
+    const location = this.asRecord(
+      onboarding?.locationData,
+    ) as OnboardingLocationPayload;
     const address = this.asRecord(onboarding?.addressData);
 
-    const city =
-      this.str(location.city) ||
-      this.str(address.city) ||
-      '';
-    const state =
-      this.str(location.state) ||
-      this.str(address.state) ||
-      '';
+    const city = this.str(location.city) || this.str(address.city) || '';
+    const state = this.str(location.state) || this.str(address.state) || '';
     const pincode =
-      this.str(location.pincode) ||
-      this.str(address.postalCode) ||
-      '';
+      this.str(location.pincode) || this.str(address.postalCode) || '';
     const addressLine =
       this.str(location.warehouseAddress) ||
       this.str(location.registeredAddress) ||
@@ -499,7 +493,7 @@ export class SellerLocationsService {
     });
     const metadata = this.readMetadata(profile?.metadata);
     const preferredId = metadata.currentWarehouseId;
-    let current =
+    const current =
       locations.find((loc) => loc.id === preferredId) ?? locations[0] ?? null;
 
     // Persist default current location so subsequent loads are stable.

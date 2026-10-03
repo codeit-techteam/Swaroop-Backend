@@ -407,11 +407,17 @@ export class SettlementService {
 
     const settledNet = byStatus
       .filter((row) => row.status === SettlementStatus.RELEASED)
-      .reduce((sum, row) => sum.plus(toDecimal(row._sum.netAmount)), toDecimal(0));
+      .reduce(
+        (sum, row) => sum.plus(toDecimal(row._sum.netAmount)),
+        toDecimal(0),
+      );
 
     const pendingNet = byStatus
       .filter((row) => OUTSTANDING_STATUSES.includes(row.status))
-      .reduce((sum, row) => sum.plus(toDecimal(row._sum.netAmount)), toDecimal(0));
+      .reduce(
+        (sum, row) => sum.plus(toDecimal(row._sum.netAmount)),
+        toDecimal(0),
+      );
 
     return {
       totalSales: this.money(totals._sum.grossAmount),
@@ -507,7 +513,9 @@ export class SettlementService {
         };
       } | null
     )?.commercialSnapshot;
-    const primaryPayment = settlement.items.find((item) => item.payment)?.payment;
+    const primaryPayment = settlement.items.find(
+      (item) => item.payment,
+    )?.payment;
     const unitPriceValue =
       line?.unitPriceSnapshot ??
       line?.targetUnitPrice ??
@@ -705,9 +713,7 @@ export class SettlementService {
       });
     }
 
-    events.sort(
-      (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
-    );
+    events.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
 
     if (events.length > 0) {
       const last = events[events.length - 1];

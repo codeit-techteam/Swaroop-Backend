@@ -66,7 +66,12 @@ async function bootstrap(): Promise<void> {
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Request-Id'],
+    exposedHeaders: ['X-Request-Id'],
   });
+
+  // Run onModuleDestroy (Prisma disconnect, background workers) on SIGTERM
+  // so App Platform redeploys drain cleanly.
+  app.enableShutdownHooks();
 
   app.setGlobalPrefix(apiPrefix, {
     exclude: [

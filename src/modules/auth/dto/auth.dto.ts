@@ -84,7 +84,8 @@ export class LoginDto {
   phone?: string;
 
   @ApiPropertyOptional({
-    description: 'Login ID, email, or phone. Seller Managers use their Login ID.',
+    description:
+      'Login ID, email, or phone. Seller Managers use their Login ID.',
     example: 'PTM-000123',
   })
   @ValidateIf((o: LoginDto) => !o.email && !o.phone)

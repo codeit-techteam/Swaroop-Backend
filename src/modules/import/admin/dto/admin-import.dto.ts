@@ -169,6 +169,16 @@ export class UpdateImportSettingsDto {
   @Min(1)
   @Max(2160)
   negotiationTtlHours?: number;
+
+  @ApiPropertyOptional({
+    description: 'Days a published BUY request stays open (set by the server).',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(180)
+  buyRequestValidityDays?: number;
 }
 
 export class AdminListingsQueryDto extends PaginationQueryDto {
@@ -265,6 +275,7 @@ export const IMPORT_AUDIT_ENTITY_TYPES = [
   EntityOwnerType.IMPORT_NEGOTIATION,
   EntityOwnerType.IMPORT_DEAL,
   EntityOwnerType.IMPORT_MASTER,
+  EntityOwnerType.IMPORT_SHIPMENT,
 ] as const;
 
 export class AdminImportAuditQueryDto extends PaginationQueryDto {

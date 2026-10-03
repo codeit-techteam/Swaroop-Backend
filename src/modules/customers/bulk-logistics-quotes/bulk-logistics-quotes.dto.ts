@@ -66,7 +66,9 @@ export class CreateBulkLogisticsQuoteDto {
   @IsDateString()
   preferredDate?: string;
 
-  @ApiPropertyOptional({ example: 'Need covered trucks and multi-drop delivery.' })
+  @ApiPropertyOptional({
+    example: 'Need covered trucks and multi-drop delivery.',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(2000)

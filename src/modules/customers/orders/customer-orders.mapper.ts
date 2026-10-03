@@ -133,13 +133,16 @@ function qty(value: unknown): number {
 }
 
 function resolveItems(po: PurchaseOrderProjectionSource) {
-  const snapshot = (po.metadata as { commercialSnapshot?: CommercialSnapshot } | null)
-    ?.commercialSnapshot;
+  const snapshot = (
+    po.metadata as { commercialSnapshot?: CommercialSnapshot } | null
+  )?.commercialSnapshot;
   const prItems = po.purchaseRequest?.items ?? [];
 
   if (prItems.length > 0) {
     return prItems.map((item) => {
-      const quantity = qty(item.quantity ?? snapshot?.quantity ?? po.orderedQuantity ?? 0);
+      const quantity = qty(
+        item.quantity ?? snapshot?.quantity ?? po.orderedQuantity ?? 0,
+      );
       const unitPrice = Number(
         toDecimal(
           (item.unitPriceSnapshot as never) ??
@@ -157,7 +160,10 @@ function resolveItems(po: PurchaseOrderProjectionSource) {
         productName: item.product?.name ?? 'Material',
         productCode: item.product?.code ?? null,
         gradeName:
-          item.grade?.displayName ?? item.grade?.name ?? item.grade?.code ?? '—',
+          item.grade?.displayName ??
+          item.grade?.name ??
+          item.grade?.code ??
+          '—',
         gradeCode: item.grade?.code ?? null,
         categoryCode: item.grade?.category?.code ?? null,
         categoryName: item.grade?.category?.name ?? null,

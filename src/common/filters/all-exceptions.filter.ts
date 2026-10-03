@@ -47,9 +47,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
       if (payload.details !== undefined) {
         details = payload.details;
       }
-    } else if (exception instanceof Error) {
-      message = exception.message;
     }
+    // Non-HTTP errors (Prisma, driver, provider SDKs) can carry SQL, hostnames
+    // or file paths; clients only get the generic message above.
+
+    const rawRequestId = (request as Request & { id?: unknown }).id;
+    const requestId = rawRequestId == null ? undefined : String(rawRequestId);
 
     const body: ApiErrorResponse = {
       success: false,
@@ -59,6 +62,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       ...(code ? { code } : {}),
       timestamp: new Date().toISOString(),
       path: request.url,
+      ...(requestId ? { requestId } : {}),
       ...(details !== undefined ? { details } : {}),
     };
 
@@ -68,7 +72,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
           path: request.url,
           method: request.method,
           statusCode,
-          message,
+          requestId,
+          message:
+            exception instanceof Error && !(exception instanceof HttpException)
+              ? exception.message
+              : message,
         },
         exception instanceof Error ? exception.stack : undefined,
       );
@@ -77,6 +85,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         path: request.url,
         method: request.method,
         statusCode,
+        requestId,
         message,
       });
     }

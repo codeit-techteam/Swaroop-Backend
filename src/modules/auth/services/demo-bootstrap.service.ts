@@ -230,7 +230,9 @@ export class DemoBootstrapService implements OnModuleInit {
     }
 
     for (const roleCode of [RoleCode.ADMIN, RoleCode.SUPER_ADMIN] as const) {
-      const role = await this.prisma.role.findUnique({ where: { code: roleCode } });
+      const role = await this.prisma.role.findUnique({
+        where: { code: roleCode },
+      });
       if (!role) continue;
       const existing = await this.prisma.userRole.findFirst({
         where: { userId: admin.id, roleId: role.id, organizationId: null },
@@ -290,7 +292,9 @@ export class DemoBootstrapService implements OnModuleInit {
     }
   }
 
-  private async ensureSellerProfileAndWarehouses(userId: string): Promise<void> {
+  private async ensureSellerProfileAndWarehouses(
+    userId: string,
+  ): Promise<void> {
     let profile = await this.prisma.sellerProfile.findFirst({
       where: { userId, deletedAt: null },
     });
@@ -535,7 +539,11 @@ export class DemoBootstrapService implements OnModuleInit {
     for (const [index, app] of data.applications.entries()) {
       await this.prisma.application.upsert({
         where: { code: app.code },
-        update: { name: app.name, status: MasterStatus.ACTIVE, sortOrder: index },
+        update: {
+          name: app.name,
+          status: MasterStatus.ACTIVE,
+          sortOrder: index,
+        },
         create: {
           code: app.code,
           name: app.name,
@@ -547,8 +555,9 @@ export class DemoBootstrapService implements OnModuleInit {
 
     for (const [index, category] of data.categories.entries()) {
       const parentGroup =
-        GradeParentGroup[category.parentGroup as keyof typeof GradeParentGroup] ??
-        GradeParentGroup.POLYMERS;
+        GradeParentGroup[
+          category.parentGroup as keyof typeof GradeParentGroup
+        ] ?? GradeParentGroup.POLYMERS;
       await this.prisma.gradeCategory.upsert({
         where: { code: category.code },
         update: {
@@ -588,7 +597,10 @@ export class DemoBootstrapService implements OnModuleInit {
           categoryId: category.id,
           description: grade.description,
           applications: grade.applications,
-          status: grade.status === 'ACTIVE' ? GradeStatus.ACTIVE : GradeStatus.INACTIVE,
+          status:
+            grade.status === 'ACTIVE'
+              ? GradeStatus.ACTIVE
+              : GradeStatus.INACTIVE,
           customerVisible: grade.customerVisible,
           sellerVisible: grade.sellerVisible,
           sortOrder: index + 1,
@@ -601,7 +613,10 @@ export class DemoBootstrapService implements OnModuleInit {
           categoryId: category.id,
           description: grade.description,
           applications: grade.applications,
-          status: grade.status === 'ACTIVE' ? GradeStatus.ACTIVE : GradeStatus.INACTIVE,
+          status:
+            grade.status === 'ACTIVE'
+              ? GradeStatus.ACTIVE
+              : GradeStatus.INACTIVE,
           customerVisible: grade.customerVisible,
           sellerVisible: grade.sellerVisible,
           sortOrder: index + 1,
@@ -887,7 +902,9 @@ export class DemoBootstrapService implements OnModuleInit {
       }>;
     };
     try {
-      catalog = JSON.parse(readFileSync(this.resolveCatalogPath(), 'utf8')) as typeof catalog;
+      catalog = JSON.parse(
+        readFileSync(this.resolveCatalogPath(), 'utf8'),
+      ) as typeof catalog;
     } catch (error) {
       this.logger.warn(
         `Full catalog seed skipped — ${error instanceof Error ? error.message : error}`,

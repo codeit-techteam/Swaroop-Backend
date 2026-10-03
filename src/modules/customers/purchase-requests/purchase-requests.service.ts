@@ -525,8 +525,10 @@ export class PurchaseRequestsService {
     const { quote, match, amounts } = fresh;
     const now = new Date();
     const deadline = new Date(now.getTime() + PR_RESPONSE_WINDOW_MS);
-    const shippingAddressId = dto.shippingAddressId ?? quote.shippingAddressId ?? undefined;
-    const billingAddressId = dto.billingAddressId ?? quote.billingAddressId ?? undefined;
+    const shippingAddressId =
+      dto.shippingAddressId ?? quote.shippingAddressId ?? undefined;
+    const billingAddressId =
+      dto.billingAddressId ?? quote.billingAddressId ?? undefined;
     await this.assertAddress(ctx, shippingAddressId);
     await this.assertAddress(ctx, billingAddressId);
     const snapshots = await this.addressSnapshots(

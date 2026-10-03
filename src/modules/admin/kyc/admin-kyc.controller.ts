@@ -20,6 +20,7 @@ import { ADMIN_CORE_ROLES } from '../common/admin-roles.js';
 import {
   ADMIN_KYC_ENTITY_TYPES,
   AdminKycApproveDto,
+  AdminKycDownloadQueryDto,
   AdminKycQueryDto,
   AdminKycRejectDto,
   AdminKycRequestChangesDto,
@@ -59,6 +60,44 @@ export class AdminKycController {
     return successResponse(
       await this.kyc.detail(entityTypeParam(entityType), id),
       'KYC record retrieved',
+    );
+  }
+
+  @Get(':entityType/:id/audit')
+  @ApiOperation({
+    summary:
+      'KYC activity timeline (submissions, verifications, decisions, document events)',
+  })
+  async audit(
+    @Param('entityType') entityType: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return successResponse(
+      await this.kyc.auditTrail(entityTypeParam(entityType), id),
+      'KYC audit trail retrieved',
+    );
+  }
+
+  @Get(':entityType/:id/documents/:documentId/download')
+  @ApiOperation({
+    summary: 'Signed URL for any KYC document version, including replaced ones',
+  })
+  async downloadVersion(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('entityType') entityType: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Query() query: AdminKycDownloadQueryDto,
+  ) {
+    return successResponse(
+      await this.kyc.downloadVersion(
+        entityTypeParam(entityType),
+        id,
+        documentId,
+        user.id,
+        query.disposition ?? 'attachment',
+      ),
+      'KYC document download',
     );
   }
 

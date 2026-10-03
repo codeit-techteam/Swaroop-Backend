@@ -25,6 +25,7 @@ import {
   skipTake,
 } from '../master-data/common/pagination.js';
 import { NotificationService } from '../notifications/notification.service.js';
+import { resolveSellerActor } from '../sellers/common/resolve-seller-actor.js';
 import { nextReference } from '../sellers/common/seller-context.service.js';
 import {
   CreateSupportTicketDto,
@@ -99,18 +100,15 @@ export class SupportService {
       };
     }
 
-    const profile = await this.prisma.sellerProfile.findFirst({
-      where: { userId, deletedAt: null },
-      include: { organization: true },
-    });
-    if (!profile) {
+    const seller = await resolveSellerActor(this.prisma, userId);
+    if (!seller) {
       throw new NotFoundException(
         'Seller profile not found. Complete seller onboarding first.',
       );
     }
     return {
-      organizationId: profile.organizationId,
-      organizationName: profile.organization.name,
+      organizationId: seller.profile.organizationId,
+      organizationName: seller.profile.organization.name,
     };
   }
 

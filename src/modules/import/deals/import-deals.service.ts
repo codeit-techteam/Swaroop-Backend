@@ -28,6 +28,7 @@ import { ImportException } from '../domain/import.errors.js';
 import { canTransition } from '../domain/import-status.machine.js';
 import { importPartyRef } from '../listings/import-listing.mapper.js';
 import type { ListDealsQueryDto } from '../negotiations/dto/import-negotiation.dto.js';
+import { ImportShipmentsService } from '../shipments/import-shipments.service.js';
 
 export const DEAL_INCLUDE = {
   negotiation: { select: { id: true, referenceNumber: true } },
@@ -98,6 +99,7 @@ export class ImportDealsService {
     private readonly idempotency: ImportIdempotencyService,
     private readonly audit: ImportAuditService,
     private readonly notifier: ImportNotifierService,
+    private readonly shipments: ImportShipmentsService,
   ) {}
 
   private scope(
@@ -160,7 +162,10 @@ export class ImportDealsService {
   async get(user: AuthenticatedUser, id: string) {
     const actor = await this.actors.resolve(user);
     const { deal, party } = await this.load(actor, id);
-    return mapDeal(deal, party);
+    return {
+      ...mapDeal(deal, party),
+      shipments: await this.shipments.forDeal(deal.id, party),
+    };
   }
 
   async confirm(user: AuthenticatedUser, id: string, rawKey?: string) {

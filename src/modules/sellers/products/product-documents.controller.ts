@@ -67,11 +67,7 @@ export class ProductDocumentsController {
     @Param('documentId', ParseUUIDPipe) documentId: string,
   ) {
     return successResponse(
-      await this.productDocuments.getForProduct(
-        user.id,
-        productId,
-        documentId,
-      ),
+      await this.productDocuments.getForProduct(user.id, productId, documentId),
       'Product document retrieved',
     );
   }

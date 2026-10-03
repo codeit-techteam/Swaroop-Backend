@@ -53,7 +53,10 @@ export class CompanyService {
       };
     }
 
-    if (user.roles.includes(RoleCode.SELLER)) {
+    if (
+      user.roles.includes(RoleCode.SELLER) ||
+      user.roles.includes(RoleCode.SELLER_MANAGER)
+    ) {
       return this.sellerContext.requireSeller(user.id);
     }
 

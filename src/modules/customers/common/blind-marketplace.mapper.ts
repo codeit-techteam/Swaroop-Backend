@@ -297,9 +297,10 @@ export function resolveOfferUnitPrice(
   offer: Offer & { priceTiers?: OfferPriceTier[] },
   quantity: number,
 ): Offer['basePrice'] {
-  const commercialTiers = commercialPriceTiers(offer.priceTiers, offer.metadata).sort(
-    (a, b) => Number(a.minQty) - Number(b.minQty),
-  );
+  const commercialTiers = commercialPriceTiers(
+    offer.priceTiers,
+    offer.metadata,
+  ).sort((a, b) => Number(a.minQty) - Number(b.minQty));
   for (const tier of commercialTiers) {
     const min = Number(tier.minQty);
     const max = tier.maxQty == null ? Infinity : Number(tier.maxQty);

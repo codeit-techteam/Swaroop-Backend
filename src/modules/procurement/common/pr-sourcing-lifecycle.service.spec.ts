@@ -28,7 +28,10 @@ describe('PrSourcingLifecycleService', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    service = new PrSourcingLifecycleService(prisma as never, prEvents as never);
+    service = new PrSourcingLifecycleService(
+      prisma as never,
+      prEvents as never,
+    );
   });
 
   it('expires past-deadline sourcing PRs and records events', async () => {
@@ -70,7 +73,9 @@ describe('PrSourcingLifecycleService', () => {
   });
 
   it('markDispatchedToSeller is idempotent when SENT_TO_SELLER exists', async () => {
-    prisma.purchaseRequestEvent.findFirst.mockResolvedValueOnce({ id: 'evt-1' });
+    prisma.purchaseRequestEvent.findFirst.mockResolvedValueOnce({
+      id: 'evt-1',
+    });
     await service.markDispatchedToSeller({
       purchaseRequestId: 'pr-1',
       sellerOrgId: 'seller-org',

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
@@ -38,6 +40,9 @@ import { ShipmentsModule } from './modules/shipments/index.js';
 import { SupportModule } from './modules/support/index.js';
 import { UsersModule } from './modules/users/index.js';
 import { StorageModule } from './storage/storage.module.js';
+
+/** Caller-supplied X-Request-Id is reused only when it is a short, log-safe token. */
+const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
 
 @Module({
   imports: [
@@ -88,6 +93,16 @@ import { StorageModule } from './storage/storage.module.js';
                 '*.secret',
               ],
               censor: '[Redacted]',
+            },
+            genReqId: (req: IncomingMessage, res: ServerResponse) => {
+              const header = req.headers['x-request-id'];
+              const incoming = Array.isArray(header) ? header[0] : header;
+              const id =
+                incoming && REQUEST_ID_PATTERN.test(incoming)
+                  ? incoming
+                  : randomUUID();
+              res.setHeader('X-Request-Id', id);
+              return id;
             },
             customProps: () => ({
               context: 'HTTP',

@@ -207,7 +207,9 @@ export class BulkOfferIdsDto {
 }
 
 export class SetCurrentLocationDto {
-  @ApiProperty({ description: 'Warehouse id used as the seller operating location' })
+  @ApiProperty({
+    description: 'Warehouse id used as the seller operating location',
+  })
   @IsUUID()
   warehouseId!: string;
 }

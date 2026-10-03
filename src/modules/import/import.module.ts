@@ -33,14 +33,17 @@ import {
   ImportMasterDataController,
   ImportNegotiationsController,
   ImportSellController,
+  ImportShipmentsController,
 } from './import.controllers.js';
 import { ImportListingsService } from './listings/import-listings.service.js';
 import { ImportMatchingService } from './matching/import-matching.service.js';
 import { ImportNegotiationsService } from './negotiations/import-negotiations.service.js';
+import { ImportShipmentsService } from './shipments/import-shipments.service.js';
 
 /**
  * Import trading: international BUY RFQs (customers) and SELL offers (sellers),
- * blind negotiation, rule-based matching and two-party deal confirmation.
+ * blind negotiation, rule-based matching, two-party deal confirmation and
+ * seller/Admin-managed shipment tracking.
  */
 @Module({
   imports: [AuthModule, AuditModule, DocumentsModule, NotificationsModule],
@@ -52,6 +55,7 @@ import { ImportNegotiationsService } from './negotiations/import-negotiations.se
     ImportListingDocumentsController,
     ImportNegotiationsController,
     ImportDealsController,
+    ImportShipmentsController,
     AdminImportMasterController,
     AdminImportController,
   ],
@@ -70,6 +74,7 @@ import { ImportNegotiationsService } from './negotiations/import-negotiations.se
     ImportListingDocumentsService,
     ImportNegotiationsService,
     ImportDealsService,
+    ImportShipmentsService,
     AdminImportMasterService,
     AdminImportService,
     ImportExpiryWorker,

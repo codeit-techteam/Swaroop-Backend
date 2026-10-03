@@ -85,6 +85,28 @@ export const envSchema = z
       .int()
       .min(5_000)
       .default(60_000),
+
+    PAN_VERIFICATION_PROVIDER: z.string().optional().default('http'),
+    PAN_VERIFICATION_API_URL: z.url().optional().or(z.literal('')).default(''),
+    PAN_VERIFICATION_API_KEY: z.string().optional().default(''),
+    PAN_VERIFICATION_CLIENT_ID: z.string().optional().default(''),
+    GST_VERIFICATION_PROVIDER: z.string().optional().default('http'),
+    GST_VERIFICATION_API_URL: z.url().optional().or(z.literal('')).default(''),
+    GST_VERIFICATION_API_KEY: z.string().optional().default(''),
+    GST_VERIFICATION_CLIENT_ID: z.string().optional().default(''),
+    KYC_VERIFICATION_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(60_000)
+      .default(10_000),
+    KYC_VERIFY_ATTEMPTS_PER_HOUR: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(10),
+    KYC_UPLOADS_PER_HOUR: z.coerce.number().int().positive().default(30),
+    KYC_ENFORCE_FOR_TRADING: booleanFromString.optional().default(false),
   })
   .superRefine((data, ctx) => {
     const accessSecret = data.JWT_ACCESS_SECRET || data.JWT_SECRET;

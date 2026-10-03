@@ -45,9 +45,8 @@ export const SELLER_ONBOARDING_DOCUMENT_SLOTS = [
 export type SellerOnboardingDocumentSlot =
   (typeof SELLER_ONBOARDING_DOCUMENT_SLOTS)[number]['slot'];
 
-export const SELLER_ONBOARDING_SLOT_VALUES = SELLER_ONBOARDING_DOCUMENT_SLOTS.map(
-  (item) => item.slot,
-);
+export const SELLER_ONBOARDING_SLOT_VALUES =
+  SELLER_ONBOARDING_DOCUMENT_SLOTS.map((item) => item.slot);
 
 export function resolveOnboardingSlot(slot: string) {
   return SELLER_ONBOARDING_DOCUMENT_SLOTS.find((item) => item.slot === slot);

@@ -690,10 +690,7 @@ export class SellerLogisticsController {
   ) {
     const seller = await this.actors.requireSellerOrg(user.id);
     return successResponse(
-      await this.slots.listEligibleDispatches(
-        seller.organizationId,
-        search,
-      ),
+      await this.slots.listEligibleDispatches(seller.organizationId, search),
       'Eligible dispatches retrieved',
     );
   }

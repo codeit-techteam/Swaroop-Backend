@@ -83,7 +83,9 @@ export class ProductDocumentsService {
   }
 
   private assertProductMime(mimeType: string) {
-    if (!(PRODUCT_DOCUMENT_MIME_TYPES as readonly string[]).includes(mimeType)) {
+    if (
+      !(PRODUCT_DOCUMENT_MIME_TYPES as readonly string[]).includes(mimeType)
+    ) {
       throw new BadRequestException(
         `Unsupported mime type. Allowed: ${PRODUCT_DOCUMENT_MIME_TYPES.join(', ')}`,
       );
@@ -143,7 +145,11 @@ export class ProductDocumentsService {
         organizationId: ctx.organizationId,
         status: { not: DocumentStatus.ARCHIVED },
       },
-      orderBy: [{ category: 'asc' }, { version: 'desc' }, { createdAt: 'desc' }],
+      orderBy: [
+        { category: 'asc' },
+        { version: 'desc' },
+        { createdAt: 'desc' },
+      ],
     });
 
     return items.map((d) => this.mapSellerDoc(d));
@@ -170,8 +176,7 @@ export class ProductDocumentsService {
       offerId = offer.id;
     }
 
-    const title =
-      dto.title?.trim() || customerDocumentTitle(category);
+    const title = dto.title?.trim() || customerDocumentTitle(category);
     const metadata: Record<string, unknown> = {
       title,
       description: dto.description?.trim() || null,

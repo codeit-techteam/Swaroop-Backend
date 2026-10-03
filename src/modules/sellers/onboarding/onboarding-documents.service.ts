@@ -14,7 +14,10 @@ import {
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { StorageService } from '../../../storage/storage.service.js';
-import { assertFileSize, assertMime } from '../../documents/common/document-validation.js';
+import {
+  assertFileSize,
+  assertMime,
+} from '../../documents/common/document-validation.js';
 import { DocumentStateService } from '../../documents/common/document-state.service.js';
 import { DocumentsCoreService } from '../../documents/services/documents-core.service.js';
 import { SellerAuditService } from '../common/seller-audit.service.js';
@@ -233,7 +236,10 @@ export class OnboardingDocumentsService {
   }
 
   async download(userId: string, documentId: string) {
-    const { ctx, doc } = await this.requireOnboardingDocument(userId, documentId);
+    const { ctx, doc } = await this.requireOnboardingDocument(
+      userId,
+      documentId,
+    );
     if (!this.countsAsStored(doc)) {
       throw new BadRequestException('Document is not stored yet');
     }

@@ -108,6 +108,20 @@ export function readCustomerKycState(
   };
 }
 
+/**
+ * Effective "KYC verified" flag shared by every client. Organizations approved
+ * before the customer KYC workflow existed count as verified until they submit.
+ */
+export function isCustomerKycVerified(
+  status: CustomerKycStatus,
+  organizationVerificationStatus: string | null | undefined,
+): boolean {
+  if (status === 'APPROVED') return true;
+  return (
+    status === 'NOT_SUBMITTED' && organizationVerificationStatus === 'APPROVED'
+  );
+}
+
 /** Merge a KYC state patch back into the profile metadata JSON. */
 export function withCustomerKycState(
   profileMetadata: unknown,

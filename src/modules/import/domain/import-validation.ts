@@ -295,12 +295,8 @@ export function validateListing(
     });
   }
 
-  // Validity (server clock)
-  required(
-    'validUntil',
-    input.validUntil,
-    isBuy ? 'RFQ validity' : 'Offer validity',
-  );
+  // Validity (server clock). BUY validity is assigned by the server on publish.
+  if (!isBuy) required('validUntil', input.validUntil, 'Offer validity');
   if (
     publish &&
     input.validUntil &&

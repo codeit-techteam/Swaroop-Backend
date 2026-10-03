@@ -305,6 +305,15 @@ describe('import listing validation', () => {
     ).toContain('validUntil:IMPORT_VALIDATION_FAILED');
   });
 
+  it('publishes BUY requests without customer validity but still requires it on SELL offers', () => {
+    expect(
+      validateListing(buyInput({ validUntil: null, validFrom: null }), publish),
+    ).toEqual([]);
+    expect(
+      codes(validateListing(sellInput({ validUntil: null }), publish)),
+    ).toContain('validUntil:REQUIRED');
+  });
+
   it('rejects side-specific fields on the wrong side', () => {
     expect(codes(validateListing(buyInput({ moq: D(10) }), publish))).toContain(
       'moq:IMPORT_VALIDATION_FAILED',

@@ -8,7 +8,8 @@ export type IdempotencyScope =
   | 'NEGOTIATION_OPEN'
   | 'NEGOTIATION_COUNTER'
   | 'NEGOTIATION_ACCEPT'
-  | 'DEAL_CONFIRM';
+  | 'DEAL_CONFIRM'
+  | 'SHIPMENT_CREATE';
 
 type TxClient = Prisma.TransactionClient;
 

@@ -48,6 +48,13 @@ import {
   OpenNegotiationDto,
 } from './negotiations/dto/import-negotiation.dto.js';
 import { ImportNegotiationsService } from './negotiations/import-negotiations.service.js';
+import {
+  AddImportShipmentEventDto,
+  CreateImportShipmentDto,
+  ListImportShipmentsQueryDto,
+  UpdateImportShipmentDto,
+} from './shipments/dto/import-shipment.dto.js';
+import { ImportShipmentsService } from './shipments/import-shipments.service.js';
 
 const TRADERS = [RoleCode.CUSTOMER, RoleCode.SELLER] as const;
 const IDEMPOTENCY_HEADER = {
@@ -692,7 +699,10 @@ export class ImportNegotiationsController {
 @ApiBearerAuth('bearer')
 @Roles(...TRADERS)
 export class ImportDealsController {
-  constructor(private readonly deals: ImportDealsService) {}
+  constructor(
+    private readonly deals: ImportDealsService,
+    private readonly shipments: ImportShipmentsService,
+  ) {}
 
   @Get()
   async list(
@@ -722,6 +732,83 @@ export class ImportDealsController {
     return successResponse(
       await this.deals.confirm(user, id, key),
       'Deal confirmed',
+    );
+  }
+
+  @Post(':id/shipments')
+  @Roles(RoleCode.SELLER)
+  @ApiHeader(IDEMPOTENCY_HEADER)
+  @ApiOperation({
+    summary:
+      'Seller books a shipment against a confirmed deal (buyers cannot create shipments)',
+  })
+  async createShipment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateImportShipmentDto,
+    @Headers('idempotency-key') key?: string,
+  ) {
+    return successResponse(
+      await this.shipments.create(user, id, dto, key),
+      'Shipment booked',
+    );
+  }
+}
+
+@ApiTags('Import - Shipments')
+@Controller({ path: 'import/shipments', version: '1' })
+@UseGuards(JwtAuthGuard, RolesGuard, ImportFeatureGuard)
+@ApiBearerAuth('bearer')
+@Roles(...TRADERS)
+export class ImportShipmentsController {
+  constructor(private readonly shipments: ImportShipmentsService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Shipments of deals the caller is a party to' })
+  async list(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: ListImportShipmentsQueryDto,
+  ) {
+    const { items, meta } = await this.shipments.list(user, query);
+    return successResponse(items, 'Shipments', meta);
+  }
+
+  @Get(':id')
+  async get(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return successResponse(await this.shipments.get(user, id), 'Shipment');
+  }
+
+  @Patch(':id')
+  @Roles(RoleCode.SELLER)
+  @ApiOperation({ summary: 'Seller updates carrier, tracking and schedule' })
+  async update(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateImportShipmentDto,
+  ) {
+    return successResponse(
+      await this.shipments.update(user, id, dto),
+      'Shipment updated',
+    );
+  }
+
+  @Post(':id/events')
+  @HttpCode(HttpStatus.OK)
+  @Roles(RoleCode.SELLER)
+  @ApiOperation({
+    summary: 'Seller records a tracking update or status change',
+  })
+  async addEvent(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddImportShipmentEventDto,
+  ) {
+    return successResponse(
+      await this.shipments.addEvent(user, id, dto),
+      'Shipment updated',
     );
   }
 }

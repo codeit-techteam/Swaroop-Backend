@@ -56,6 +56,25 @@ export class CreateCustomerKycDocumentDto {
   source?: CustomerKycUploadSource;
 }
 
+/** Format and checksum are validated in the service so the message stays user-friendly. */
+export class VerifyCustomerPanDto {
+  @ApiProperty({ example: 'AAPFU0939F' })
+  @Transform(upperTrim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(20)
+  pan!: string;
+}
+
+export class VerifyCustomerGstDto {
+  @ApiProperty({ example: '27AAPFU0939F1ZV' })
+  @Transform(upperTrim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(20)
+  gstin!: string;
+}
+
 export class SubmitCustomerKycDto {
   @ApiPropertyOptional({ example: 'Karan Veer Industries Pvt Ltd' })
   @IsOptional()

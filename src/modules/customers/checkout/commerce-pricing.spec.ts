@@ -19,9 +19,9 @@ describe('commerce pricing', () => {
     expect(amounts.discountAmount.toFixed(2)).toBe('126500.00');
     expect(amounts.freightAmount.toFixed(2)).toBe('31250.00');
     expect(Number(amounts.taxAmount)).toBeGreaterThan(0);
-    expect(amounts.totalAmount.gt(amounts.baseAmount.minus(amounts.discountAmount))).toBe(
-      true,
-    );
+    expect(
+      amounts.totalAmount.gt(amounts.baseAmount.minus(amounts.discountAmount)),
+    ).toBe(true);
   });
 
   it('does not add seller credit surcharge on CREDIT_15 / CREDIT_30', () => {
@@ -81,22 +81,44 @@ describe('commerce pricing', () => {
 
   it('validates MOQ, increment and inventory', () => {
     expect(() =>
-      assertQuantityRules({ quantity: 25, moq: 25, available: 100, increment: 1 }),
+      assertQuantityRules({
+        quantity: 25,
+        moq: 25,
+        available: 100,
+        increment: 1,
+      }),
     ).not.toThrow();
     try {
-      assertQuantityRules({ quantity: 10, moq: 25, available: 100, increment: 1 });
+      assertQuantityRules({
+        quantity: 10,
+        moq: 25,
+        available: 100,
+        increment: 1,
+      });
       throw new Error('expected throw');
     } catch (err) {
       expect((err as { code?: string }).code).toBe('MOQ_NOT_MET');
     }
     try {
-      assertQuantityRules({ quantity: 26, moq: 25, available: 100, increment: 5 });
+      assertQuantityRules({
+        quantity: 26,
+        moq: 25,
+        available: 100,
+        increment: 5,
+      });
       throw new Error('expected throw');
     } catch (err) {
-      expect((err as { code?: string }).code).toBe('INVALID_QUANTITY_INCREMENT');
+      expect((err as { code?: string }).code).toBe(
+        'INVALID_QUANTITY_INCREMENT',
+      );
     }
     try {
-      assertQuantityRules({ quantity: 40, moq: 25, available: 30, increment: 1 });
+      assertQuantityRules({
+        quantity: 40,
+        moq: 25,
+        available: 30,
+        increment: 1,
+      });
       throw new Error('expected throw');
     } catch (err) {
       expect((err as { code?: string }).code).toBe('INSUFFICIENT_INVENTORY');

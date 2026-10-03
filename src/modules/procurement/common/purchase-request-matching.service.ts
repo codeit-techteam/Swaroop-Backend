@@ -308,7 +308,10 @@ export class PurchaseRequestMatchingService {
           deletedAt: null,
           status: OrganizationStatus.ACTIVE,
           verificationStatus: VerificationStatus.APPROVED,
-          OR: [{ type: OrganizationType.SELLER }, { type: OrganizationType.BOTH }],
+          OR: [
+            { type: OrganizationType.SELLER },
+            { type: OrganizationType.BOTH },
+          ],
           sellerProfile: {
             deletedAt: null,
             status: SellerStatus.APPROVED,
@@ -565,7 +568,10 @@ export class PurchaseRequestMatchingService {
           deletedAt: null,
           status: OrganizationStatus.ACTIVE,
           verificationStatus: VerificationStatus.APPROVED,
-          OR: [{ type: OrganizationType.SELLER }, { type: OrganizationType.BOTH }],
+          OR: [
+            { type: OrganizationType.SELLER },
+            { type: OrganizationType.BOTH },
+          ],
           sellerProfile: {
             deletedAt: null,
             status: SellerStatus.APPROVED,

@@ -46,6 +46,12 @@ import {
   UpdateImportSettingsDto,
   type ImportMasterEntity,
 } from './dto/admin-import.dto.js';
+import {
+  AddImportShipmentEventDto,
+  AdminImportShipmentsQueryDto,
+  UpdateImportShipmentDto,
+} from '../shipments/dto/import-shipment.dto.js';
+import { ImportShipmentsService } from '../shipments/import-shipments.service.js';
 
 const WRITE_ROLES = [RoleCode.ADMIN, RoleCode.SUPER_ADMIN] as const;
 const READ_ROLES = [
@@ -175,7 +181,10 @@ export class AdminImportMasterController {
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth('bearer')
 export class AdminImportController {
-  constructor(private readonly admin: AdminImportService) {}
+  constructor(
+    private readonly admin: AdminImportService,
+    private readonly shipments: ImportShipmentsService,
+  ) {}
 
   @Get('settings')
   @Roles(...READ_ROLES)
@@ -343,5 +352,54 @@ export class AdminImportController {
   async auditLogs(@Query() query: AdminImportAuditQueryDto) {
     const { items, meta } = await this.admin.listAuditLogs(query);
     return successResponse(items, 'Import audit logs', meta);
+  }
+
+  @Get('shipments')
+  @Roles(...READ_ROLES)
+  @ApiOperation({
+    summary: 'All Import shipments with buyer/seller identities',
+  })
+  async shipmentList(@Query() query: AdminImportShipmentsQueryDto) {
+    const { items, meta } = await this.shipments.adminList(query);
+    return successResponse(items, 'Import shipments', meta);
+  }
+
+  @Get('shipments/:id')
+  @Roles(...READ_ROLES)
+  async shipment(@Param('id', ParseUUIDPipe) id: string) {
+    return successResponse(
+      await this.admin.shipmentDetail(id),
+      'Import shipment',
+    );
+  }
+
+  @Patch('shipments/:id')
+  @Roles(...WRITE_ROLES)
+  async updateShipment(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateImportShipmentDto,
+  ) {
+    await this.shipments.adminUpdate(id, dto, actorOf(user));
+    return successResponse(
+      await this.admin.shipmentDetail(id),
+      'Shipment updated',
+    );
+  }
+
+  @Post('shipments/:id/events')
+  @HttpCode(HttpStatus.OK)
+  @Roles(...WRITE_ROLES)
+  @ApiOperation({ summary: 'Record a tracking update or status change' })
+  async shipmentEvent(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddImportShipmentEventDto,
+  ) {
+    await this.shipments.adminAddEvent(id, dto, actorOf(user));
+    return successResponse(
+      await this.admin.shipmentDetail(id),
+      'Shipment updated',
+    );
   }
 }

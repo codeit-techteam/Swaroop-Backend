@@ -56,18 +56,13 @@ export function isDirectMediaUrl(value?: string | null): boolean {
   return Boolean(value && /^(https?:|data:|blob:)/i.test(value));
 }
 
-export function asMetadata(
-  value: unknown,
-): Record<string, unknown> {
+export function asMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
 
-function metaString(
-  meta: Record<string, unknown>,
-  key: string,
-): string | null {
+function metaString(meta: Record<string, unknown>, key: string): string | null {
   const value = meta[key];
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -114,10 +109,7 @@ export function publicPlatformsFor(
     return [];
   }
 
-  const platforms: CmsBannerPlatform[] = [
-    CmsBannerPlatform.ALL,
-    requested,
-  ];
+  const platforms: CmsBannerPlatform[] = [CmsBannerPlatform.ALL, requested];
 
   if (audience === 'CUSTOMER') {
     platforms.push(CmsBannerPlatform.CUSTOMER_ALL);
@@ -176,8 +168,7 @@ export function toPublicBanner(
       metaString(meta, 'badge') ??
       metaString(meta, 'campaignType') ??
       placementBadge(row.placement),
-    description:
-      metaString(meta, 'description') ?? row.subtitle ?? row.title,
+    description: metaString(meta, 'description') ?? row.subtitle ?? row.title,
     externalUrl: metaString(meta, 'externalUrl'),
     targetId: metaString(meta, 'targetId'),
     priority: Number(meta.priority) || 3,
