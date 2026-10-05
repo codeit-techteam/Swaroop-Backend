@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service.js';
-import type { AppConfig } from '../config/configuration.js';
+import type { AppConfig, SurepassConfig } from '../config/configuration.js';
 import { StorageService } from '../storage/storage.service.js';
 
 export type HealthStatus = {
@@ -9,6 +9,7 @@ export type HealthStatus = {
   service: string;
   database: 'connected' | 'disconnected' | 'skipped';
   storage: 'configured' | 'not_configured';
+  surepass: 'configured' | 'not_configured';
   timestamp: string;
 };
 
@@ -42,6 +43,13 @@ export class HealthService {
       ? 'configured'
       : 'not_configured';
 
+    const surepassSettings =
+      this.configService.get<SurepassConfig>('kyc.surepass');
+    const surepass =
+      surepassSettings?.baseUrl && surepassSettings.token
+        ? 'configured'
+        : 'not_configured';
+
     const status: HealthStatus['status'] =
       database === 'disconnected' ? 'degraded' : 'ok';
 
@@ -50,6 +58,7 @@ export class HealthService {
       service,
       database,
       storage,
+      surepass,
       timestamp: new Date().toISOString(),
     };
   }

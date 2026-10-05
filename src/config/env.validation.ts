@@ -95,13 +95,16 @@ export const envSchema = z
       .default(''),
     SUREPASS_PAN_PATH: z
       .string()
-      .regex(/^\/[A-Za-z0-9/_-]*$/, 'must be a path such as /pan/pan')
+      .regex(/^\/[A-Za-z0-9/_-]*$/, 'must be a path such as /api/v1/pan/pan')
       .optional()
       .or(z.literal(''))
       .default(''),
     SUREPASS_GST_PATH: z
       .string()
-      .regex(/^\/[A-Za-z0-9/_-]*$/, 'must be a path such as /corporate/gstin')
+      .regex(
+        /^\/[A-Za-z0-9/_-]*$/,
+        'must be a path such as /api/v1/corporate/gstin',
+      )
       .optional()
       .or(z.literal(''))
       .default(''),
@@ -170,6 +173,21 @@ export const envSchema = z
         path: ['SUREPASS_API_BASE_URL'],
         message: 'SUREPASS_API_BASE_URL must use https',
       });
+    }
+    if (data.SUREPASS_API_BASE_URL) {
+      // Surepass issues separate tokens per host: sandbox.surepass.app vs kyc-api.surepass.app.
+      const host = new URL(data.SUREPASS_API_BASE_URL).hostname;
+      const sandboxHost = host.startsWith('sandbox.');
+      if (
+        data.SUREPASS_ENVIRONMENT === 'sandbox' ? !sandboxHost : sandboxHost
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['SUREPASS_ENVIRONMENT'],
+          message:
+            'SUREPASS_ENVIRONMENT does not match SUREPASS_API_BASE_URL (sandbox host vs production host)',
+        });
+      }
     }
 
     if (data.NODE_ENV === 'production') {

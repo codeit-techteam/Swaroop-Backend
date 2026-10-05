@@ -10,20 +10,31 @@ import {
 } from './surepass-verification.provider.js';
 
 const GSTIN = '19AAPFU0939F1ZM';
+const PAN = 'AAPFU0939F';
 
+/** Shape of the documented Corporate GSTIN response. */
 const gstBody = (overrides: Record<string, unknown> = {}) => ({
   data: {
+    address_details: {},
     client_id: 'corporate_gstin_abc123',
     gstin: GSTIN,
     pan_number: 'AAPFU0939F',
     business_name: 'KV POLYMERS',
     legal_name: 'KARAN VEER INDUSTRIES PRIVATE LIMITED',
+    center_jurisdiction: 'Commissionerate - KOLKATA NORTH,Division - DIV 1',
     state_jurisdiction: 'State - West Bengal,Zone - Kolkata North',
     date_of_registration: '2018-10-12',
     constitution_of_business: 'Private Limited Company',
     taxpayer_type: 'Regular',
     gstin_status: 'Active',
+    date_of_cancellation: '1800-01-01',
+    field_visit_conducted: 'No',
+    nature_bus_activities: ['Wholesale Business'],
+    aadhaar_validation: 'Yes',
+    filing_status: [],
     address: '12, Park Street, Kolkata, West Bengal, 700016',
+    hsn_info: {},
+    filing_frequency: [],
     ...overrides,
   },
   status_code: 200,
@@ -65,6 +76,8 @@ describe('Surepass response classification', () => {
         panMasked: 'AA•••••39F',
         constitution: 'Private Limited Company',
         address: '12, Park Street, Kolkata, West Bengal, 700016',
+        pincode: '700016',
+        cancellationDate: null,
       }),
     });
     // The raw PAN is only handed back for the mismatch check, never persisted in details.
@@ -85,10 +98,30 @@ describe('Surepass response classification', () => {
     expect(details.address).toBeNull();
   });
 
-  it('rejects inactive GSTINs', () => {
+  it('rejects inactive GSTINs and keeps a real cancellation date', () => {
     expect(
-      classifySurepassGst(200, gstBody({ gstin_status: 'Cancelled' }), GSTIN),
-    ).toMatchObject({ outcome: 'FAILED', code: 'GSTIN_INACTIVE' });
+      classifySurepassGst(
+        200,
+        gstBody({
+          gstin_status: 'Cancelled',
+          date_of_cancellation: '2023-04-01',
+        }),
+        GSTIN,
+      ),
+    ).toMatchObject({
+      outcome: 'FAILED',
+      code: 'GSTIN_INACTIVE',
+      details: { cancellationDate: '2023-04-01' },
+    });
+  });
+
+  it('treats a response for a different GSTIN as malformed', () => {
+    expect(
+      classifySurepassGst(200, gstBody({ gstin: '27AAACR5055K2Z6' }), GSTIN),
+    ).toMatchObject({
+      outcome: 'UNAVAILABLE',
+      code: 'PROVIDER_MALFORMED_RESPONSE',
+    });
   });
 
   it('maps verification_failed to not found', () => {
@@ -104,7 +137,7 @@ describe('Surepass response classification', () => {
       code: 'GSTIN_NOT_FOUND',
       referenceId: 'c1',
     });
-    expect(classifySurepassPan(422, body)).toMatchObject({
+    expect(classifySurepassPan(422, body, PAN)).toMatchObject({
       outcome: 'FAILED',
       code: 'PAN_NOT_FOUND',
     });
@@ -112,18 +145,51 @@ describe('Surepass response classification', () => {
 
   it('treats a success payload without a name as malformed, not verified', () => {
     expect(
-      classifySurepassPan(200, { success: true, data: { client_id: 'x' } }),
+      classifySurepassPan(
+        200,
+        { success: true, data: { client_id: 'x' } },
+        PAN,
+      ),
     ).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_MALFORMED_RESPONSE',
     });
   });
 
-  it('verifies a PAN', () => {
-    expect(classifySurepassPan(200, panBody)).toMatchObject({
+  it('verifies a PAN Lite response', () => {
+    expect(classifySurepassPan(200, panBody, PAN)).toMatchObject({
       outcome: 'VERIFIED',
       referenceId: 'pan_xyz789',
       details: { nameOnPan: 'KARAN VEER', panCategory: 'person' },
+    });
+  });
+
+  it('applies PAN Advanced status codes', () => {
+    const advanced = (code: string, desc?: string) => ({
+      ...panBody,
+      data: {
+        ...panBody.data,
+        full_name: undefined,
+        full_name_split: ['KARAN', '', 'VEER'],
+        pan_status: code,
+        ...(desc ? { pan_status_desc: desc } : {}),
+      },
+    });
+    expect(
+      classifySurepassPan(200, advanced('E', 'EXISTING AND VALID'), PAN),
+    ).toMatchObject({
+      outcome: 'VERIFIED',
+      details: { nameOnPan: 'KARAN VEER', panStatus: 'EXISTING AND VALID' },
+    });
+    expect(classifySurepassPan(200, advanced('X'), PAN)).toMatchObject({
+      outcome: 'FAILED',
+      code: 'PAN_INACTIVE',
+      details: { panStatus: 'Deactivated' },
+    });
+    expect(classifySurepassPan(200, advanced('EM'), PAN)).toMatchObject({
+      outcome: 'REVIEW',
+      code: 'PAN_EVENT_MARKED',
+      details: { panStatus: 'Merger' },
     });
   });
 });
@@ -131,11 +197,11 @@ describe('Surepass response classification', () => {
 describe('SurepassVerificationProvider', () => {
   const settings: Record<string, unknown> = {
     'kyc.surepass': {
-      baseUrl: 'https://kyc-api.surepass.io/api/v1',
+      baseUrl: 'https://kyc-api.surepass.app',
       token: 'sp-secret-token',
       environment: 'production',
-      panPath: '/pan/pan',
-      gstPath: '/corporate/gstin',
+      panPath: '/api/v1/pan/pan',
+      gstPath: '/api/v1/corporate/gstin',
     },
     'kyc.requestTimeoutMs': 50,
   };
@@ -156,7 +222,10 @@ describe('SurepassVerificationProvider', () => {
 
     expect(outcome.outcome).toBe('VERIFIED');
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('https://kyc-api.surepass.io/api/v1/pan/pan');
+    expect(url).toBe('https://kyc-api.surepass.app/api/v1/pan/pan');
+    expect((init.headers as Record<string, string>)['content-type']).toBe(
+      'application/json',
+    );
     expect((init.headers as Record<string, string>).authorization).toBe(
       'Bearer sp-secret-token',
     );
@@ -169,8 +238,54 @@ describe('SurepassVerificationProvider', () => {
     fetchMock.mockResolvedValue(json(gstBody()));
     await provider.verify('GST', GSTIN);
     expect(fetchMock.mock.calls[0][0]).toBe(
-      'https://kyc-api.surepass.io/api/v1/corporate/gstin',
+      'https://kyc-api.surepass.app/api/v1/corporate/gstin',
     );
+  });
+
+  it('maps exhausted balance and conflicts to unavailable', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    fetchMock.mockResolvedValueOnce(
+      json(
+        {
+          data: null,
+          status_code: 403,
+          success: false,
+          message: 'API Balance Exhausted. Please recharge.',
+          message_code: 'balance_exhausted',
+        },
+        403,
+      ),
+    );
+    expect(await provider.verify('PAN', PAN)).toMatchObject({
+      outcome: 'UNAVAILABLE',
+      code: 'PROVIDER_BALANCE_EXHAUSTED',
+    });
+
+    fetchMock.mockResolvedValueOnce(json({ success: false }, 409));
+    expect(await provider.verify('PAN', PAN)).toMatchObject({
+      outcome: 'UNAVAILABLE',
+      code: 'PROVIDER_CONFLICT',
+    });
+    error.mockRestore();
+  });
+
+  it('rejects a 400 as an invalid identifier', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(
+        {
+          data: null,
+          status_code: 400,
+          success: false,
+          message: 'Invalid GSTIN format',
+          message_code: 'invalid_input',
+        },
+        400,
+      ),
+    );
+    expect(await provider.verify('GST', GSTIN)).toMatchObject({
+      outcome: 'FAILED',
+      code: 'GSTIN_INVALID',
+    });
   });
 
   it('reports an invalid token as unavailable without leaking it', async () => {
@@ -198,8 +313,17 @@ describe('SurepassVerificationProvider', () => {
     });
   });
 
-  it('does not treat a bare 404 (wrong endpoint) as "not found"', async () => {
-    fetchMock.mockResolvedValue(json({ detail: 'Not Found' }, 404));
+  it('does not treat a 404 as "not found"', async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response('<html>Not Found</html>', { status: 404 }),
+    );
+    expect(await provider.verify('GST', GSTIN)).toMatchObject({
+      outcome: 'UNAVAILABLE',
+      code: 'PROVIDER_MALFORMED_RESPONSE',
+    });
+    fetchMock.mockResolvedValueOnce(
+      json({ data: null, success: false, message: 'Client not found' }, 404),
+    );
     expect(await provider.verify('GST', GSTIN)).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_HTTP_404',
@@ -211,6 +335,24 @@ describe('SurepassVerificationProvider', () => {
       .mockResolvedValueOnce(json({}, 503))
       .mockResolvedValueOnce(json(gstBody()));
     expect((await provider.verify('GST', GSTIN)).outcome).toBe('VERIFIED');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a Surepass 500 once, then reports unavailable', async () => {
+    const upstreamTimeout = {
+      data: { client_id: 'verification_x' },
+      status_code: 500,
+      success: false,
+      message: 'Backend Timed Out. Try Again.',
+      message_code: 'contact_support',
+    };
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(json(upstreamTimeout, 500)),
+    );
+    expect(await provider.verify('PAN', PAN)).toMatchObject({
+      outcome: 'UNAVAILABLE',
+      code: 'PROVIDER_HTTP_500',
+    });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

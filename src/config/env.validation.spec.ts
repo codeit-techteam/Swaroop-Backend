@@ -58,4 +58,48 @@ describe('validateEnv', () => {
       }),
     ).toThrow(/R2_ACCOUNT_ID/);
   });
+
+  describe('Surepass', () => {
+    const base = {
+      DATABASE_URL: 'postgresql://user:pass@host:5432/db',
+      JWT_SECRET: 'dev-secret',
+      SUREPASS_API_TOKEN: 'token-value',
+    };
+
+    it('accepts the production host with SUREPASS_ENVIRONMENT=production', () => {
+      const result = validateEnv({
+        ...base,
+        SUREPASS_API_BASE_URL: 'https://kyc-api.surepass.app',
+        SUREPASS_ENVIRONMENT: 'production',
+      });
+      expect(result.SUREPASS_API_BASE_URL).toBe('https://kyc-api.surepass.app');
+    });
+
+    it('rejects a sandbox host configured as production and vice versa', () => {
+      expect(() =>
+        validateEnv({
+          ...base,
+          SUREPASS_API_BASE_URL: 'https://sandbox.surepass.app',
+          SUREPASS_ENVIRONMENT: 'production',
+        }),
+      ).toThrow(/SUREPASS_ENVIRONMENT/);
+      expect(() =>
+        validateEnv({
+          ...base,
+          SUREPASS_API_BASE_URL: 'https://kyc-api.surepass.app',
+          SUREPASS_ENVIRONMENT: 'sandbox',
+        }),
+      ).toThrow(/SUREPASS_ENVIRONMENT/);
+    });
+
+    it('requires the base URL and token together', () => {
+      expect(() =>
+        validateEnv({
+          ...base,
+          SUREPASS_API_TOKEN: '',
+          SUREPASS_API_BASE_URL: 'https://kyc-api.surepass.app',
+        }),
+      ).toThrow(/SUREPASS_API_TOKEN/);
+    });
+  });
 });

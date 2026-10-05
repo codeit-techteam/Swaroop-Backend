@@ -97,31 +97,19 @@ export type SurepassConfig = {
   gstPath: string;
 };
 
-const SUREPASS_API_PREFIX = '/api/v1';
-
-/** Surepass serves KYC routes under /api/v1; a bare host URL gets that prefix. */
-export const normalizeSurepassBaseUrl = (raw: string | undefined): string => {
-  const trimmed = (raw ?? '').trim().replace(/\/+$/, '');
-  if (!trimmed) return '';
-  try {
-    const url = new URL(trimmed);
-    return url.pathname === '' || url.pathname === '/'
-      ? `${url.origin}${SUREPASS_API_PREFIX}`
-      : trimmed;
-  } catch {
-    return trimmed;
-  }
-};
+/** Surepass KYC docs: PAN Lite and Corporate GSTIN endpoint paths. */
+export const SUREPASS_DEFAULT_PAN_PATH = '/api/v1/pan/pan';
+export const SUREPASS_DEFAULT_GST_PATH = '/api/v1/corporate/gstin';
 
 const surepassConfig = (): SurepassConfig => ({
-  baseUrl: normalizeSurepassBaseUrl(process.env.SUREPASS_API_BASE_URL),
+  baseUrl: (process.env.SUREPASS_API_BASE_URL ?? '').trim().replace(/\/+$/, ''),
   token: (process.env.SUREPASS_API_TOKEN ?? '').trim(),
   environment:
     (process.env.SUREPASS_ENVIRONMENT ?? '').trim().toLowerCase() === 'sandbox'
       ? 'sandbox'
       : 'production',
-  panPath: (process.env.SUREPASS_PAN_PATH || '/pan/pan').trim(),
-  gstPath: (process.env.SUREPASS_GST_PATH || '/corporate/gstin').trim(),
+  panPath: (process.env.SUREPASS_PAN_PATH || SUREPASS_DEFAULT_PAN_PATH).trim(),
+  gstPath: (process.env.SUREPASS_GST_PATH || SUREPASS_DEFAULT_GST_PATH).trim(),
 });
 
 const kycProvider = (prefix: 'PAN' | 'GST'): AppConfig['kyc']['pan'] => ({

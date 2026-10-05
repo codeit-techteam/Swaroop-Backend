@@ -16,6 +16,12 @@ describe('HealthService', () => {
             get: vi.fn((key: string) => {
               if (key === 'app.name') return 'swaroop-backend';
               if (key === 'app.skipDbConnectOnBoot') return false;
+              if (key === 'kyc.surepass') {
+                return {
+                  baseUrl: 'https://kyc-api.surepass.app',
+                  token: 'secret-token',
+                };
+              }
               return undefined;
             }),
           },
@@ -42,5 +48,7 @@ describe('HealthService', () => {
     expect(result.service).toBe('swaroop-backend');
     expect(result.database).toBe('connected');
     expect(result.storage).toBe('not_configured');
+    expect(result.surepass).toBe('configured');
+    expect(JSON.stringify(result)).not.toContain('secret-token');
   });
 });

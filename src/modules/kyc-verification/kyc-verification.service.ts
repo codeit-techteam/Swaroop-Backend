@@ -225,6 +225,14 @@ export class KycVerificationService {
             Prisma.InputJsonValue | undefined,
           providerReference: outcome.referenceId ?? null,
         };
+      case 'REVIEW':
+        return {
+          status: KycVerificationStatus.MANUAL_REVIEW,
+          failureCode: outcome.code,
+          failureReason: outcome.reason,
+          result: outcome.details as Prisma.InputJsonValue,
+          providerReference: outcome.referenceId ?? null,
+        };
       case 'UNAVAILABLE':
         return {
           status: KycVerificationStatus.MANUAL_REVIEW,

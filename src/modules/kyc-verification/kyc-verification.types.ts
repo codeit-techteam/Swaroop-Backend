@@ -36,6 +36,14 @@ export type KycProviderOutcome =
       details?: KycVerificationDetails;
       referenceId?: string | null;
     }
+  | {
+      /** Provider answered, but the record needs an admin decision. */
+      outcome: 'REVIEW';
+      code: string;
+      reason: string;
+      details: KycVerificationDetails;
+      referenceId?: string | null;
+    }
   | { outcome: 'UNAVAILABLE'; code: string; reason: string }
   | { outcome: 'NOT_CONFIGURED' };
 

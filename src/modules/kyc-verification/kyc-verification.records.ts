@@ -52,6 +52,9 @@ function messageFor(row: KycVerification): string {
     case KycVerificationStatus.FAILED:
       return row.failureReason ?? `${label} verification failed.`;
     case KycVerificationStatus.MANUAL_REVIEW:
+      if (row.failureCode === 'PAN_EVENT_MARKED' && row.failureReason) {
+        return row.failureReason;
+      }
       return (
         MANUAL_REVIEW_MESSAGES[row.failureCode ?? ''] ??
         "We couldn't reach the verification service. You can retry, or continue and the compliance team will verify it manually."
