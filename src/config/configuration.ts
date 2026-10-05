@@ -62,6 +62,10 @@ export type AppConfig = {
     /** IMPORT_MASTER_DATA_AUTO_SEED — insert missing reference data on startup. */
     autoSeedMasterData: boolean;
   };
+  gradeMaster: {
+    /** GRADE_MASTER_BUNDLED_IMPORT — import the bundled Source.One CSV once per file version. */
+    bundledImport: boolean;
+  };
   kyc: {
     pan: KycProviderConfig;
     gst: KycProviderConfig;
@@ -200,6 +204,13 @@ export default (): AppConfig => {
       ),
       autoSeedMasterData: !['false', '0', 'no', 'off'].includes(
         (process.env.IMPORT_MASTER_DATA_AUTO_SEED ?? 'true')
+          .trim()
+          .toLowerCase(),
+      ),
+    },
+    gradeMaster: {
+      bundledImport: !['false', '0', 'no', 'off'].includes(
+        (process.env.GRADE_MASTER_BUNDLED_IMPORT ?? 'true')
           .trim()
           .toLowerCase(),
       ),

@@ -30,6 +30,7 @@
     "catalog:import": "tsx scripts/import-catalog.ts",
     "catalog:sync-remote": "node scripts/sync-catalog-to-remote-api.mjs",
     "import:seed-master": "tsx scripts/seed-import-master-data.ts",
+    "import:grades": "tsx scripts/import-grades.ts",
     "postinstall": "prisma generate"
   },
   "engines": {

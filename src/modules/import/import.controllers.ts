@@ -126,15 +126,23 @@ export class ImportMasterDataController {
 
   @Get('grades')
   @ApiQuery({ name: 'categoryId', required: false })
+  @ApiQuery({ name: 'side', required: false, enum: ImportSide })
   async grades(
     @Query('categoryId') categoryId?: string,
     @Query('search') search?: string,
+    @Query('gradeGroup') gradeGroup?: string,
+    @Query('manufacturer') manufacturer?: string,
+    @Query('side') side?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
     const { items, meta } = await this.master.grades({
       categoryId: categoryId || undefined,
       search: search?.trim() || undefined,
+      gradeGroup: gradeGroup?.trim() || undefined,
+      manufacturer: manufacturer?.trim() || undefined,
+      side:
+        side === ImportSide.BUY || side === ImportSide.SELL ? side : undefined,
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
     });

@@ -558,17 +558,10 @@ export class DemoBootstrapService implements OnModuleInit {
         GradeParentGroup[
           category.parentGroup as keyof typeof GradeParentGroup
         ] ?? GradeParentGroup.POLYMERS;
+      // Insert-only: Grade Master rows are owned by Admin once they exist.
       await this.prisma.gradeCategory.upsert({
         where: { code: category.code },
-        update: {
-          name: category.name,
-          displayName: category.name,
-          parentGroup,
-          status: MasterStatus.ACTIVE,
-          isActive: true,
-          sortOrder: index,
-          deletedAt: null,
-        },
+        update: {},
         create: {
           code: category.code,
           name: category.name,
@@ -591,21 +584,7 @@ export class DemoBootstrapService implements OnModuleInit {
       if (!category) continue;
       await this.prisma.grade.upsert({
         where: { code: grade.code },
-        update: {
-          name: grade.name,
-          displayName: grade.displayName,
-          categoryId: category.id,
-          description: grade.description,
-          applications: grade.applications,
-          status:
-            grade.status === 'ACTIVE'
-              ? GradeStatus.ACTIVE
-              : GradeStatus.INACTIVE,
-          customerVisible: grade.customerVisible,
-          sellerVisible: grade.sellerVisible,
-          sortOrder: index + 1,
-          deletedAt: null,
-        },
+        update: {},
         create: {
           code: grade.code,
           name: grade.name,
@@ -649,15 +628,7 @@ export class DemoBootstrapService implements OnModuleInit {
 
     await this.prisma.grade.upsert({
       where: { code: 'HDPE_FILM' },
-      update: {
-        name: 'HD Film',
-        displayName: 'HD Film',
-        categoryId: category.id,
-        status: GradeStatus.ACTIVE,
-        customerVisible: true,
-        sellerVisible: true,
-        deletedAt: null,
-      },
+      update: {},
       create: {
         code: 'HDPE_FILM',
         name: 'HD Film',
@@ -952,7 +923,7 @@ export class DemoBootstrapService implements OnModuleInit {
       }));
 
     const grades = await this.prisma.grade.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, source: null },
       select: { id: true, code: true },
     });
     const gradeByCode = new Map(grades.map((g) => [g.code.toUpperCase(), g]));

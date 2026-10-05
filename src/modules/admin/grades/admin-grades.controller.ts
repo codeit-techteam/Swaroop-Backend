@@ -19,6 +19,7 @@ import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
   CreateGradeDto,
+  GradeFacetQueryDto,
   GradeQueryDto,
   UpdateGradeDto,
   UpdateGradeStatusDto,
@@ -52,6 +53,23 @@ export class AdminGradesController {
   async findAll(@Query() query: GradeQueryDto) {
     const { items, meta } = await this.grades.findAll(query, 'admin');
     return successResponse(items, 'Grades retrieved', meta);
+  }
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Grade Master KPIs' })
+  async stats() {
+    return successResponse(await this.grades.stats(), 'Grade stats retrieved');
+  }
+
+  @Get('facets')
+  @ApiOperation({
+    summary: 'Category, grade group and manufacturer filter options',
+  })
+  async facets(@Query() query: GradeFacetQueryDto) {
+    return successResponse(
+      await this.grades.facets('admin', query),
+      'Grade facets retrieved',
+    );
   }
 
   @Get(':id')

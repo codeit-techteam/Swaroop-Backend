@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
@@ -104,6 +104,13 @@ export class UpdateGradeVisibilityDto {
   sellerVisible?: boolean;
 }
 
+/** Query strings arrive as "true"/"false"; Boolean("false") would be true. */
+const toBoolean = ({ value }: { value: unknown }) => {
+  if (value === true || value === 'true' || value === '1') return true;
+  if (value === false || value === 'false' || value === '0') return false;
+  return value;
+};
+
 export class GradeQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ enum: GradeStatus })
   @IsOptional()
@@ -115,20 +122,71 @@ export class GradeQueryDto extends PaginationQueryDto {
   @IsUUID()
   categoryId?: string;
 
+  @ApiPropertyOptional({ description: 'Category code, e.g. HDPE or PP_CP' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  category?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsUUID()
   subcategoryId?: string;
 
+  @ApiPropertyOptional({ description: 'Source.One Grade Group (exact)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  gradeGroup?: string;
+
+  @ApiPropertyOptional({
+    description: 'Manufacturer (exact, case-insensitive)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  manufacturer?: string;
+
+  @ApiPropertyOptional({ example: 'SOURCE_ONE' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(32)
+  source?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(toBoolean)
+  @IsBoolean()
+  inTodaysDelhiPriceList?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Transform(toBoolean)
   @IsBoolean()
   customerVisible?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()
-  @Type(() => Boolean)
+  @Transform(toBoolean)
   @IsBoolean()
   sellerVisible?: boolean;
+}
+
+export class GradeFacetQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  category?: string;
+
+  @ApiPropertyOptional({ description: 'Filter the manufacturer list' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  search?: string;
 }

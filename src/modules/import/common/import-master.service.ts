@@ -8,6 +8,7 @@ import {
   ImportQuantityUnit,
   ImportReadyStockType,
   ImportShipmentMode,
+  ImportSide,
   ImportShipmentPermission,
   ImportShipmentStatus,
   ImportShipmentType,
@@ -21,10 +22,12 @@ import {
   paginationMeta,
   skipTake,
 } from '../../master-data/common/pagination.js';
+import { gradeSearch } from '../../master-data/grades/grades.service.js';
 import type { ImportFieldError } from '../domain/import.errors.js';
 import { ImportSettingsService } from './import-settings.service.js';
 
 export type ListingReferenceIds = {
+  side?: ImportSide | null;
   categoryId?: string | null;
   gradeId?: string | null;
   brandId?: string | null;
@@ -44,7 +47,14 @@ type Named = { id: string; code: string; name: string };
 export type ListingSnapshot = {
   capturedAt: string;
   category: Named | null;
-  grade: (Named & { categoryId: string }) | null;
+  grade:
+    | (Named & {
+        categoryId: string;
+        gradeNo?: string | null;
+        gradeGroup?: string | null;
+        manufacturer?: string | null;
+      })
+    | null;
   customGradeName: string | null;
   brand: Named | null;
   originCountry: Named | null;
@@ -187,6 +197,9 @@ export class ImportMasterService {
   async grades(query: {
     categoryId?: string;
     search?: string;
+    gradeGroup?: string;
+    manufacturer?: string;
+    side?: ImportSide;
     page?: number;
     limit?: number;
   }) {
@@ -194,21 +207,21 @@ export class ImportMasterService {
     const where: Prisma.GradeWhereInput = {
       status: GradeStatus.ACTIVE,
       deletedAt: null,
+      ...(query.side === ImportSide.BUY ? { customerVisible: true } : {}),
+      ...(query.side === ImportSide.SELL ? { sellerVisible: true } : {}),
       ...(query.categoryId ? { categoryId: query.categoryId } : {}),
-      ...(query.search
-        ? {
-            OR: [
-              { name: insensitive(query.search) },
-              { displayName: insensitive(query.search) },
-              { code: insensitive(query.search) },
-            ],
-          }
+      ...(query.gradeGroup
+        ? { gradeGroup: { equals: query.gradeGroup, mode: 'insensitive' } }
         : {}),
+      ...(query.manufacturer
+        ? { manufacturer: { equals: query.manufacturer, mode: 'insensitive' } }
+        : {}),
+      ...(query.search ? { OR: gradeSearch(query.search) } : {}),
     };
     const [items, total] = await Promise.all([
       this.prisma.grade.findMany({
         where,
-        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        orderBy: [{ sortOrder: 'asc' }, { displayName: 'asc' }, { id: 'asc' }],
         skip,
         take,
         select: {
@@ -218,6 +231,11 @@ export class ImportMasterService {
           displayName: true,
           categoryId: true,
           hsnCode: true,
+          gradeGroup: true,
+          gradeNo: true,
+          manufacturer: true,
+          fullGradeName: true,
+          inTodaysDelhiPriceList: true,
         },
       }),
       this.prisma.grade.count({ where }),
@@ -418,6 +436,16 @@ export class ImportMasterService {
     if (category && !category.isActive)
       bad('categoryId', 'Selected product is not available.');
     check('gradeId', ids.gradeId, grade, 'grade');
+    if (
+      grade &&
+      ((ids.side === ImportSide.BUY && !grade.customerVisible) ||
+        (ids.side === ImportSide.SELL && !grade.sellerVisible))
+    ) {
+      bad(
+        'gradeId',
+        'Selected grade is not available. Choose an active grade.',
+      );
+    }
     if (grade && ids.categoryId && grade.categoryId !== ids.categoryId) {
       bad('gradeId', 'The grade does not belong to the selected product.');
     }
@@ -512,6 +540,9 @@ export class ImportMasterService {
               code: grade.code,
               name: grade.displayName ?? grade.name,
               categoryId: grade.categoryId,
+              gradeNo: grade.gradeNo,
+              gradeGroup: grade.gradeGroup,
+              manufacturer: grade.manufacturer,
             }
           : null,
         customGradeName,

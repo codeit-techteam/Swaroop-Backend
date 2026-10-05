@@ -118,6 +118,7 @@ export class ProductsService {
         id: gradeId,
         deletedAt: null,
         status: GradeStatus.ACTIVE,
+        sellerVisible: true,
       },
     });
     if (!grade) {
@@ -126,6 +127,14 @@ export class ProductsService {
       );
     }
     return grade;
+  }
+
+  private assertMarketplaceGrade(grade: { customerVisible: boolean }) {
+    if (!grade.customerVisible) {
+      throw new BadRequestException(
+        'This grade is not currently available on the customer marketplace. Save without publishing or choose another grade.',
+      );
+    }
   }
 
   /**
@@ -253,13 +262,7 @@ export class ProductsService {
       );
     }
 
-    // Publishing to marketplace requires the Grade Master row to be customer-visible.
-    if (publish && !grade.customerVisible) {
-      await this.prisma.grade.update({
-        where: { id: grade.id },
-        data: { customerVisible: true },
-      });
-    }
+    if (publish) this.assertMarketplaceGrade(grade);
 
     const technicalSpecs: Record<string, unknown> = {
       ...(dto.technicalSpecs ?? {}),
@@ -737,14 +740,9 @@ export class ProductsService {
     if (publish && gradeId) {
       const grade = await this.prisma.grade.findFirst({
         where: { id: gradeId, deletedAt: null },
-        select: { id: true, customerVisible: true },
+        select: { customerVisible: true },
       });
-      if (grade && !grade.customerVisible) {
-        await this.prisma.grade.update({
-          where: { id: grade.id },
-          data: { customerVisible: true },
-        });
-      }
+      if (grade) this.assertMarketplaceGrade(grade);
     }
 
     const warehouse = await this.resolveListingWarehouse(ctx, dto);

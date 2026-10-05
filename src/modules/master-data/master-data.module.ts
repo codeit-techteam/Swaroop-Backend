@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuditModule } from '../audit/index.js';
 import { AuthModule } from '../auth/index.js';
 import { ApplicationsController } from './applications/applications.controller.js';
 import { ApplicationsService } from './applications/applications.service.js';
@@ -20,7 +21,7 @@ import { WarehousesController } from './warehouses/warehouses.controller.js';
 import { WarehousesService } from './warehouses/warehouses.service.js';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, AuditModule],
   controllers: [
     GradesController,
     CategoriesController,

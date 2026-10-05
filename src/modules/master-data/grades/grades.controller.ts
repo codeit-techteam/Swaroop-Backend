@@ -20,6 +20,7 @@ import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
   CreateGradeDto,
+  GradeFacetQueryDto,
   GradeQueryDto,
   UpdateGradeDto,
   UpdateGradeStatusDto,
@@ -67,6 +68,30 @@ export class GradesController {
   async findSeller(@Query() query: GradeQueryDto) {
     const { items, meta } = await this.gradesService.findAll(query, 'seller');
     return successResponse(items, 'Grades retrieved', meta);
+  }
+
+  @Get('customer/facets')
+  @Roles(RoleCode.CUSTOMER, RoleCode.ADMIN, RoleCode.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Category, grade group and manufacturer options for customers',
+  })
+  async customerFacets(@Query() query: GradeFacetQueryDto) {
+    return successResponse(
+      await this.gradesService.facets('customer', query),
+      'Grade facets retrieved',
+    );
+  }
+
+  @Get('seller/facets')
+  @Roles(RoleCode.SELLER, RoleCode.ADMIN, RoleCode.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'Category, grade group and manufacturer options for sellers',
+  })
+  async sellerFacets(@Query() query: GradeFacetQueryDto) {
+    return successResponse(
+      await this.gradesService.facets('seller', query),
+      'Grade facets retrieved',
+    );
   }
 
   @Get(':id')

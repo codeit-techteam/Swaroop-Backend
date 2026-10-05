@@ -1627,6 +1627,27 @@ model Grade {
   sortOrder       Int         @default(0) @map("sort_order")
   hsnCode         String?     @map("hsn_code")
   metadata        Json?
+
+  /// Source.One master columns, stored exactly as provided (NULL when blank).
+  gradeGroup             String?  @map("grade_group")
+  gradeNo                String?  @map("grade_no")
+  manufacturer           String?
+  fullGradeName          String?  @map("full_grade_name")
+  inTodaysDelhiPriceList Boolean  @default(false) @map("in_todays_delhi_price_list")
+  priceTodayRsKg         Decimal? @map("price_today_rs_kg") @db.Decimal(12, 2)
+  producerPriceRsKg      Decimal? @map("producer_price_rs_kg") @db.Decimal(12, 2)
+  producerPriceType      String?  @map("producer_price_type")
+  /// e.g. SOURCE_ONE. NULL for grades created in the Admin panel.
+  source                 String?
+  /// Case-insensitive Category|Grade Group|Grade No.|Manufacturer key used for re-imports.
+  sourceKey              String?  @map("source_key")
+  /// File name and CSV line number(s) the record was built from.
+  sourceReference        String?  @map("source_reference")
+  /// Incremented whenever an import changes Source.One columns.
+  version                Int      @default(1)
+  lastImportedAt         DateTime? @map("last_imported_at")
+  importBatchId          String?  @map("import_batch_id") @db.Uuid
+
   createdById     String?     @map("created_by_id") @db.Uuid
   updatedById     String?     @map("updated_by_id") @db.Uuid
   createdAt       DateTime    @default(now()) @map("created_at")
@@ -1635,6 +1656,7 @@ model Grade {
 
   category             GradeCategory         @relation(fields: [categoryId], references: [id])
   subcategory          Subcategory?          @relation(fields: [subcategoryId], references: [id])
+  importBatch          GradeImportBatch?     @relation(fields: [importBatchId], references: [id])
   gradeApplications    GradeApplication[]
   products             Product[]
   offers               Offer[]
@@ -1647,10 +1669,54 @@ model Grade {
   @@index([categoryId])
   @@index([subcategoryId])
   @@index([status])
+  @@unique([source, sourceKey])
   @@index([name])
   @@index([code])
   @@index([customerVisible, sellerVisible, status])
+  @@index([manufacturer])
+  @@index([gradeGroup])
+  @@index([gradeNo])
+  @@index([inTodaysDelhiPriceList])
   @@map("grades")
+}
+
+enum GradeImportStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// One CSV import run into the Grade Master (Admin upload, CLI or bundled file).
+model GradeImportBatch {
+  id               String            @id @default(uuid()) @db.Uuid
+  source           String
+  fileName         String            @map("file_name")
+  fileSha256       String            @map("file_sha256")
+  status           GradeImportStatus @default(RUNNING)
+  totalRows        Int               @default(0) @map("total_rows")
+  validRows        Int               @default(0) @map("valid_rows")
+  insertedRows     Int               @default(0) @map("inserted_rows")
+  updatedRows      Int               @default(0) @map("updated_rows")
+  unchangedRows    Int               @default(0) @map("unchanged_rows")
+  skippedRows      Int               @default(0) @map("skipped_rows")
+  failedRows       Int               @default(0) @map("failed_rows")
+  duplicateRows    Int               @default(0) @map("duplicate_rows")
+  categoriesCreated Int              @default(0) @map("categories_created")
+  gradeGroupsCreated Int             @default(0) @map("grade_groups_created")
+  /// Validation findings, duplicate merges and source-only notices.
+  report           Json?
+  errorMessage     String?           @map("error_message")
+  trigger          String            @default("ADMIN")
+  createdById      String?           @map("created_by_id") @db.Uuid
+  startedAt        DateTime          @default(now()) @map("started_at")
+  completedAt      DateTime?         @map("completed_at")
+
+  grades Grade[]
+
+  @@index([source, status])
+  @@index([fileSha256])
+  @@index([startedAt])
+  @@map("grade_import_batches")
 }
 
 model Unit {
