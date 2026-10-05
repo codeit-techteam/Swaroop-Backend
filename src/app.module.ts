@@ -82,6 +82,7 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
                 'JWT_SECRET',
                 'DATABASE_URL',
                 'CLOUDFLARE_R2_SECRET_ACCESS_KEY',
+                'SUREPASS_API_TOKEN',
                 'CLOUDFLARE_R2_ACCESS_KEY_ID',
                 '*.password',
                 '*.passwordHash',

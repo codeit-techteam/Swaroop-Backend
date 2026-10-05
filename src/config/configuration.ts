@@ -67,6 +67,7 @@ export type AppConfig = {
     bundledImport: boolean;
   };
   kyc: {
+    surepass: SurepassConfig;
     pan: KycProviderConfig;
     gst: KycProviderConfig;
     requestTimeoutMs: number;
@@ -86,6 +87,42 @@ export type KycProviderConfig = {
   apiKey: string;
   clientId: string;
 };
+
+/** Surepass KYC API. Takes precedence over the generic PAN_/GST_ HTTP adapters when the token and base URL are set. */
+export type SurepassConfig = {
+  baseUrl: string;
+  token: string;
+  environment: 'production' | 'sandbox';
+  panPath: string;
+  gstPath: string;
+};
+
+const SUREPASS_API_PREFIX = '/api/v1';
+
+/** Surepass serves KYC routes under /api/v1; a bare host URL gets that prefix. */
+export const normalizeSurepassBaseUrl = (raw: string | undefined): string => {
+  const trimmed = (raw ?? '').trim().replace(/\/+$/, '');
+  if (!trimmed) return '';
+  try {
+    const url = new URL(trimmed);
+    return url.pathname === '' || url.pathname === '/'
+      ? `${url.origin}${SUREPASS_API_PREFIX}`
+      : trimmed;
+  } catch {
+    return trimmed;
+  }
+};
+
+const surepassConfig = (): SurepassConfig => ({
+  baseUrl: normalizeSurepassBaseUrl(process.env.SUREPASS_API_BASE_URL),
+  token: (process.env.SUREPASS_API_TOKEN ?? '').trim(),
+  environment:
+    (process.env.SUREPASS_ENVIRONMENT ?? '').trim().toLowerCase() === 'sandbox'
+      ? 'sandbox'
+      : 'production',
+  panPath: (process.env.SUREPASS_PAN_PATH || '/pan/pan').trim(),
+  gstPath: (process.env.SUREPASS_GST_PATH || '/corporate/gstin').trim(),
+});
 
 const kycProvider = (prefix: 'PAN' | 'GST'): AppConfig['kyc']['pan'] => ({
   name: (process.env[`${prefix}_VERIFICATION_PROVIDER`] || 'http').trim(),
@@ -216,6 +253,7 @@ export default (): AppConfig => {
       ),
     },
     kyc: {
+      surepass: surepassConfig(),
       pan: kycProvider('PAN'),
       gst: kycProvider('GST'),
       requestTimeoutMs: Number(

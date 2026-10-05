@@ -21,9 +21,11 @@ import { DocumentStateService } from '../../documents/common/document-state.serv
 import { contentDisposition } from '../../documents/services/documents-core.service.js';
 import { lockCustomerKyc } from '../../customers/kyc/customer-kyc.lock.js';
 import {
+  hasPanGstMismatch,
   latestVerifications,
+  PAN_GST_MISMATCH_MESSAGE,
   toVerificationView,
-} from '../../customers/kyc/verification/kyc-verification.records.js';
+} from '../../kyc-verification/kyc-verification.records.js';
 import {
   openChangeRequest,
   resolvedChangeRequest,
@@ -47,14 +49,27 @@ import {
 } from '../../sellers/onboarding/onboarding-documents.slots.js';
 import { AdminAuditService } from '../common/admin-audit.service.js';
 import { AdminSellersService } from '../sellers/admin-sellers.service.js';
-import type {
-  AdminKycApproveDto,
-  AdminKycEntityType,
-  AdminKycQueryDto,
-  AdminKycRejectDto,
-  AdminKycRequestChangesDto,
-  AdminKycStatus,
+import {
+  ADMIN_KYC_STATUSES,
+  type AdminKycApproveDto,
+  type AdminKycEntityType,
+  type AdminKycQueryDto,
+  type AdminKycRejectDto,
+  type AdminKycRequestChangesDto,
+  type AdminKycStatus,
+  type AdminKycVerificationFilter,
 } from './admin-kyc.dto.js';
+
+type LatestPair = { pan: KycVerification | null; gst: KycVerification | null };
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function verificationState(
+  row: KycVerification | null,
+): AdminKycVerificationFilter {
+  return row?.status ?? 'NOT_STARTED';
+}
 
 /** Upper bound per entity type for the merged seller + customer KYC queue. */
 const MAX_ROWS_PER_TYPE = 2000;
@@ -211,6 +226,8 @@ const AUDIT_DETAIL_KEYS = [
   'resubmission',
   'fileName',
   'previousStatus',
+  'provider',
+  'source',
 ] as const;
 
 type AuditDetailValue = string | number | boolean | null;
@@ -246,23 +263,80 @@ export class AdminKycService {
 
   async list(query: AdminKycQueryDto) {
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
-    const search = query.search?.trim();
-    const rows = [
-      ...(!query.entityType || query.entityType === 'SELLER'
-        ? await this.sellerRows(search)
-        : []),
-      ...(!query.entityType || query.entityType === 'CUSTOMER'
-        ? await this.customerRows(search)
-        : []),
-    ];
-    const filtered = query.status
-      ? rows.filter((row) => row.kycStatus === query.status)
-      : rows;
+    const rows = await this.allRows(query.entityType, query.search?.trim());
+    const filtered = rows.filter(
+      (row) =>
+        (!query.status || row.kycStatus === query.status) &&
+        (!query.panStatus || row.verification.pan === query.panStatus) &&
+        (!query.gstStatus || row.verification.gst === query.gstStatus) &&
+        (!query.documents ||
+          (query.documents === 'PENDING'
+            ? row.documents.pending > 0
+            : query.documents === 'MISSING'
+              ? row.documents.missing.length > 0
+              : row.documents.rejected > 0)) &&
+        (!query.mismatch || row.verification.mismatch),
+    );
     filtered.sort((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt));
     return {
       items: filtered.slice(skip, skip + take),
       meta: paginationMeta(page, limit, filtered.length),
     };
+  }
+
+  /** Platform-wide KYC counters for the admin dashboard, computed from live records. */
+  async metrics() {
+    const rows = await this.allRows();
+    const byStatus = (entityType?: AdminKycEntityType) =>
+      Object.fromEntries(
+        ADMIN_KYC_STATUSES.map((status) => [
+          status,
+          rows.filter(
+            (row) =>
+              row.kycStatus === status &&
+              (!entityType || row.entityType === entityType),
+          ).length,
+        ]),
+      ) as Record<AdminKycStatus, number>;
+    const verificationCounts = (key: 'pan' | 'gst') => ({
+      verified: rows.filter((row) => row.verification[key] === 'VERIFIED')
+        .length,
+      failed: rows.filter((row) => row.verification[key] === 'FAILED').length,
+      manualReview: rows.filter(
+        (row) => row.verification[key] === 'MANUAL_REVIEW',
+      ).length,
+      notStarted: rows.filter((row) => row.verification[key] === 'NOT_STARTED')
+        .length,
+    });
+    return {
+      totals: {
+        customers: rows.filter((row) => row.entityType === 'CUSTOMER').length,
+        sellers: rows.filter((row) => row.entityType === 'SELLER').length,
+      },
+      status: byStatus(),
+      customers: byStatus('CUSTOMER'),
+      sellers: byStatus('SELLER'),
+      pan: verificationCounts('pan'),
+      gst: verificationCounts('gst'),
+      mismatches: rows.filter((row) => row.verification.mismatch).length,
+      documentsPending: rows.filter((row) => row.documents.pending > 0).length,
+      documentsMissing: rows.filter(
+        (row) =>
+          row.kycStatus !== 'APPROVED' && row.documents.missing.length > 0,
+      ).length,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  private async allRows(entityType?: AdminKycEntityType, search?: string) {
+    return [
+      ...(!entityType || entityType === 'SELLER'
+        ? await this.sellerRows(search)
+        : []),
+      ...(!entityType || entityType === 'CUSTOMER'
+        ? await this.customerRows(search)
+        : []),
+    ];
   }
 
   async detail(entityType: AdminKycEntityType, id: string) {
@@ -272,15 +346,34 @@ export class AdminKycService {
         select: sellerSelect,
       });
       if (!seller) throw new NotFoundException('Seller not found');
-      const [docs, banks, history] = await Promise.all([
-        this.kycDocuments('SELLER', [id]),
-        this.bankSummaries([seller.organizationId]),
-        this.documentHistory('SELLER', id),
-      ]);
+      const [docs, banks, history, latest, verificationHistory] =
+        await Promise.all([
+          this.kycDocuments('SELLER', [id]),
+          this.bankSummaries([seller.organizationId]),
+          this.documentHistory('SELLER', id),
+          latestVerifications(this.prisma, EntityOwnerType.SELLER, id),
+          this.verificationHistory(EntityOwnerType.SELLER, id),
+        ]);
       const ownDocs = docs.get(id) ?? [];
-      const row = this.toSellerRow(seller, ownDocs, banks);
+      const verifications = new Map([[id, latest]]);
+      const row = this.toSellerRow(seller, ownDocs, banks, verifications);
       const onboarding = seller.onboarding;
       const address = readJsonObject(onboarding?.addressData);
+      const gst = latest.gst ? toVerificationView(latest.gst).details : {};
+      const onboardingAddress =
+        [
+          str(address.line1),
+          str(address.line2),
+          str(address.city),
+          str(address.state),
+          str(address.pincode),
+        ]
+          .filter(Boolean)
+          .join(', ') || null;
+      const legalName =
+        gst.legalName ??
+        str(readJsonObject(onboarding?.companyData).legalName) ??
+        seller.organization.legalName;
       return {
         ...row,
         documentHistory: this.groupHistory(
@@ -288,24 +381,36 @@ export class AdminKycService {
           history,
         ),
         slots: this.slotViews(SELLER_ONBOARDING_DOCUMENT_SLOTS, ownDocs),
-        blockers: this.approvalBlockers(
-          SELLER_ONBOARDING_DOCUMENT_SLOTS,
-          ownDocs,
-        ),
+        blockers: [
+          ...this.approvalBlockers(SELLER_ONBOARDING_DOCUMENT_SLOTS, ownDocs),
+          ...this.verificationBlockers(latest, row.organization.gstin),
+        ],
+        warnings: this.verificationWarnings(latest),
         details: {
-          legalName:
-            str(readJsonObject(onboarding?.companyData).legalName) ??
-            seller.organization.legalName,
-          address:
-            [
-              str(address.line1),
-              str(address.line2),
-              str(address.city),
-              str(address.state),
-              str(address.pincode),
-            ]
-              .filter(Boolean)
-              .join(', ') || null,
+          legalName,
+          address: gst.address ?? onboardingAddress,
+        },
+        business: {
+          name: seller.organization.name,
+          legalName,
+          tradeName: gst.tradeName ?? null,
+          businessType:
+            seller.organization.businessType ?? gst.taxpayerType ?? null,
+          constitution:
+            seller.organization.constitutionType ?? gst.constitution ?? null,
+          address: gst.address ?? onboardingAddress,
+          state: gst.state ?? str(address.state),
+          pincode: gst.pincode ?? str(address.pincode),
+        },
+        verifications: {
+          pan: latest.pan ? toVerificationView(latest.pan) : null,
+          gst: latest.gst ? toVerificationView(latest.gst) : null,
+          mismatch: hasPanGstMismatch(
+            latest.pan,
+            latest.gst,
+            row.organization.gstin,
+          ),
+          history: verificationHistory.map(toVerificationView),
         },
       };
     }
@@ -320,22 +425,18 @@ export class AdminKycService {
         this.kycDocuments('CUSTOMER', [id]),
         this.bankSummaries([customer.organizationId]),
         latestVerifications(this.prisma, EntityOwnerType.CUSTOMER, id),
-        this.prisma.kycVerification.findMany({
-          where: { ownerType: EntityOwnerType.CUSTOMER, ownerId: id },
-          orderBy: { createdAt: 'desc' },
-          take: 20,
-        }),
+        this.verificationHistory(EntityOwnerType.CUSTOMER, id),
         this.documentHistory('CUSTOMER', id),
       ]);
     const ownDocs = docs.get(id) ?? [];
     const gst = latest.gst ? toVerificationView(latest.gst).details : {};
     const org = customer.organization;
     return {
-      ...this.toCustomerRow(customer, ownDocs, banks),
+      ...this.toCustomerRow(customer, ownDocs, banks, new Map([[id, latest]])),
       slots: this.slotViews(CUSTOMER_KYC_DOCUMENT_SLOTS, ownDocs),
       blockers: [
         ...this.approvalBlockers(CUSTOMER_KYC_DOCUMENT_SLOTS, ownDocs),
-        ...this.verificationBlockers(latest),
+        ...this.verificationBlockers(latest, org.gstin),
       ],
       warnings: this.verificationWarnings(latest),
       details: {
@@ -363,6 +464,7 @@ export class AdminKycService {
       verifications: {
         pan: latest.pan ? toVerificationView(latest.pan) : null,
         gst: latest.gst ? toVerificationView(latest.gst) : null,
+        mismatch: hasPanGstMismatch(latest.pan, latest.gst, org.gstin),
         history: verificationHistory.map(toVerificationView),
       },
       documentHistory: this.groupHistory(
@@ -537,20 +639,24 @@ export class AdminKycService {
     dto: AdminKycApproveDto,
   ) {
     if (entityType === 'SELLER') {
-      await this.sellers.approve(id, actorUserId, { notes: dto.notes });
+      await this.approveSeller(id, actorUserId, dto);
       return this.detail(entityType, id);
     }
 
     const customer = await this.requireCustomer(id);
     const initial = readCustomerKycState(customer.metadata);
     this.assertCanApprove(initial.status);
-    const [docs, verifications] = await Promise.all([
+    const [docs, verifications, organization] = await Promise.all([
       this.kycDocuments('CUSTOMER', [id]).then((map) => map.get(id) ?? []),
       latestVerifications(this.prisma, EntityOwnerType.CUSTOMER, id),
+      this.prisma.organization.findUniqueOrThrow({
+        where: { id: customer.organizationId },
+        select: { gstin: true },
+      }),
     ]);
     const blockers = [
       ...this.approvalBlockers(CUSTOMER_KYC_DOCUMENT_SLOTS, docs),
-      ...this.verificationBlockers(verifications),
+      ...this.verificationBlockers(verifications, organization.gstin),
     ];
     if (blockers.length) {
       throw new BadRequestException(
@@ -857,11 +963,100 @@ export class AdminKycService {
     );
   }
 
-  private verificationBlockers(verifications: {
-    pan: KycVerification | null;
-    gst: KycVerification | null;
-  }): string[] {
+  /**
+   * Seller approval goes through AdminSellersService; PAN/GST verification is
+   * enforced first, and manual-review results are confirmed by the approval.
+   */
+  private async approveSeller(
+    id: string,
+    actorUserId: string,
+    dto: AdminKycApproveDto,
+  ) {
+    const seller = await this.prisma.sellerProfile.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        organization: { select: { gstin: true } },
+        onboarding: { select: { gstData: true } },
+      },
+    });
+    if (!seller) throw new NotFoundException('Seller not found');
+    const latest = await latestVerifications(
+      this.prisma,
+      EntityOwnerType.SELLER,
+      id,
+    );
+    const gstin =
+      seller.organization.gstin ??
+      str(readJsonObject(seller.onboarding?.gstData).gstin);
+    const blockers = this.verificationBlockers(latest, gstin);
+    if (blockers.length) {
+      throw new BadRequestException(
+        `KYC cannot be approved yet: ${blockers.join(', ')}`,
+      );
+    }
+
+    await this.sellers.approve(id, actorUserId, { notes: dto.notes });
+
+    const now = new Date();
+    const manualIds = [latest.pan, latest.gst]
+      .filter(
+        (row): row is KycVerification =>
+          row?.status === KycVerificationStatus.MANUAL_REVIEW,
+      )
+      .map((row) => row.id);
+    await this.prisma.$transaction(async (tx) => {
+      if (manualIds.length) {
+        await tx.kycVerification.updateMany({
+          where: {
+            id: { in: manualIds },
+            status: KycVerificationStatus.MANUAL_REVIEW,
+          },
+          data: {
+            status: KycVerificationStatus.VERIFIED,
+            verifiedAt: now,
+            reviewedById: actorUserId,
+            reviewedAt: now,
+          },
+        });
+      }
+      if (latest.pan || latest.gst) {
+        await tx.sellerVerification.updateMany({
+          where: { sellerProfileId: id },
+          data: {
+            ...(latest.pan ? { panVerified: true } : {}),
+            ...(latest.gst ? { gstVerified: true } : {}),
+          },
+        });
+      }
+    });
+    if (manualIds.length) {
+      await this.audit.log({
+        action: 'SELLER_KYC_IDENTITY_MANUALLY_VERIFIED',
+        actorUserId,
+        entityType: EntityOwnerType.SELLER,
+        entityId: id,
+        newData: { manuallyVerifiedIds: manualIds },
+        metadata: { actorRole: 'ADMIN' },
+      });
+    }
+  }
+
+  private verificationHistory(ownerType: EntityOwnerType, ownerId: string) {
+    return this.prisma.kycVerification.findMany({
+      where: { ownerType, ownerId },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+  }
+
+  private verificationBlockers(
+    verifications: LatestPair,
+    gstin?: string | null,
+  ): string[] {
     const blockers: string[] = [];
+    if (hasPanGstMismatch(verifications.pan, verifications.gst, gstin)) {
+      blockers.push(PAN_GST_MISMATCH_MESSAGE);
+    }
     for (const [label, row] of [
       ['PAN', verifications.pan],
       ['GST', verifications.gst],
@@ -877,10 +1072,7 @@ export class AdminKycService {
   }
 
   /** Non-blocking notes the reviewer must acknowledge before approving. */
-  private verificationWarnings(verifications: {
-    pan: KycVerification | null;
-    gst: KycVerification | null;
-  }): string[] {
+  private verificationWarnings(verifications: LatestPair): string[] {
     const warnings: string[] = [];
     for (const [label, row, doc] of [
       ['PAN', verifications.pan, 'PAN card'],
@@ -980,12 +1172,36 @@ export class AdminKycService {
     if (!search) return undefined;
     const contains = { contains: search, mode: Prisma.QueryMode.insensitive };
     return [
+      ...(UUID_PATTERN.test(search) ? [{ id: search }] : []),
       { organization: { name: contains } },
       { organization: { legalName: contains } },
       { organization: { gstin: contains } },
+      { organization: { pan: contains } },
       { user: { email: contains } },
       { user: { phone: contains } },
+      { user: { displayName: contains } },
     ];
+  }
+
+  /** Latest PAN and GST attempt per owner, in one query. */
+  private async latestVerificationMap(
+    ownerType: EntityOwnerType,
+    ownerIds: string[],
+  ): Promise<Map<string, LatestPair>> {
+    const result = new Map<string, LatestPair>();
+    if (!ownerIds.length) return result;
+    const rows = await this.prisma.kycVerification.findMany({
+      where: { ownerType, ownerId: { in: ownerIds } },
+      orderBy: { createdAt: 'desc' },
+      distinct: ['ownerId', 'type'],
+    });
+    for (const row of rows) {
+      const pair = result.get(row.ownerId) ?? { pan: null, gst: null };
+      if (row.type === 'PAN') pair.pan = row;
+      else pair.gst = row;
+      result.set(row.ownerId, pair);
+    }
+    return result;
   }
 
   private async sellerRows(search?: string) {
@@ -995,15 +1211,19 @@ export class AdminKycService {
       orderBy: { updatedAt: 'desc' },
       take: MAX_ROWS_PER_TYPE,
     });
-    const [docs, banks] = await Promise.all([
+    const [docs, banks, verifications] = await Promise.all([
       this.kycDocuments(
         'SELLER',
         sellers.map((s) => s.id),
       ),
       this.bankSummaries(sellers.map((s) => s.organizationId)),
+      this.latestVerificationMap(
+        EntityOwnerType.SELLER,
+        sellers.map((s) => s.id),
+      ),
     ]);
     return sellers.map((seller) =>
-      this.toSellerRow(seller, docs.get(seller.id) ?? [], banks),
+      this.toSellerRow(seller, docs.get(seller.id) ?? [], banks, verifications),
     );
   }
 
@@ -1014,15 +1234,24 @@ export class AdminKycService {
       orderBy: { updatedAt: 'desc' },
       take: MAX_ROWS_PER_TYPE,
     });
-    const [docs, banks] = await Promise.all([
+    const [docs, banks, verifications] = await Promise.all([
       this.kycDocuments(
         'CUSTOMER',
         customers.map((c) => c.id),
       ),
       this.bankSummaries(customers.map((c) => c.organizationId)),
+      this.latestVerificationMap(
+        EntityOwnerType.CUSTOMER,
+        customers.map((c) => c.id),
+      ),
     ]);
     return customers.map((customer) =>
-      this.toCustomerRow(customer, docs.get(customer.id) ?? [], banks),
+      this.toCustomerRow(
+        customer,
+        docs.get(customer.id) ?? [],
+        banks,
+        verifications,
+      ),
     );
   }
 
@@ -1030,6 +1259,7 @@ export class AdminKycService {
     seller: SellerRow,
     docs: KycDocumentRow[],
     banks: Map<string, BankSummary>,
+    verifications: Map<string, LatestPair>,
   ) {
     const onboarding = seller.onboarding;
     const reopened =
@@ -1079,6 +1309,7 @@ export class AdminKycService {
       bank: onboardingBank ?? banks.get(seller.organizationId) ?? null,
       slots: SELLER_ONBOARDING_DOCUMENT_SLOTS,
       docs,
+      verifications: verifications.get(seller.id),
       createdAt: seller.createdAt,
       updatedAt: onboarding?.updatedAt ?? seller.updatedAt,
     });
@@ -1088,6 +1319,7 @@ export class AdminKycService {
     customer: CustomerRow,
     docs: KycDocumentRow[],
     banks: Map<string, BankSummary>,
+    verifications: Map<string, LatestPair>,
   ) {
     const kyc = readCustomerKycState(customer.metadata);
     return this.baseRow({
@@ -1111,6 +1343,7 @@ export class AdminKycService {
       bank: banks.get(customer.organizationId) ?? null,
       slots: CUSTOMER_KYC_DOCUMENT_SLOTS,
       docs,
+      verifications: verifications.get(customer.id),
       createdAt: customer.createdAt,
       updatedAt: customer.updatedAt,
     });
@@ -1131,16 +1364,23 @@ export class AdminKycService {
     bank: BankSummary | null;
     slots: readonly SlotDefinition[];
     docs: KycDocumentRow[];
+    verifications?: LatestPair;
     createdAt: Date;
     updatedAt: Date;
   }) {
     const current = this.currentDocuments(input.slots, input.docs);
     const latestDoc = input.docs[0];
+    const pan = input.verifications?.pan ?? null;
+    const gst = input.verifications?.gst ?? null;
+    const latestAttempt = [pan, gst]
+      .filter((row): row is KycVerification => Boolean(row))
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())[0];
     const lastActivity = [
       input.submittedAt,
       input.reviewedAt,
       iso(input.updatedAt),
       iso(latestDoc?.createdAt),
+      iso(latestAttempt?.updatedAt),
     ]
       .filter((value): value is string => Boolean(value))
       .sort()
@@ -1185,9 +1425,19 @@ export class AdminKycService {
           )
           .map((def) => def.name),
       },
-      source: latestDoc
-        ? str(readJsonObject(latestDoc.metadata).uploadSource)
-        : null,
+      verification: {
+        pan: verificationState(pan),
+        gst: verificationState(gst),
+        panMasked: pan?.identifierMasked ?? null,
+        gstinMasked: gst?.identifierMasked ?? null,
+        mismatch: hasPanGstMismatch(pan, gst, input.organization.gstin),
+      },
+      source:
+        (latestDoc
+          ? str(readJsonObject(latestDoc.metadata).uploadSource)
+          : null) ??
+        latestAttempt?.source ??
+        null,
       createdAt: input.createdAt.toISOString(),
       lastActivityAt: lastActivity ?? input.createdAt.toISOString(),
     };

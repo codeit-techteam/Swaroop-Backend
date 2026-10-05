@@ -8,8 +8,10 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
 import {
@@ -28,6 +30,7 @@ import {
 } from './customer-kyc.dto.js';
 import { CustomerKycService } from './customer-kyc.service.js';
 import { CustomerKycVerificationService } from './verification/customer-kyc-verification.service.js';
+import { kycRequestMeta } from '../../kyc-verification/kyc-request-meta.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 
@@ -62,14 +65,21 @@ export class CustomerKycController {
     message: 'Too many PAN verification attempts. Please try again later.',
   })
   @ApiOperation({
-    summary: 'Verify the business PAN with the configured provider',
+    summary: 'Verify the business PAN with the configured provider (Surepass)',
+    description:
+      'Customer role only. The PAN is validated, verified server-side, stored as a hash plus masked value, and audited. Returns the normalized result; `mismatch` is true when the verified GSTIN belongs to another PAN. Errors: 400 invalid format or KYC locked, 409 verification already in progress, 429 rate limited.',
   })
   async verifyPan(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: VerifyCustomerPanDto,
+    @Req() request: Request,
   ) {
     return successResponse(
-      await this.verification.verifyPan(user.id, dto.pan),
+      await this.verification.verifyPan(
+        user.id,
+        dto.pan,
+        kycRequestMeta(request, dto.source),
+      ),
       'PAN verification result',
     );
   }
@@ -85,14 +95,22 @@ export class CustomerKycController {
     message: 'Too many GST verification attempts. Please try again later.',
   })
   @ApiOperation({
-    summary: 'Verify the business GSTIN with the configured provider',
+    summary:
+      'Verify the business GSTIN with the configured provider (Surepass)',
+    description:
+      'Customer role only. Returns legal/trade name, GST status, state and other fields the provider reports. `mismatch` is true when the GSTIN is not registered to the verified PAN; submission is blocked until resolved. Errors: 400 invalid format or KYC locked, 409 verification already in progress, 429 rate limited.',
   })
   async verifyGst(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: VerifyCustomerGstDto,
+    @Req() request: Request,
   ) {
     return successResponse(
-      await this.verification.verifyGst(user.id, dto.gstin),
+      await this.verification.verifyGst(
+        user.id,
+        dto.gstin,
+        kycRequestMeta(request, dto.source),
+      ),
       'GST verification result',
     );
   }

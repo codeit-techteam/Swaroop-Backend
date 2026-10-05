@@ -19,6 +19,7 @@ import {
 import { SellerAuditService } from '../common/seller-audit.service.js';
 import { SellerContextService } from '../common/seller-context.service.js';
 import { OnboardingDocumentsService } from './onboarding-documents.service.js';
+import { SellerKycVerificationService } from './seller-kyc-verification.service.js';
 import { readJsonObject } from './onboarding-documents.slots.js';
 import type {
   CreateOnboardingDto,
@@ -40,6 +41,7 @@ export class OnboardingService {
     private readonly sellerContext: SellerContextService,
     private readonly audit: SellerAuditService,
     private readonly onboardingDocuments: OnboardingDocumentsService,
+    private readonly kycVerification: SellerKycVerificationService,
   ) {}
 
   async create(
@@ -53,6 +55,21 @@ export class OnboardingService {
       phone: dto.phone ?? user?.phone,
     });
 
+    const existing = await this.prisma.sellerOnboarding.findUnique({
+      where: { sellerProfileId: ctx.sellerProfileId },
+      select: { status: true },
+    });
+    if (existing && this.isLocked(existing.status)) {
+      throw new BadRequestException(
+        'Onboarding is locked after submission. Contact support for re-verification.',
+      );
+    }
+    const { gstData, panData } =
+      await this.kycVerification.withServerVerificationFields(
+        ctx.sellerProfileId,
+        { gstData: dto.gstData, panData: dto.panData },
+      );
+
     const onboarding = await this.prisma.sellerOnboarding.upsert({
       where: { sellerProfileId: ctx.sellerProfileId },
       update: {
@@ -60,8 +77,8 @@ export class OnboardingService {
         currentStep: dto.currentStep ?? 'company',
         companyData: (dto.companyData ?? undefined) as Prisma.InputJsonValue,
         businessData: (dto.businessData ?? undefined) as Prisma.InputJsonValue,
-        gstData: (dto.gstData ?? undefined) as Prisma.InputJsonValue,
-        panData: (dto.panData ?? undefined) as Prisma.InputJsonValue,
+        gstData: gstData as Prisma.InputJsonValue | undefined,
+        panData: panData as Prisma.InputJsonValue | undefined,
         bankData: (dto.bankData ?? undefined) as Prisma.InputJsonValue,
         addressData: (dto.addressData ?? undefined) as Prisma.InputJsonValue,
         locationData: (dto.locationData ?? undefined) as Prisma.InputJsonValue,
@@ -74,8 +91,8 @@ export class OnboardingService {
         currentStep: dto.currentStep ?? 'company',
         companyData: (dto.companyData ?? undefined) as Prisma.InputJsonValue,
         businessData: (dto.businessData ?? undefined) as Prisma.InputJsonValue,
-        gstData: (dto.gstData ?? undefined) as Prisma.InputJsonValue,
-        panData: (dto.panData ?? undefined) as Prisma.InputJsonValue,
+        gstData: gstData as Prisma.InputJsonValue | undefined,
+        panData: panData as Prisma.InputJsonValue | undefined,
         bankData: (dto.bankData ?? undefined) as Prisma.InputJsonValue,
         addressData: (dto.addressData ?? undefined) as Prisma.InputJsonValue,
         locationData: (dto.locationData ?? undefined) as Prisma.InputJsonValue,
@@ -108,11 +125,7 @@ export class OnboardingService {
     const ctx = await this.sellerContext.requireSeller(userId);
     const existing = await this.get(userId);
 
-    if (
-      existing.status === SellerOnboardingStatus.SUBMITTED ||
-      existing.status === SellerOnboardingStatus.UNDER_REVIEW ||
-      existing.status === SellerOnboardingStatus.APPROVED
-    ) {
+    if (this.isLocked(existing.status)) {
       throw new BadRequestException(
         'Onboarding is locked after submission. Contact support for re-verification.',
       );
@@ -132,6 +145,12 @@ export class OnboardingService {
       );
     }
 
+    const { gstData, panData } =
+      await this.kycVerification.withServerVerificationFields(
+        ctx.sellerProfileId,
+        { gstData: dto.gstData, panData: dto.panData },
+      );
+
     return this.prisma.sellerOnboarding.update({
       where: { id: existing.id },
       data: {
@@ -139,8 +158,8 @@ export class OnboardingService {
         currentStep: dto.currentStep,
         companyData: dto.companyData as Prisma.InputJsonValue | undefined,
         businessData: dto.businessData as Prisma.InputJsonValue | undefined,
-        gstData: dto.gstData as Prisma.InputJsonValue | undefined,
-        panData: dto.panData as Prisma.InputJsonValue | undefined,
+        gstData: gstData as Prisma.InputJsonValue | undefined,
+        panData: panData as Prisma.InputJsonValue | undefined,
         bankData: dto.bankData as Prisma.InputJsonValue | undefined,
         addressData: dto.addressData as Prisma.InputJsonValue | undefined,
         locationData: dto.locationData as Prisma.InputJsonValue | undefined,
@@ -181,6 +200,15 @@ export class OnboardingService {
     if (missing.length) {
       throw new BadRequestException(
         `Incomplete onboarding. Missing: ${missing.join(', ')}`,
+      );
+    }
+    const identity = await this.kycVerification.summary(
+      ctx.sellerProfileId,
+      onboarding,
+    );
+    if (identity.blockers.length) {
+      throw new BadRequestException(
+        `Complete these steps before submitting: ${identity.blockers.join(', ')}`,
       );
     }
 
@@ -265,7 +293,12 @@ export class OnboardingService {
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.SELLER,
       entityId: ctx.sellerProfileId,
-      metadata: { resubmission: result.resubmission },
+      metadata: {
+        actorRole: 'SELLER',
+        resubmission: result.resubmission,
+        panVerification: identity.pan?.status ?? null,
+        gstVerification: identity.gst?.status ?? null,
+      },
     });
 
     return result.updated;
@@ -291,6 +324,10 @@ export class OnboardingService {
       ? openChangeRequest(readJsonObject(verification?.metadata).changeRequest)
       : null;
     const rejected = onboarding.status === SellerOnboardingStatus.REJECTED;
+    const identity = await this.kycVerification.summary(
+      ctx.sellerProfileId,
+      onboarding,
+    );
     return {
       status: onboarding.status,
       sellerStatus: profile?.status ?? null,
@@ -303,6 +340,21 @@ export class OnboardingService {
         : onboarding.rejectedReason,
       changeRequest,
       canResubmit: Boolean(changeRequest) || rejected,
+      locked: this.isLocked(onboarding.status),
+      verifications: {
+        pan: identity.pan,
+        gst: identity.gst,
+        mismatch: identity.mismatch,
+      },
+      verificationBlockers: identity.blockers,
     };
+  }
+
+  private isLocked(status: SellerOnboardingStatus): boolean {
+    return (
+      status === SellerOnboardingStatus.SUBMITTED ||
+      status === SellerOnboardingStatus.UNDER_REVIEW ||
+      status === SellerOnboardingStatus.APPROVED
+    );
   }
 }

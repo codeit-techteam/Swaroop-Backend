@@ -4,8 +4,9 @@ import {
   KycVerificationType,
   type KycVerification,
   type Prisma,
-} from '../../../../generated/prisma/client.js';
-import type { KycVerificationDetails } from './kyc-verification.provider.js';
+} from '../../generated/prisma/client.js';
+import { hashIdentifier, panFromGstin } from './kyc-identifiers.js';
+import type { KycVerificationDetails } from './kyc-verification.types.js';
 
 type VerificationReader = {
   kycVerification: {
@@ -23,6 +24,8 @@ export type KycVerificationView = {
   method: 'PROVIDER' | 'MANUAL' | null;
   identifierMasked: string;
   provider: string;
+  providerReference: string | null;
+  source: string | null;
   details: KycVerificationDetails;
   failureCode: string | null;
   message: string;
@@ -73,6 +76,8 @@ export function toVerificationView(row: KycVerification): KycVerificationView {
           : 'PROVIDER',
     identifierMasked: row.identifierMasked,
     provider: row.provider,
+    providerReference: row.providerReference ?? null,
+    source: row.source ?? null,
     details,
     failureCode: row.failureCode,
     message: messageFor(row),
@@ -114,4 +119,84 @@ export async function latestVerifications(
     latestVerification(db, ownerType, ownerId, KycVerificationType.GST),
   ]);
   return { pan, gst };
+}
+
+/**
+ * Hash of the PAN a GSTIN belongs to. Rows written before the provider PAN was
+ * captured fall back to the GSTIN structure (characters 3–12 are the PAN).
+ */
+export function linkedPanHashOf(
+  gst: KycVerification,
+  gstin?: string | null,
+): string | null {
+  if (gst.linkedPanHash) return gst.linkedPanHash;
+  return gstin ? hashIdentifier('PAN', panFromGstin(gstin)) : null;
+}
+
+/** True when both identifiers are accepted but the GSTIN belongs to another PAN. */
+export function hasPanGstMismatch(
+  pan: KycVerification | null | undefined,
+  gst: KycVerification | null | undefined,
+  gstin?: string | null,
+): boolean {
+  if (!pan || !gst) return false;
+  if (!verificationSatisfied(pan) || !verificationSatisfied(gst)) return false;
+  const linked = linkedPanHashOf(gst, gstin);
+  return Boolean(linked) && linked !== pan.identifierHash;
+}
+
+export const PAN_GST_MISMATCH_MESSAGE =
+  'GST/PAN mismatch: the PAN associated with the GSTIN does not match the entered PAN.';
+
+/**
+ * Steps still needed before PAN / GSTIN count as accepted for the identifiers
+ * currently on file. An identifier edited after verification is not accepted.
+ */
+export function identityVerificationBlockers(
+  { pan, gst }: { pan: KycVerification | null; gst: KycVerification | null },
+  current: { pan?: string | null; gstin?: string | null },
+): string[] {
+  const blockers: string[] = [];
+  const accepted = (
+    row: KycVerification | null,
+    kind: 'PAN' | 'GST',
+    value?: string | null,
+  ) =>
+    verificationSatisfied(row) &&
+    (!value || hashIdentifier(kind, value) === row!.identifierHash);
+
+  const panOk = accepted(pan, 'PAN', current.pan);
+  const gstOk = accepted(gst, 'GST', current.gstin);
+  if (!panOk) {
+    blockers.push(
+      pan?.status === KycVerificationStatus.FAILED
+        ? 'PAN verification (failed)'
+        : 'PAN verification',
+    );
+  }
+  if (!gstOk) {
+    blockers.push(
+      gst?.status === KycVerificationStatus.FAILED
+        ? 'GST verification (failed)'
+        : 'GST verification',
+    );
+  }
+  if (panOk && gstOk && hasPanGstMismatch(pan, gst, current.gstin)) {
+    blockers.push(PAN_GST_MISMATCH_MESSAGE);
+  }
+  return blockers;
+}
+
+/** Server-owned verification label written into onboarding JSON sections. */
+export function verificationLabel(
+  row: KycVerification | null,
+  kind: 'PAN' | 'GST',
+  value: unknown,
+): 'verified' | 'manual_review' | 'pending' {
+  if (typeof value !== 'string' || !value.trim() || !row) return 'pending';
+  if (hashIdentifier(kind, value) !== row.identifierHash) return 'pending';
+  if (row.status === KycVerificationStatus.VERIFIED) return 'verified';
+  if (row.status === KycVerificationStatus.MANUAL_REVIEW)
+    return 'manual_review';
+  return 'pending';
 }

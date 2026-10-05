@@ -52,15 +52,14 @@ import {
   type CustomerKycDocumentSlot,
   type CustomerKycStatus,
 } from './customer-kyc.slots.js';
+import { hashIdentifier } from '../../kyc-verification/kyc-identifiers.js';
 import {
-  hashIdentifier,
-  panFromGstin,
-} from './verification/kyc-identifiers.js';
-import {
+  hasPanGstMismatch,
   latestVerifications,
+  PAN_GST_MISMATCH_MESSAGE,
   toVerificationView,
   verificationSatisfied,
-} from './verification/kyc-verification.records.js';
+} from '../../kyc-verification/kyc-verification.records.js';
 
 type ChecklistState = 'done' | 'pending' | 'attention' | 'todo';
 
@@ -182,6 +181,11 @@ export class CustomerKycService {
       verifications: {
         pan: verifications.pan ? toVerificationView(verifications.pan) : null,
         gst: verifications.gst ? toVerificationView(verifications.gst) : null,
+        mismatch: hasPanGstMismatch(
+          verifications.pan,
+          verifications.gst,
+          organization.gstin,
+        ),
       },
       checklist: this.checklist({
         status: kyc.status,
@@ -537,13 +541,8 @@ export class CustomerKycService {
           : 'GST verification',
       );
     }
-    if (
-      verificationSatisfied(pan) &&
-      gstCurrent &&
-      pan!.identifierHash !==
-        hashIdentifier('PAN', panFromGstin(organizationGstin!))
-    ) {
-      blockers.push('GSTIN must belong to the verified PAN');
+    if (gstCurrent && hasPanGstMismatch(pan, gst, organizationGstin)) {
+      blockers.push(PAN_GST_MISMATCH_MESSAGE);
     }
     return blockers;
   }

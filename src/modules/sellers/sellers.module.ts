@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/index.js';
 import { DocumentsModule } from '../documents/index.js';
+import { KycVerificationModule } from '../kyc-verification/index.js';
 import { OrganizationsModule } from '../organizations/index.js';
 import { ProcurementModule } from '../procurement/index.js';
 import { SellerAddressesController } from './addresses/seller-addresses.controller.js';
@@ -25,6 +26,7 @@ import { OffersService } from './offers/offers.service.js';
 import { OnboardingDocumentsService } from './onboarding/onboarding-documents.service.js';
 import { OnboardingController } from './onboarding/onboarding.controller.js';
 import { OnboardingService } from './onboarding/onboarding.service.js';
+import { SellerKycVerificationService } from './onboarding/seller-kyc-verification.service.js';
 import { PricingController } from './pricing/pricing.controller.js';
 import { PricingService } from './pricing/pricing.service.js';
 import { ProductsController } from './products/products.controller.js';
@@ -48,6 +50,7 @@ import { SellerProcurementWorkbenchService } from './procurement/seller-procurem
     ProcurementModule,
     DocumentsModule,
     OrganizationsModule,
+    KycVerificationModule,
   ],
   controllers: [
     ProfileController,
@@ -74,6 +77,7 @@ import { SellerProcurementWorkbenchService } from './procurement/seller-procurem
     ProfileService,
     OnboardingService,
     OnboardingDocumentsService,
+    SellerKycVerificationService,
     CompanyService,
     DocumentsService,
     ProductsService,

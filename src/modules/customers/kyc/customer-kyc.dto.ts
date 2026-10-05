@@ -16,6 +16,14 @@ import {
   CUSTOMER_KYC_UPLOAD_SOURCES,
   type CustomerKycUploadSource,
 } from './customer-kyc.slots.js';
+import {
+  KYC_VERIFICATION_SOURCES,
+  type KycVerificationSource,
+} from '../../kyc-verification/kyc-verification.types.js';
+
+const CUSTOMER_VERIFICATION_SOURCES = KYC_VERIFICATION_SOURCES.filter(
+  (source) => source === 'CUSTOMER_APP' || source === 'CUSTOMER_WEB',
+);
 
 /** DTO ceiling. Runtime limit is StorageService.getMaxDocumentSizeBytes(). */
 const KYC_DOCUMENT_DTO_MAX_BYTES = 50 * 1024 * 1024;
@@ -64,6 +72,11 @@ export class VerifyCustomerPanDto {
   @MinLength(1)
   @MaxLength(20)
   pan!: string;
+
+  @ApiPropertyOptional({ enum: CUSTOMER_VERIFICATION_SOURCES })
+  @IsOptional()
+  @IsIn(CUSTOMER_VERIFICATION_SOURCES)
+  source?: KycVerificationSource;
 }
 
 export class VerifyCustomerGstDto {
@@ -73,6 +86,11 @@ export class VerifyCustomerGstDto {
   @MinLength(1)
   @MaxLength(20)
   gstin!: string;
+
+  @ApiPropertyOptional({ enum: CUSTOMER_VERIFICATION_SOURCES })
+  @IsOptional()
+  @IsIn(CUSTOMER_VERIFICATION_SOURCES)
+  source?: KycVerificationSource;
 }
 
 export class SubmitCustomerKycDto {

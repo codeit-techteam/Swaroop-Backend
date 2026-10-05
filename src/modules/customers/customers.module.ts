@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/index.js';
 import { DocumentsModule } from '../documents/index.js';
+import { KycVerificationModule } from '../kyc-verification/index.js';
 import { NotificationsModule } from '../notifications/index.js';
 import { OrganizationsModule } from '../organizations/index.js';
 import { PaymentsModule } from '../payments/index.js';
@@ -17,7 +18,6 @@ import { CustomerKycController } from './kyc/customer-kyc.controller.js';
 import { CustomerKycApprovedGuard } from './kyc/customer-kyc-approved.guard.js';
 import { CustomerKycService } from './kyc/customer-kyc.service.js';
 import { CustomerKycVerificationService } from './kyc/verification/customer-kyc-verification.service.js';
-import { KycVerificationProvider } from './kyc/verification/kyc-verification.provider.js';
 import { CustomerCreditController } from './credit/customer-credit.controller.js';
 import { CustomerCreditService } from './credit/customer-credit.service.js';
 import { BulkLogisticsQuotesController } from './bulk-logistics-quotes/bulk-logistics-quotes.controller.js';
@@ -46,6 +46,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     PaymentsModule,
     NotificationsModule,
     OrganizationsModule,
+    KycVerificationModule,
   ],
   controllers: [
     MarketplaceController,
@@ -78,7 +79,6 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CustomerDocumentsService,
     CustomerKycService,
     CustomerKycVerificationService,
-    KycVerificationProvider,
     CustomerKycApprovedGuard,
     CustomerCreditService,
     BulkLogisticsQuotesService,

@@ -5,13 +5,14 @@ import {
   KycVerificationType,
 } from '../../../../generated/prisma/client.js';
 import { CustomerKycVerificationService } from './customer-kyc-verification.service.js';
-import { hashIdentifier } from './kyc-identifiers.js';
+import { hashIdentifier } from '../../../kyc-verification/kyc-identifiers.js';
 import {
   classifyGst,
   classifyPan,
-  KycVerificationProvider,
+  HttpKycVerificationProvider,
   type KycProviderOutcome,
-} from './kyc-verification.provider.js';
+} from '../../../kyc-verification/kyc-verification.provider.js';
+import { KycVerificationService } from '../../../kyc-verification/kyc-verification.service.js';
 
 const ctx = {
   userId: 'user-1',
@@ -34,6 +35,7 @@ type Row = {
   verifiedAt: Date | null;
   reviewedAt: Date | null;
   createdAt: Date;
+  linkedPanHash?: string | null;
 };
 
 describe('CustomerKycVerificationService', () => {
@@ -41,6 +43,7 @@ describe('CustomerKycVerificationService', () => {
     customerProfile: { findUniqueOrThrow: vi.fn() },
     organization: { findUniqueOrThrow: vi.fn(), update: vi.fn() },
     kycVerification: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    auditLog: { create: vi.fn() },
   };
   const config = { get: vi.fn(() => 10_000) };
   const customerContext = { getOrCreateCustomer: vi.fn() };
@@ -48,7 +51,11 @@ describe('CustomerKycVerificationService', () => {
     verify: vi.fn(),
     providerName: vi.fn(() => 'http'),
   };
-  const audit = { log: vi.fn() };
+  const notifications = { create: vi.fn() };
+  const auditActions = () =>
+    prisma.auditLog.create.mock.calls.map(
+      (call) => (call[0] as { data: { action: string } }).data.action,
+    );
   let rows: Row[];
   let kycStatus: string;
   let service: CustomerKycVerificationService;
@@ -91,10 +98,13 @@ describe('CustomerKycVerificationService', () => {
     );
     service = new CustomerKycVerificationService(
       prisma as never,
-      config as never,
       customerContext as never,
-      provider as never,
-      audit as never,
+      new KycVerificationService(
+        prisma as never,
+        config as never,
+        provider as never,
+        notifications as never,
+      ),
     );
   });
 
@@ -124,11 +134,16 @@ describe('CustomerKycVerificationService', () => {
       where: { id: 'org-1' },
       data: { pan: 'AAPFU0939F' },
     });
-    expect(audit.log.mock.calls.map(([entry]) => entry.action)).toEqual([
+    expect(auditActions()).toEqual([
       'CUSTOMER_KYC_PAN_VERIFICATION_STARTED',
       'CUSTOMER_KYC_PAN_VERIFIED',
     ]);
-    expect(JSON.stringify(audit.log.mock.calls)).not.toContain('AAPFU0939F');
+    expect(JSON.stringify(prisma.auditLog.create.mock.calls)).not.toContain(
+      'AAPFU0939F',
+    );
+    expect(notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'PAN verified' }),
+    );
   });
 
   it('does not save a PAN the provider could not find', async () => {
@@ -230,7 +245,8 @@ describe('CustomerKycVerificationService', () => {
     const result = await service.verifyGst('user-1', '27AAPFU0939F1ZV');
 
     expect(result.status).toBe('VERIFIED');
-    expect(result.warning).toMatch(/not registered to your verified PAN/);
+    expect(result.mismatch).toBe(true);
+    expect(result.warning).toMatch(/GST\/PAN mismatch/);
   });
 
   it('locks PAN and GST changes while KYC is under review', async () => {
@@ -242,7 +258,7 @@ describe('CustomerKycVerificationService', () => {
   });
 });
 
-describe('KycVerificationProvider', () => {
+describe('HttpKycVerificationProvider', () => {
   const settings = {
     'kyc.pan': {
       name: 'acme',
@@ -254,7 +270,7 @@ describe('KycVerificationProvider', () => {
     'kyc.requestTimeoutMs': 5000,
   } as Record<string, unknown>;
   const config = { get: (key: string) => settings[key] };
-  const provider = new KycVerificationProvider(config as never);
+  const provider = new HttpKycVerificationProvider(config as never);
   const fetchMock = vi.fn();
 
   beforeEach(() => {

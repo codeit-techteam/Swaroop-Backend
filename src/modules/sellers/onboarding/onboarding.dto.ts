@@ -1,11 +1,54 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsArray,
+  IsIn,
   IsObject,
   IsOptional,
   IsString,
   MaxLength,
+  MinLength,
 } from 'class-validator';
+import {
+  KYC_VERIFICATION_SOURCES,
+  type KycVerificationSource,
+} from '../../kyc-verification/kyc-verification.types.js';
+
+const SELLER_VERIFICATION_SOURCES = KYC_VERIFICATION_SOURCES.filter(
+  (source) => source === 'SELLER_APP' || source === 'SELLER_WEB',
+);
+
+const upperTrim = ({ value }: { value: unknown }) =>
+  typeof value === 'string' ? value.trim().toUpperCase() : value;
+
+/** Format and checksum are validated in the service so the message stays user-friendly. */
+export class VerifySellerPanDto {
+  @ApiProperty({ example: 'AAPFU0939F' })
+  @Transform(upperTrim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(20)
+  pan!: string;
+
+  @ApiPropertyOptional({ enum: SELLER_VERIFICATION_SOURCES })
+  @IsOptional()
+  @IsIn(SELLER_VERIFICATION_SOURCES)
+  source?: KycVerificationSource;
+}
+
+export class VerifySellerGstDto {
+  @ApiProperty({ example: '27AAPFU0939F1ZV' })
+  @Transform(upperTrim)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(20)
+  gstin!: string;
+
+  @ApiPropertyOptional({ enum: SELLER_VERIFICATION_SOURCES })
+  @IsOptional()
+  @IsIn(SELLER_VERIFICATION_SOURCES)
+  source?: KycVerificationSource;
+}
 
 export class CreateOnboardingDto {
   @ApiPropertyOptional({ example: 'Acme Polymers Pvt Ltd' })

@@ -9,18 +9,33 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
+import {
+  UserRateLimit,
+  UserRateLimitGuard,
+} from '../../../common/guards/user-rate-limit.guard.js';
+import { kycRequestMeta } from '../../kyc-verification/kyc-request-meta.js';
 import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import { CreateOnboardingDocumentDto } from './onboarding-documents.dto.js';
 import { OnboardingDocumentsService } from './onboarding-documents.service.js';
-import { CreateOnboardingDto, UpdateOnboardingDto } from './onboarding.dto.js';
+import {
+  CreateOnboardingDto,
+  UpdateOnboardingDto,
+  VerifySellerGstDto,
+  VerifySellerPanDto,
+} from './onboarding.dto.js';
 import { OnboardingService } from './onboarding.service.js';
+import { SellerKycVerificationService } from './seller-kyc-verification.service.js';
+
+const HOUR_MS = 60 * 60 * 1000;
 
 @ApiTags('Seller Onboarding')
 @Controller({ path: 'seller/onboarding', version: '1' })
@@ -31,6 +46,7 @@ export class OnboardingController {
   constructor(
     private readonly onboardingService: OnboardingService,
     private readonly onboardingDocuments: OnboardingDocumentsService,
+    private readonly kycVerification: SellerKycVerificationService,
   ) {}
 
   @Post()
@@ -73,8 +89,71 @@ export class OnboardingController {
     );
   }
 
+  @Post('pan/verify')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(UserRateLimitGuard)
+  @UserRateLimit({
+    bucket: 'kyc-verify-pan',
+    limitConfigKey: 'kyc.verifyAttemptsPerHour',
+    defaultLimit: 10,
+    windowMs: HOUR_MS,
+    message: 'Too many PAN verification attempts. Please try again later.',
+  })
+  @ApiOperation({
+    summary: 'Verify the seller PAN with the configured provider (Surepass)',
+    description:
+      'Seller account owner only (not Seller Managers). The accepted PAN is written into the onboarding draft by the server. Returns the normalized result; `mismatch` is true when the verified GSTIN belongs to another PAN. Errors: 400 invalid format or onboarding locked, 403 manager, 409 verification already in progress, 429 rate limited.',
+  })
+  async verifyPan(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: VerifySellerPanDto,
+    @Req() request: Request,
+  ) {
+    return successResponse(
+      await this.kycVerification.verifyPan(
+        user.id,
+        dto.pan,
+        kycRequestMeta(request, dto.source),
+      ),
+      'PAN verification result',
+    );
+  }
+
+  @Post('gst/verify')
+  @HttpCode(HttpStatus.OK)
+  @UseGuards(UserRateLimitGuard)
+  @UserRateLimit({
+    bucket: 'kyc-verify-gst',
+    limitConfigKey: 'kyc.verifyAttemptsPerHour',
+    defaultLimit: 10,
+    windowMs: HOUR_MS,
+    message: 'Too many GST verification attempts. Please try again later.',
+  })
+  @ApiOperation({
+    summary: 'Verify the seller GSTIN with the configured provider (Surepass)',
+    description:
+      'Seller account owner only. Returns legal/trade name, GST status, state and other fields the provider reports; the accepted GSTIN is written into the onboarding draft. Submission is blocked while `mismatch` is true. Errors: 400, 403, 409, 429 as for PAN.',
+  })
+  async verifyGst(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: VerifySellerGstDto,
+    @Req() request: Request,
+  ) {
+    return successResponse(
+      await this.kycVerification.verifyGst(
+        user.id,
+        dto.gstin,
+        kycRequestMeta(request, dto.source),
+      ),
+      'GST verification result',
+    );
+  }
+
   @Get('status')
-  @ApiOperation({ summary: 'Get onboarding status' })
+  @ApiOperation({
+    summary:
+      'Onboarding status, admin change requests, PAN/GST verification results and remaining verification blockers',
+  })
   async status(@CurrentUser() user: AuthenticatedUser) {
     return successResponse(
       await this.onboardingService.status(user.id),

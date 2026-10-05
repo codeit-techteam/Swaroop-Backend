@@ -86,6 +86,25 @@ export const envSchema = z
       .min(5_000)
       .default(60_000),
 
+    SUREPASS_API_BASE_URL: z.url().optional().or(z.literal('')).default(''),
+    SUREPASS_API_TOKEN: z.string().optional().default(''),
+    SUREPASS_ENVIRONMENT: z
+      .enum(['production', 'sandbox'])
+      .optional()
+      .or(z.literal(''))
+      .default(''),
+    SUREPASS_PAN_PATH: z
+      .string()
+      .regex(/^\/[A-Za-z0-9/_-]*$/, 'must be a path such as /pan/pan')
+      .optional()
+      .or(z.literal(''))
+      .default(''),
+    SUREPASS_GST_PATH: z
+      .string()
+      .regex(/^\/[A-Za-z0-9/_-]*$/, 'must be a path such as /corporate/gstin')
+      .optional()
+      .or(z.literal(''))
+      .default(''),
     PAN_VERIFICATION_PROVIDER: z.string().optional().default('http'),
     PAN_VERIFICATION_API_URL: z.url().optional().or(z.literal('')).default(''),
     PAN_VERIFICATION_API_KEY: z.string().optional().default(''),
@@ -125,6 +144,31 @@ export const envSchema = z
         code: 'custom',
         path: ['JWT_REFRESH_SECRET'],
         message: 'JWT_REFRESH_SECRET or JWT_SECRET is required',
+      });
+    }
+
+    if (
+      Boolean(data.SUREPASS_API_BASE_URL) !== Boolean(data.SUREPASS_API_TOKEN)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [
+          data.SUREPASS_API_BASE_URL
+            ? 'SUREPASS_API_TOKEN'
+            : 'SUREPASS_API_BASE_URL',
+        ],
+        message:
+          'SUREPASS_API_BASE_URL and SUREPASS_API_TOKEN must be set together',
+      });
+    }
+    if (
+      data.SUREPASS_API_BASE_URL &&
+      !data.SUREPASS_API_BASE_URL.startsWith('https://')
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['SUREPASS_API_BASE_URL'],
+        message: 'SUREPASS_API_BASE_URL must use https',
       });
     }
 

@@ -45,14 +45,29 @@ export class AdminKycController {
   constructor(private readonly kyc: AdminKycService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Seller onboarding and customer KYC review queue' })
+  @ApiOperation({
+    summary:
+      'Seller onboarding and customer KYC review queue (filter by status, entity type, PAN/GST verification, documents, mismatch)',
+  })
   async list(@Query() query: AdminKycQueryDto) {
     const { items, meta } = await this.kyc.list(query);
     return successResponse(items, 'KYC queue retrieved', meta);
   }
 
+  @Get('metrics')
+  @ApiOperation({
+    summary:
+      'KYC dashboard counters (status, PAN/GST verification, documents, mismatches) from live records',
+  })
+  async metrics() {
+    return successResponse(await this.kyc.metrics(), 'KYC metrics retrieved');
+  }
+
   @Get(':entityType/:id')
-  @ApiOperation({ summary: 'KYC record with document slots and blockers' })
+  @ApiOperation({
+    summary:
+      'KYC record with PAN/GST verification results and history, document slots, blockers and warnings',
+  })
   async detail(
     @Param('entityType') entityType: string,
     @Param('id', ParseUUIDPipe) id: string,

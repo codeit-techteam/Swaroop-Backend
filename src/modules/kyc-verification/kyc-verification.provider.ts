@@ -1,35 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { KycProviderConfig } from '../../../../config/configuration.js';
+import type { KycProviderConfig } from '../../config/configuration.js';
+import { SurepassVerificationProvider } from './surepass-verification.provider.js';
+import type {
+  KycProviderOutcome,
+  KycVerificationDetails,
+  KycVerificationKind,
+} from './kyc-verification.types.js';
 
-export type KycVerificationKind = 'PAN' | 'GST';
-
-/** Normalized result fields. Only these are persisted and shown to users. */
-export type KycVerificationDetails = {
-  legalName?: string | null;
-  tradeName?: string | null;
-  gstStatus?: string | null;
-  registrationDate?: string | null;
-  taxpayerType?: string | null;
-  constitution?: string | null;
-  address?: string | null;
-  state?: string | null;
-  pincode?: string | null;
-  nameOnPan?: string | null;
-  panStatus?: string | null;
-  panCategory?: string | null;
-};
-
-export type KycProviderOutcome =
-  | { outcome: 'VERIFIED'; details: KycVerificationDetails }
-  | {
-      outcome: 'FAILED';
-      code: string;
-      reason: string;
-      details?: KycVerificationDetails;
-    }
-  | { outcome: 'UNAVAILABLE'; code: string; reason: string }
-  | { outcome: 'NOT_CONFIGURED' };
+export type {
+  KycProviderOutcome,
+  KycVerificationDetails,
+  KycVerificationKind,
+} from './kyc-verification.types.js';
 
 type Json = Record<string, unknown>;
 
@@ -202,12 +185,12 @@ export function classifyPan(body: unknown): KycProviderOutcome {
 }
 
 /**
- * Generic HTTP adapter for PAN / GSTIN verification vendors. Credentials stay
- * server-side; the browser and mobile app only ever talk to PetroTrade.
+ * Generic HTTP adapter for PAN / GSTIN verification vendors configured through
+ * PAN_VERIFICATION_* / GST_VERIFICATION_*.
  */
 @Injectable()
-export class KycVerificationProvider {
-  private readonly logger = new Logger(KycVerificationProvider.name);
+export class HttpKycVerificationProvider {
+  private readonly logger = new Logger(HttpKycVerificationProvider.name);
 
   constructor(private readonly config: ConfigService) {}
 
@@ -310,5 +293,38 @@ export class KycVerificationProvider {
     }
 
     return kind === 'PAN' ? classifyPan(body) : classifyGst(body);
+  }
+}
+
+/**
+ * Single entry point for PAN / GSTIN verification. Surepass is used when
+ * configured, otherwise the generic HTTP adapter; with neither, attempts are
+ * routed to manual compliance review. Credentials stay server-side: browsers
+ * and mobile apps only ever talk to the SWAROOP backend.
+ */
+@Injectable()
+export class KycVerificationProvider {
+  constructor(
+    private readonly surepass: SurepassVerificationProvider,
+    private readonly http: HttpKycVerificationProvider,
+  ) {}
+
+  isConfigured(kind: KycVerificationKind): boolean {
+    return this.surepass.isConfigured() || this.http.isConfigured(kind);
+  }
+
+  providerName(kind: KycVerificationKind): string {
+    if (this.surepass.isConfigured()) return 'surepass';
+    return this.http.providerName(kind);
+  }
+
+  verify(
+    kind: KycVerificationKind,
+    identifier: string,
+  ): Promise<KycProviderOutcome> {
+    if (this.surepass.isConfigured()) {
+      return this.surepass.verify(kind, identifier);
+    }
+    return this.http.verify(kind, identifier);
   }
 }

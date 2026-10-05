@@ -12,6 +12,7 @@ import {
 import { DocumentStateService } from '../../documents/common/document-state.service.js';
 import { CUSTOMER_KYC_DOCUMENT_PURPOSE } from '../../customers/kyc/customer-kyc.slots.js';
 import { SELLER_ONBOARDING_DOCUMENT_PURPOSE } from '../../sellers/onboarding/onboarding-documents.slots.js';
+import { hashIdentifier } from '../../kyc-verification/kyc-identifiers.js';
 import { AdminKycService } from './admin-kyc.service.js';
 
 const user = {
@@ -107,7 +108,8 @@ describe('AdminKycService', () => {
       update: vi.fn(),
     },
     document: { findMany: vi.fn(), update: vi.fn(), updateMany: vi.fn() },
-    organization: { update: vi.fn() },
+    organization: { update: vi.fn(), findUniqueOrThrow: vi.fn() },
+    sellerVerification: { updateMany: vi.fn() },
     bankAccount: { findMany: vi.fn() },
     kycVerification: {
       findFirst: vi.fn(),
@@ -137,6 +139,7 @@ describe('AdminKycService', () => {
     prisma.customerProfile.findMany.mockResolvedValue([]);
     prisma.kycVerification.findFirst.mockResolvedValue(null);
     prisma.kycVerification.findMany.mockResolvedValue([]);
+    prisma.organization.findUniqueOrThrow.mockResolvedValue({ gstin: null });
     prisma.$queryRaw.mockResolvedValue([
       { metadata: { kyc: { status: 'SUBMITTED' } } },
     ]);
@@ -456,5 +459,141 @@ describe('AdminKycService', () => {
     expect(filtered.items.map((row) => row.entityId)).toEqual([
       'seller-changes',
     ]);
+  });
+
+  describe('seller PAN/GST verification', () => {
+    const verified = (
+      type: KycVerificationType,
+      identifier: string,
+      extra: Record<string, unknown> = {},
+    ) => ({
+      ...verificationRow(type, KycVerificationStatus.VERIFIED),
+      ownerId: 'seller-1',
+      identifierHash: hashIdentifier(
+        type === KycVerificationType.PAN ? 'PAN' : 'GST',
+        identifier,
+      ),
+      linkedPanHash: null,
+      updatedAt: new Date('2026-09-27T09:00:00.000Z'),
+      ...extra,
+    });
+
+    beforeEach(() => {
+      prisma.sellerProfile.findFirst.mockResolvedValue({
+        organization: { gstin: '27AAPFU0939F1ZV' },
+        onboarding: { gstData: { gstin: '27AAPFU0939F1ZV' } },
+      });
+    });
+
+    it('blocks seller approval when the GSTIN belongs to another PAN', async () => {
+      prisma.kycVerification.findFirst.mockImplementation(
+        async (args: { where: { type: KycVerificationType } }) =>
+          args.where.type === KycVerificationType.PAN
+            ? verified(KycVerificationType.PAN, 'ABCDE1234F')
+            : verified(KycVerificationType.GST, '27AAPFU0939F1ZV', {
+                linkedPanHash: hashIdentifier('PAN', 'AAPFU0939F'),
+              }),
+      );
+
+      await expect(
+        service.approve('SELLER', 'seller-1', 'admin-1', {}),
+      ).rejects.toThrow(/GST\/PAN mismatch/);
+      expect(sellers.approve).not.toHaveBeenCalled();
+    });
+
+    it('blocks seller approval while a verification has failed', async () => {
+      prisma.kycVerification.findFirst.mockImplementation(
+        async (args: { where: { type: KycVerificationType } }) =>
+          args.where.type === KycVerificationType.GST
+            ? verificationRow(
+                KycVerificationType.GST,
+                KycVerificationStatus.FAILED,
+              )
+            : verified(KycVerificationType.PAN, 'AAPFU0939F'),
+      );
+
+      await expect(
+        service.approve('SELLER', 'seller-1', 'admin-1', {}),
+      ).rejects.toThrow(/GST verification failed/);
+      expect(sellers.approve).not.toHaveBeenCalled();
+    });
+
+    it('approves the seller and confirms manual-review results as the reviewer', async () => {
+      prisma.kycVerification.findFirst.mockImplementation(
+        async (args: { where: { type: KycVerificationType } }) =>
+          args.where.type === KycVerificationType.PAN
+            ? verified(KycVerificationType.PAN, 'AAPFU0939F')
+            : {
+                ...verified(KycVerificationType.GST, '27AAPFU0939F1ZV'),
+                status: KycVerificationStatus.MANUAL_REVIEW,
+              },
+      );
+      vi.spyOn(service, 'detail').mockResolvedValue({} as never);
+
+      await service.approve('SELLER', 'seller-1', 'admin-1', { notes: 'ok' });
+
+      expect(sellers.approve).toHaveBeenCalledWith('seller-1', 'admin-1', {
+        notes: 'ok',
+      });
+      expect(prisma.kycVerification.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: { in: ['ver-GST'] } }),
+          data: expect.objectContaining({ reviewedById: 'admin-1' }),
+        }),
+      );
+      expect(prisma.sellerVerification.updateMany).toHaveBeenCalledWith({
+        where: { sellerProfileId: 'seller-1' },
+        data: { panVerified: true, gstVerified: true },
+      });
+    });
+  });
+
+  it('filters the queue by verification status and reports live metrics', async () => {
+    const second = {
+      ...customer({ status: 'NOT_SUBMITTED' }),
+      id: 'cust-2',
+      userId: 'user-2',
+    };
+    prisma.customerProfile.findMany.mockResolvedValue([customer(), second]);
+    prisma.kycVerification.findMany.mockResolvedValue([
+      {
+        ...verificationRow(
+          KycVerificationType.PAN,
+          KycVerificationStatus.VERIFIED,
+        ),
+        ownerId: 'cust-1',
+        updatedAt: new Date('2026-09-27T09:00:00.000Z'),
+      },
+      {
+        ...verificationRow(
+          KycVerificationType.PAN,
+          KycVerificationStatus.FAILED,
+        ),
+        id: 'ver-pan-2',
+        ownerId: 'cust-2',
+        updatedAt: new Date('2026-09-27T09:00:00.000Z'),
+      },
+    ]);
+
+    const failed = await service.list({
+      page: 1,
+      limit: 20,
+      entityType: 'CUSTOMER',
+      panStatus: 'FAILED',
+    });
+    expect(failed.items.map((row) => row.entityId)).toEqual(['cust-2']);
+    expect(failed.items[0].verification.gst).toBe('NOT_STARTED');
+
+    const metrics = await service.metrics();
+    expect(metrics.totals).toEqual({ customers: 2, sellers: 0 });
+    expect(metrics.pan).toEqual({
+      verified: 1,
+      failed: 1,
+      manualReview: 0,
+      notStarted: 0,
+    });
+    expect(metrics.gst.notStarted).toBe(2);
+    expect(metrics.status.UNDER_REVIEW).toBe(1);
+    expect(metrics.status.PENDING).toBe(1);
   });
 });

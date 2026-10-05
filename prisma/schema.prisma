@@ -1424,6 +1424,13 @@ model KycVerification {
   result           Json?
   failureCode      String?               @map("failure_code")
   failureReason    String?               @map("failure_reason")
+  /// Provider transaction id (Surepass client_id) for reconciliation with the vendor.
+  providerReference String?              @map("provider_reference")
+  /// SHA-256 hash of the PAN the provider linked to a GSTIN (GST rows only).
+  linkedPanHash    String?               @map("linked_pan_hash")
+  /// CUSTOMER_APP / CUSTOMER_WEB / SELLER_APP / SELLER_WEB / ADMIN.
+  source           String?
+  requestId        String?               @map("request_id")
   requestedById    String?               @map("requested_by_id") @db.Uuid
   verifiedAt       DateTime?             @map("verified_at")
   reviewedById     String?               @map("reviewed_by_id") @db.Uuid
@@ -1432,6 +1439,7 @@ model KycVerification {
   updatedAt        DateTime              @updatedAt @map("updated_at")
 
   @@index([ownerType, ownerId, type, createdAt])
+  @@index([ownerType, type, createdAt])
   @@index([organizationId])
   @@index([identifierHash])
   @@index([status])

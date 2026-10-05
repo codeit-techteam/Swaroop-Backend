@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsIn,
   IsOptional,
   IsString,
@@ -25,6 +26,22 @@ export const ADMIN_KYC_STATUSES = [
 ] as const;
 export type AdminKycStatus = (typeof ADMIN_KYC_STATUSES)[number];
 
+export const ADMIN_KYC_VERIFICATION_FILTERS = [
+  'NOT_STARTED',
+  'VERIFYING',
+  'VERIFIED',
+  'FAILED',
+  'MANUAL_REVIEW',
+] as const;
+export type AdminKycVerificationFilter =
+  (typeof ADMIN_KYC_VERIFICATION_FILTERS)[number];
+
+export const ADMIN_KYC_DOCUMENT_FILTERS = [
+  'PENDING',
+  'MISSING',
+  'REJECTED',
+] as const;
+
 const trim = ({ value }: { value: unknown }) =>
   typeof value === 'string' ? value.trim() : value;
 
@@ -38,6 +55,33 @@ export class AdminKycQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsIn(ADMIN_KYC_STATUSES)
   status?: AdminKycStatus;
+
+  @ApiPropertyOptional({ enum: ADMIN_KYC_VERIFICATION_FILTERS })
+  @IsOptional()
+  @IsIn(ADMIN_KYC_VERIFICATION_FILTERS)
+  panStatus?: AdminKycVerificationFilter;
+
+  @ApiPropertyOptional({ enum: ADMIN_KYC_VERIFICATION_FILTERS })
+  @IsOptional()
+  @IsIn(ADMIN_KYC_VERIFICATION_FILTERS)
+  gstStatus?: AdminKycVerificationFilter;
+
+  @ApiPropertyOptional({
+    enum: ADMIN_KYC_DOCUMENT_FILTERS,
+    description:
+      'PENDING: awaiting review, MISSING: required file not uploaded, REJECTED: needs replacement',
+  })
+  @IsOptional()
+  @IsIn(ADMIN_KYC_DOCUMENT_FILTERS)
+  documents?: (typeof ADMIN_KYC_DOCUMENT_FILTERS)[number];
+
+  @ApiPropertyOptional({
+    description: 'Only records where the GSTIN belongs to a different PAN',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  mismatch?: boolean;
 }
 
 export class AdminKycDownloadQueryDto {

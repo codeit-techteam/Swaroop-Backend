@@ -11,7 +11,7 @@ import {
 import { DocumentStateService } from '../../documents/common/document-state.service.js';
 import { CustomerKycService } from './customer-kyc.service.js';
 import { CUSTOMER_KYC_DOCUMENT_PURPOSE } from './customer-kyc.slots.js';
-import { hashIdentifier } from './verification/kyc-identifiers.js';
+import { hashIdentifier } from '../../kyc-verification/kyc-identifiers.js';
 
 const ctx = {
   userId: 'user-1',
@@ -232,7 +232,7 @@ describe('CustomerKycService', () => {
     verifyBoth();
     verifications.PAN = verification(KycVerificationType.PAN, 'ABCDE1234F');
     await expect(service.submit('user-1', {})).rejects.toThrow(
-      /GSTIN must belong to the verified PAN/,
+      /GST\/PAN mismatch/,
     );
   });
 
