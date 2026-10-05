@@ -1,6 +1,13 @@
-import { PaymentMethod } from '../../../generated/prisma/client.js';
+import {
+  GradeStatus,
+  OfferStatus,
+  PaymentMethod,
+  ProductStatus,
+} from '../../../generated/prisma/client.js';
 import { describe, expect, it } from 'vitest';
 import {
+  assertMarketplaceOffer,
+  MarketplaceException,
   resolveOfferUnitPrice,
   toBlindOffer,
   toBlindProduct,
@@ -172,5 +179,65 @@ describe('blind marketplace mapper', () => {
     expect(payload.listing?.priceTiers).toEqual([
       { minQty: 10, maxQty: null, price: 88000, currency: 'INR' },
     ]);
+  });
+
+  describe('assertMarketplaceOffer grade gate', () => {
+    const offer = (grade?: {
+      status?: GradeStatus;
+      customerVisible?: boolean;
+      deletedAt?: Date | null;
+    }) => ({
+      status: OfferStatus.ACTIVE,
+      validFrom: null,
+      validUntil: null,
+      deletedAt: null,
+      visibility: 'MARKETPLACE',
+      product: { status: ProductStatus.ACTIVE, deletedAt: null },
+      grade,
+    });
+
+    it('accepts an active, customer-visible grade', () => {
+      expect(() =>
+        assertMarketplaceOffer(
+          offer({ status: GradeStatus.ACTIVE, customerVisible: true }),
+          25,
+          20,
+        ),
+      ).not.toThrow();
+    });
+
+    it('rejects a grade deactivated by Admin', () => {
+      expect(() =>
+        assertMarketplaceOffer(
+          offer({ status: GradeStatus.INACTIVE, customerVisible: true }),
+          25,
+          20,
+        ),
+      ).toThrow(MarketplaceException);
+    });
+
+    it('rejects a grade hidden from customers', () => {
+      expect(() =>
+        assertMarketplaceOffer(
+          offer({ status: GradeStatus.ACTIVE, customerVisible: false }),
+          25,
+          20,
+        ),
+      ).toThrow(MarketplaceException);
+    });
+
+    it('rejects a soft-deleted grade', () => {
+      expect(() =>
+        assertMarketplaceOffer(
+          offer({
+            status: GradeStatus.ACTIVE,
+            customerVisible: true,
+            deletedAt: new Date(),
+          }),
+          25,
+          20,
+        ),
+      ).toThrow(MarketplaceException);
+    });
   });
 });

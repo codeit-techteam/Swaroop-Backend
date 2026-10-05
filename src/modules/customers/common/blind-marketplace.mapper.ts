@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { BadRequestException } from '@nestjs/common';
 import {
+  GradeStatus,
   OfferStatus,
   ProductStatus,
   type Offer,
@@ -319,6 +320,11 @@ export function assertMarketplaceOffer(
     deletedAt?: Date | null;
     visibility?: string | null;
     product?: { status: ProductStatus; deletedAt: Date | null } | null;
+    grade?: {
+      status?: GradeStatus;
+      customerVisible?: boolean;
+      deletedAt?: Date | null;
+    } | null;
   },
   quantity: number,
   moq: unknown,
@@ -348,6 +354,18 @@ export function assertMarketplaceOffer(
     offer.product.status !== ProductStatus.ACTIVE
   ) {
     throw new MarketplaceException('PRODUCT_NOT_AVAILABLE');
+  }
+  if (
+    offer.grade &&
+    (offer.grade.deletedAt ||
+      (offer.grade.status !== undefined &&
+        offer.grade.status !== GradeStatus.ACTIVE) ||
+      offer.grade.customerVisible === false)
+  ) {
+    throw new MarketplaceException(
+      'PRODUCT_NOT_AVAILABLE',
+      'This grade is no longer available on the marketplace',
+    );
   }
   if (!(quantity > 0)) {
     throw new MarketplaceException(

@@ -145,7 +145,15 @@ const offerInclude = {
     select: { id: true, code: true, name: true, packaging: true, unit: true },
   },
   grade: {
-    select: { id: true, code: true, name: true, displayName: true },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      displayName: true,
+      status: true,
+      customerVisible: true,
+      deletedAt: true,
+    },
   },
   warehouse: {
     select: { city: true, state: true, country: true },

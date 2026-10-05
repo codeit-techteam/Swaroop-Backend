@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
+  GradeStatus,
   OfferStatus,
   Prisma,
   ProductStatus,
@@ -31,7 +32,15 @@ export const quoteOfferInclude = {
     },
   },
   grade: {
-    select: { id: true, code: true, name: true, displayName: true },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      displayName: true,
+      status: true,
+      customerVisible: true,
+      deletedAt: true,
+    },
   },
   warehouse: {
     select: { city: true, state: true, country: true },
@@ -211,6 +220,11 @@ export class SellerMatchingService {
         product: {
           deletedAt: null,
           status: ProductStatus.ACTIVE,
+        },
+        grade: {
+          deletedAt: null,
+          status: GradeStatus.ACTIVE,
+          customerVisible: true,
         },
       },
       include: quoteOfferInclude,
