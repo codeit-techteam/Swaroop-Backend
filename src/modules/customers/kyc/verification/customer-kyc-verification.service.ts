@@ -10,6 +10,8 @@ import {
   isValidGstin,
   isValidPan,
   normalizeIdentifier,
+  normalizePanHolder,
+  panHolderProblem,
 } from '../../../kyc-verification/kyc-identifiers.js';
 import {
   hasPanGstMismatch,
@@ -36,19 +38,28 @@ export class CustomerKycVerificationService {
     private readonly verification: KycVerificationService,
   ) {}
 
-  async verifyPan(userId: string, rawPan: string, meta: KycRequestMeta = {}) {
+  async verifyPan(
+    userId: string,
+    rawPan: string,
+    holderInput: { fullName: string; dob: string },
+    meta: KycRequestMeta = {},
+  ) {
     const pan = normalizeIdentifier(rawPan);
     if (!isValidPan(pan)) {
       throw new BadRequestException(
         'Enter a valid 10-character PAN (for example ABCDE1234F).',
       );
     }
+    const holder = normalizePanHolder(holderInput.fullName, holderInput.dob);
+    const holderProblem = panHolderProblem(holder);
+    if (holderProblem) throw new BadRequestException(holderProblem);
     const ctx = await this.requireEditableCustomer(userId);
     const row = await this.verification.verify(
       this.owner(ctx),
       KycVerificationType.PAN,
       pan,
       meta,
+      holder,
     );
     await this.applyToOrganization(ctx, row, pan);
 

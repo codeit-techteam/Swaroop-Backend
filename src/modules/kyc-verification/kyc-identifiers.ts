@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { PanHolderInput } from './kyc-verification.types.js';
 
 export const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
 export const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
@@ -29,6 +30,46 @@ export function gstinChecksumValid(gstin: string): boolean {
 
 export function isValidGstin(value: string): boolean {
   return gstinChecksumValid(value);
+}
+
+const PAN_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 .&'()/,-]*$/;
+const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export function normalizePanHolder(
+  fullName: string,
+  dob: string,
+): PanHolderInput {
+  return { fullName: fullName.trim().replace(/\s+/g, ' '), dob: dob.trim() };
+}
+
+/** A user-facing problem with the PAN holder details, or null when they are usable. */
+export function panHolderProblem(
+  holder: PanHolderInput,
+  today: Date = new Date(),
+): string | null {
+  if (
+    holder.fullName.length < 2 ||
+    holder.fullName.length > 150 ||
+    !PAN_NAME_PATTERN.test(holder.fullName)
+  ) {
+    return 'Enter the name exactly as printed on the PAN.';
+  }
+  const match = ISO_DATE_PATTERN.exec(holder.dob);
+  const date = match
+    ? new Date(Date.UTC(+match[1], +match[2] - 1, +match[3]))
+    : null;
+  if (
+    !match ||
+    !date ||
+    date.getUTCFullYear() !== +match[1] ||
+    date.getUTCMonth() !== +match[2] - 1 ||
+    date.getUTCDate() !== +match[3] ||
+    +match[1] < 1850 ||
+    date.getTime() > today.getTime()
+  ) {
+    return 'Enter a valid date of birth or incorporation (YYYY-MM-DD).';
+  }
+  return null;
 }
 
 /** Characters 3–12 of a GSTIN are the holder's PAN. */

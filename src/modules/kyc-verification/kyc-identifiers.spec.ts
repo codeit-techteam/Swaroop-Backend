@@ -6,7 +6,9 @@ import {
   maskGstin,
   maskPan,
   normalizeIdentifier,
+  normalizePanHolder,
   panFromGstin,
+  panHolderProblem,
 } from './kyc-identifiers.js';
 
 describe('kyc identifiers', () => {
@@ -40,5 +42,36 @@ describe('kyc identifiers', () => {
       hashIdentifier('GST', 'AAPFU0939F'),
     );
     expect(normalizeIdentifier('27 aapfu 0939f1zv')).toBe('27AAPFU0939F1ZV');
+  });
+
+  it('normalizes and validates PAN holder details', () => {
+    const today = new Date('2026-10-05T00:00:00Z');
+    const holder = normalizePanHolder('  Karan   Veer ', ' 1990-02-28 ');
+    expect(holder).toEqual({ fullName: 'Karan Veer', dob: '1990-02-28' });
+    expect(panHolderProblem(holder, today)).toBeNull();
+    expect(
+      panHolderProblem(
+        { fullName: "M/S. D'Souza & Co (P) Ltd", dob: '2001-01-01' },
+        today,
+      ),
+    ).toBeNull();
+    expect(panHolderProblem({ ...holder, fullName: 'K' }, today)).toMatch(
+      /name/,
+    );
+    expect(
+      panHolderProblem({ ...holder, fullName: '<script>' }, today),
+    ).toMatch(/name/);
+    expect(panHolderProblem({ ...holder, dob: '1990-02-30' }, today)).toMatch(
+      /date/,
+    );
+    expect(panHolderProblem({ ...holder, dob: '28-02-1990' }, today)).toMatch(
+      /date/,
+    );
+    expect(panHolderProblem({ ...holder, dob: '2026-10-06' }, today)).toMatch(
+      /date/,
+    );
+    expect(panHolderProblem({ ...holder, dob: '1800-01-01' }, today)).toMatch(
+      /date/,
+    );
   });
 });

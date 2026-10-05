@@ -1,5 +1,12 @@
 export type KycVerificationKind = 'PAN' | 'GST';
 
+/**
+ * Holder details Surepass PAN Verify matches against Income Tax records.
+ * `dob` is the date of birth, or the date of incorporation for entities
+ * (YYYY-MM-DD). Sent to the provider only; never persisted or logged.
+ */
+export type PanHolderInput = { fullName: string; dob: string };
+
 /** Normalized result fields. Only these are persisted and shown to users. */
 export type KycVerificationDetails = {
   legalName?: string | null;

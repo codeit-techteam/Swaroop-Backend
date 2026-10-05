@@ -11,6 +11,7 @@ import {
 
 const GSTIN = '19AAPFU0939F1ZM';
 const PAN = 'AAPFU0939F';
+const HOLDER = { fullName: 'KARAN VEER', dob: '1990-01-01' };
 
 /** Shape of the documented Corporate GSTIN response. */
 const gstBody = (overrides: Record<string, unknown> = {}) => ({
@@ -137,19 +138,18 @@ describe('Surepass response classification', () => {
       code: 'GSTIN_NOT_FOUND',
       referenceId: 'c1',
     });
-    expect(classifySurepassPan(422, body, PAN)).toMatchObject({
+    expect(classifySurepassPan(422, body)).toMatchObject({
       outcome: 'FAILED',
       code: 'PAN_NOT_FOUND',
     });
+    expect(
+      classifySurepassPan(422, body, { holderMatched: true }),
+    ).toMatchObject({ outcome: 'FAILED', code: 'PAN_DETAILS_MISMATCH' });
   });
 
   it('treats a success payload without a name as malformed, not verified', () => {
     expect(
-      classifySurepassPan(
-        200,
-        { success: true, data: { client_id: 'x' } },
-        PAN,
-      ),
+      classifySurepassPan(200, { success: true, data: { client_id: 'x' } }),
     ).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_MALFORMED_RESPONSE',
@@ -157,7 +157,7 @@ describe('Surepass response classification', () => {
   });
 
   it('verifies a PAN Lite response', () => {
-    expect(classifySurepassPan(200, panBody, PAN)).toMatchObject({
+    expect(classifySurepassPan(200, panBody)).toMatchObject({
       outcome: 'VERIFIED',
       referenceId: 'pan_xyz789',
       details: { nameOnPan: 'KARAN VEER', panCategory: 'person' },
@@ -176,17 +176,17 @@ describe('Surepass response classification', () => {
       },
     });
     expect(
-      classifySurepassPan(200, advanced('E', 'EXISTING AND VALID'), PAN),
+      classifySurepassPan(200, advanced('E', 'EXISTING AND VALID')),
     ).toMatchObject({
       outcome: 'VERIFIED',
       details: { nameOnPan: 'KARAN VEER', panStatus: 'EXISTING AND VALID' },
     });
-    expect(classifySurepassPan(200, advanced('X'), PAN)).toMatchObject({
+    expect(classifySurepassPan(200, advanced('X'))).toMatchObject({
       outcome: 'FAILED',
       code: 'PAN_INACTIVE',
       details: { panStatus: 'Deactivated' },
     });
-    expect(classifySurepassPan(200, advanced('EM'), PAN)).toMatchObject({
+    expect(classifySurepassPan(200, advanced('EM'))).toMatchObject({
       outcome: 'REVIEW',
       code: 'PAN_EVENT_MARKED',
       details: { panStatus: 'Merger' },
@@ -200,7 +200,7 @@ describe('SurepassVerificationProvider', () => {
       baseUrl: 'https://kyc-api.surepass.app',
       token: 'sp-secret-token',
       environment: 'production',
-      panPath: '/api/v1/pan/pan',
+      panPath: '/api/v1/pan/pan-verify',
       gstPath: '/api/v1/corporate/gstin',
     },
     'kyc.requestTimeoutMs': 50,
@@ -218,11 +218,11 @@ describe('SurepassVerificationProvider', () => {
   it('posts id_number with a bearer token to the configured endpoint', async () => {
     fetchMock.mockResolvedValue(json(panBody));
 
-    const outcome = await provider.verify('PAN', 'AAPFU0939F');
+    const outcome = await provider.verify('PAN', 'AAPFU0939F', HOLDER);
 
     expect(outcome.outcome).toBe('VERIFIED');
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe('https://kyc-api.surepass.app/api/v1/pan/pan');
+    expect(url).toBe('https://kyc-api.surepass.app/api/v1/pan/pan-verify');
     expect((init.headers as Record<string, string>)['content-type']).toBe(
       'application/json',
     );
@@ -231,7 +231,53 @@ describe('SurepassVerificationProvider', () => {
     );
     expect(JSON.parse(init.body as string)).toEqual({
       id_number: 'AAPFU0939F',
+      full_name: 'KARAN VEER',
+      dob: '1990-01-01',
     });
+  });
+
+  it('requires holder details for PAN Verify without calling Surepass', async () => {
+    expect(await provider.verify('PAN', PAN)).toMatchObject({
+      outcome: 'FAILED',
+      code: 'PAN_DETAILS_REQUIRED',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports a PAN Verify 422 as a details mismatch', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(
+        {
+          data: null,
+          status_code: 422,
+          success: false,
+          message: 'Verification Failed.',
+          message_code: 'verification_failed',
+        },
+        422,
+      ),
+    );
+    expect(await provider.verify('PAN', PAN, HOLDER)).toMatchObject({
+      outcome: 'FAILED',
+      code: 'PAN_DETAILS_MISMATCH',
+    });
+  });
+
+  it('sends only id_number to PAN Lite', async () => {
+    const lite = new SurepassVerificationProvider({
+      get: (key: string) =>
+        key === 'kyc.surepass'
+          ? {
+              ...(settings['kyc.surepass'] as object),
+              panPath: '/api/v1/pan/pan',
+            }
+          : settings[key],
+    } as never);
+    fetchMock.mockResolvedValueOnce(json(panBody));
+    expect((await lite.verify('PAN', PAN)).outcome).toBe('VERIFIED');
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://kyc-api.surepass.app/api/v1/pan/pan');
+    expect(JSON.parse(init.body as string)).toEqual({ id_number: PAN });
   });
 
   it('uses the GST path for GSTINs', async () => {
@@ -256,13 +302,13 @@ describe('SurepassVerificationProvider', () => {
         403,
       ),
     );
-    expect(await provider.verify('PAN', PAN)).toMatchObject({
+    expect(await provider.verify('PAN', PAN, HOLDER)).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_BALANCE_EXHAUSTED',
     });
 
     fetchMock.mockResolvedValueOnce(json({ success: false }, 409));
-    expect(await provider.verify('PAN', PAN)).toMatchObject({
+    expect(await provider.verify('PAN', PAN, HOLDER)).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_CONFLICT',
     });
@@ -291,7 +337,7 @@ describe('SurepassVerificationProvider', () => {
   it('reports an invalid token as unavailable without leaking it', async () => {
     const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
     fetchMock.mockResolvedValue(json({ message: 'Unauthorized' }, 401));
-    const outcome = await provider.verify('PAN', 'AAPFU0939F');
+    const outcome = await provider.verify('PAN', 'AAPFU0939F', HOLDER);
     expect(outcome).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_AUTH_FAILED',
@@ -302,12 +348,12 @@ describe('SurepassVerificationProvider', () => {
 
   it('maps rate limiting and malformed bodies to unavailable', async () => {
     fetchMock.mockResolvedValueOnce(json({}, 429));
-    expect(await provider.verify('PAN', 'AAPFU0939F')).toMatchObject({
+    expect(await provider.verify('PAN', 'AAPFU0939F', HOLDER)).toMatchObject({
       code: 'PROVIDER_RATE_LIMITED',
     });
 
     fetchMock.mockResolvedValueOnce(new Response('<html>', { status: 200 }));
-    expect(await provider.verify('PAN', 'AAPFU0939F')).toMatchObject({
+    expect(await provider.verify('PAN', 'AAPFU0939F', HOLDER)).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_MALFORMED_RESPONSE',
     });
@@ -349,7 +395,7 @@ describe('SurepassVerificationProvider', () => {
     fetchMock.mockImplementation(() =>
       Promise.resolve(json(upstreamTimeout, 500)),
     );
-    expect(await provider.verify('PAN', PAN)).toMatchObject({
+    expect(await provider.verify('PAN', PAN, HOLDER)).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_HTTP_500',
     });
@@ -365,7 +411,7 @@ describe('SurepassVerificationProvider', () => {
           );
         }),
     );
-    expect(await provider.verify('PAN', 'AAPFU0939F')).toMatchObject({
+    expect(await provider.verify('PAN', 'AAPFU0939F', HOLDER)).toMatchObject({
       outcome: 'UNAVAILABLE',
       code: 'PROVIDER_TIMEOUT',
     });

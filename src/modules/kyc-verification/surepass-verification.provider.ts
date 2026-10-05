@@ -10,10 +10,12 @@ import type {
   KycProviderOutcome,
   KycVerificationDetails,
   KycVerificationKind,
+  PanHolderInput,
 } from './kyc-verification.types.js';
 
 /*
  * Contract source: Surepass KYC API docs (app.surepass.app/docs/kyc).
+ *   PAN Verify       POST /api/v1/pan/pan-verify     { id_number, full_name, dob }
  *   PAN Lite         POST /api/v1/pan/pan            { id_number }
  *   Corporate GSTIN  POST /api/v1/corporate/gstin    { id_number }
  * Auth: `Authorization: Bearer <token>`, JSON body. Every response uses the
@@ -21,6 +23,11 @@ import type {
  * PAN Advanced (/api/v1/pan/pan-adv) adds pan_status codes, which are honoured
  * when SUREPASS_PAN_PATH points at it.
  */
+
+/** PAN Verify matches the PAN against the holder's name and date of birth. */
+export function isPanVerifyPath(path: string): boolean {
+  return /\/pan-verify\/?$/.test(path);
+}
 
 type Json = Record<string, unknown>;
 
@@ -162,21 +169,27 @@ function echoesIdentifier(returned: unknown, requested: string): boolean {
 export function classifySurepassPan(
   status: number,
   body: unknown,
-  pan: string,
+  options: { holderMatched?: boolean } = {},
 ): KycProviderOutcome {
   const envelope = readSurepassEnvelope(body);
   if (status === 422 || envelope.success === false) {
-    return {
-      outcome: 'FAILED',
-      code: 'PAN_NOT_FOUND',
-      reason: 'This PAN could not be found in Income Tax records.',
-      referenceId: envelope.clientId,
-    };
+    return options.holderMatched
+      ? {
+          outcome: 'FAILED',
+          code: 'PAN_DETAILS_MISMATCH',
+          reason:
+            'The PAN, name and date of birth / incorporation do not match Income Tax records. Check them against the PAN card.',
+          referenceId: envelope.clientId,
+        }
+      : {
+          outcome: 'FAILED',
+          code: 'PAN_NOT_FOUND',
+          reason: 'This PAN could not be found in Income Tax records.',
+          referenceId: envelope.clientId,
+        };
   }
   const { panStatusCode, ...details } = normalizeSurepassPan(body);
-  if (!details.nameOnPan || !echoesIdentifier(envelope.data.pan_number, pan)) {
-    return MALFORMED;
-  }
+  if (!details.nameOnPan) return MALFORMED;
   if (panStatusCode && REJECTED_PAN_STATUS.has(panStatusCode)) {
     return {
       outcome: 'FAILED',
@@ -273,21 +286,38 @@ export class SurepassVerificationProvider {
   async verify(
     kind: KycVerificationKind,
     identifier: string,
+    panHolder?: PanHolderInput,
   ): Promise<KycProviderOutcome> {
     const settings = this.settings();
     if (!settings) return { outcome: 'NOT_CONFIGURED' };
 
     const path = kind === 'PAN' ? settings.panPath : settings.gstPath;
+    const holderMatched = kind === 'PAN' && isPanVerifyPath(path);
+    if (holderMatched && !panHolder) {
+      return {
+        outcome: 'FAILED',
+        code: 'PAN_DETAILS_REQUIRED',
+        reason:
+          'Enter the name and date of birth / incorporation exactly as on the PAN.',
+      };
+    }
+    const payload: Record<string, string> = holderMatched
+      ? {
+          id_number: identifier,
+          full_name: panHolder!.fullName,
+          dob: panHolder!.dob,
+        }
+      : { id_number: identifier };
     const url = new URL(path, `${settings.baseUrl}/`).toString();
     const timeoutMs = this.config.get<number>('kyc.requestTimeoutMs') ?? 10_000;
 
-    let result = await this.post(url, settings.token, identifier, timeoutMs);
+    let result = await this.post(url, settings.token, payload, timeoutMs);
     if (
       result.kind === 'network' ||
       (result.kind === 'response' && RETRYABLE_STATUSES.has(result.status))
     ) {
       await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
-      result = await this.post(url, settings.token, identifier, timeoutMs);
+      result = await this.post(url, settings.token, payload, timeoutMs);
     }
 
     if (result.kind !== 'response') {
@@ -370,14 +400,14 @@ export class SurepassVerificationProvider {
     }
 
     return kind === 'PAN'
-      ? classifySurepassPan(status, body, identifier)
+      ? classifySurepassPan(status, body, { holderMatched })
       : classifySurepassGst(status, body, identifier);
   }
 
   private async post(
     url: string,
     token: string,
-    identifier: string,
+    payload: Record<string, string>,
     timeoutMs: number,
   ): Promise<
     | { kind: 'response'; status: number; body: unknown }
@@ -393,7 +423,7 @@ export class SurepassVerificationProvider {
           accept: 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ id_number: identifier }),
+        body: JSON.stringify(payload),
         signal: controller.signal,
       });
       const body: unknown = await response.json().catch(() => null);

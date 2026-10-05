@@ -6,6 +6,7 @@ import type {
   KycProviderOutcome,
   KycVerificationDetails,
   KycVerificationKind,
+  PanHolderInput,
 } from './kyc-verification.types.js';
 
 export type {
@@ -321,9 +322,10 @@ export class KycVerificationProvider {
   verify(
     kind: KycVerificationKind,
     identifier: string,
+    panHolder?: PanHolderInput,
   ): Promise<KycProviderOutcome> {
     if (this.surepass.isConfigured()) {
-      return this.surepass.verify(kind, identifier);
+      return this.surepass.verify(kind, identifier, panHolder);
     }
     return this.http.verify(kind, identifier);
   }

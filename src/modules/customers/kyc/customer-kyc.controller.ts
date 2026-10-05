@@ -78,6 +78,7 @@ export class CustomerKycController {
       await this.verification.verifyPan(
         user.id,
         dto.pan,
+        { fullName: dto.fullName, dob: dto.dob },
         kycRequestMeta(request, dto.source),
       ),
       'PAN verification result',

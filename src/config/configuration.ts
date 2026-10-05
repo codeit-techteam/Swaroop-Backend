@@ -97,8 +97,8 @@ export type SurepassConfig = {
   gstPath: string;
 };
 
-/** Surepass KYC docs: PAN Lite and Corporate GSTIN endpoint paths. */
-export const SUREPASS_DEFAULT_PAN_PATH = '/api/v1/pan/pan';
+/** Surepass KYC docs: PAN Verify and Corporate GSTIN endpoint paths. */
+export const SUREPASS_DEFAULT_PAN_PATH = '/api/v1/pan/pan-verify';
 export const SUREPASS_DEFAULT_GST_PATH = '/api/v1/corporate/gstin';
 
 const surepassConfig = (): SurepassConfig => ({

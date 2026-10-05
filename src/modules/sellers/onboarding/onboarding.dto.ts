@@ -6,6 +6,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -29,6 +30,24 @@ export class VerifySellerPanDto {
   @MinLength(1)
   @MaxLength(20)
   pan!: string;
+
+  @ApiProperty({
+    example: 'KARAN VEER INDUSTRIES PRIVATE LIMITED',
+    description: 'Name exactly as printed on the PAN',
+  })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(150)
+  fullName!: string;
+
+  @ApiProperty({
+    example: '2018-10-12',
+    description:
+      'Date of birth (individual PAN) or date of incorporation (company / firm PAN), YYYY-MM-DD',
+  })
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'dob must be YYYY-MM-DD' })
+  dob!: string;
 
   @ApiPropertyOptional({ enum: SELLER_VERIFICATION_SOURCES })
   @IsOptional()

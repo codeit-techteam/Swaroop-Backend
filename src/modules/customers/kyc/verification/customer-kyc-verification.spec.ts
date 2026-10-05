@@ -38,6 +38,8 @@ type Row = {
   linkedPanHash?: string | null;
 };
 
+const HOLDER = { fullName: ' KARAN   VEER ', dob: '2018-10-12' };
+
 describe('CustomerKycVerificationService', () => {
   const prisma = {
     customerProfile: { findUniqueOrThrow: vi.fn() },
@@ -109,9 +111,9 @@ describe('CustomerKycVerificationService', () => {
   });
 
   it('rejects malformed PANs without calling the provider', async () => {
-    await expect(service.verifyPan('user-1', 'ABC123')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.verifyPan('user-1', 'ABC123', HOLDER),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(provider.verify).not.toHaveBeenCalled();
   });
 
@@ -121,9 +123,12 @@ describe('CustomerKycVerificationService', () => {
       details: { nameOnPan: 'KARAN VEER', panStatus: 'Valid' },
     } satisfies KycProviderOutcome);
 
-    const result = await service.verifyPan('user-1', ' aapfu0939f ');
+    const result = await service.verifyPan('user-1', ' aapfu0939f ', HOLDER);
 
-    expect(provider.verify).toHaveBeenCalledWith('PAN', 'AAPFU0939F');
+    expect(provider.verify).toHaveBeenCalledWith('PAN', 'AAPFU0939F', {
+      fullName: 'KARAN VEER',
+      dob: '2018-10-12',
+    });
     expect(result).toMatchObject({
       status: 'VERIFIED',
       method: 'PROVIDER',
@@ -153,7 +158,7 @@ describe('CustomerKycVerificationService', () => {
       reason: 'This PAN could not be found in Income Tax records.',
     } satisfies KycProviderOutcome);
 
-    const result = await service.verifyPan('user-1', 'AAPFU0939F');
+    const result = await service.verifyPan('user-1', 'AAPFU0939F', HOLDER);
 
     expect(result.status).toBe('FAILED');
     expect(result.message).toMatch(/could not be found/);
@@ -211,8 +216,8 @@ describe('CustomerKycVerificationService', () => {
       new Promise<KycProviderOutcome>((done) => (resolve = done)),
     );
 
-    const first = service.verifyPan('user-1', 'AAPFU0939F');
-    const second = service.verifyPan('user-1', 'AAPFU0939F');
+    const first = service.verifyPan('user-1', 'AAPFU0939F', HOLDER);
+    const second = service.verifyPan('user-1', 'AAPFU0939F', HOLDER);
     await vi.waitFor(() => expect(provider.verify).toHaveBeenCalled());
     resolve({ outcome: 'VERIFIED', details: {} });
 
@@ -251,9 +256,9 @@ describe('CustomerKycVerificationService', () => {
 
   it('locks PAN and GST changes while KYC is under review', async () => {
     kycStatus = 'SUBMITTED';
-    await expect(service.verifyPan('user-1', 'AAPFU0939F')).rejects.toThrow(
-      /under review/,
-    );
+    await expect(
+      service.verifyPan('user-1', 'AAPFU0939F', HOLDER),
+    ).rejects.toThrow(/under review/);
     expect(provider.verify).not.toHaveBeenCalled();
   });
 });

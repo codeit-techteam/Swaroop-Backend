@@ -21,6 +21,7 @@ import { latestVerification } from './kyc-verification.records.js';
 import type {
   KycProviderOutcome,
   KycRequestMeta,
+  PanHolderInput,
 } from './kyc-verification.types.js';
 
 /** A VERIFIED result for the same identifier is reused instead of re-billing the provider. */
@@ -63,12 +64,13 @@ export class KycVerificationService {
     type: KycVerificationType,
     identifier: string,
     meta: KycRequestMeta = {},
+    panHolder?: PanHolderInput,
   ): Promise<KycVerification> {
     const key = `${owner.ownerType}:${type}:${owner.ownerId}:${identifier}`;
     const pending = this.inflight.get(key);
     if (pending) return pending;
-    const task = this.execute(owner, type, identifier, meta).finally(() =>
-      this.inflight.delete(key),
+    const task = this.execute(owner, type, identifier, meta, panHolder).finally(
+      () => this.inflight.delete(key),
     );
     this.inflight.set(key, task);
     return task;
@@ -79,6 +81,7 @@ export class KycVerificationService {
     type: KycVerificationType,
     identifier: string,
     meta: KycRequestMeta,
+    panHolder?: PanHolderInput,
   ): Promise<KycVerification> {
     const kind = type === KycVerificationType.PAN ? 'PAN' : 'GST';
     const identifierHash = hashIdentifier(kind, identifier);
@@ -117,7 +120,7 @@ export class KycVerificationService {
 
     let outcome: KycProviderOutcome;
     try {
-      outcome = await this.provider.verify(kind, identifier);
+      outcome = await this.provider.verify(kind, identifier, panHolder);
     } catch (error) {
       this.logger.error(
         `${kind} verification provider threw: ${error instanceof Error ? error.message : 'unknown error'}`,

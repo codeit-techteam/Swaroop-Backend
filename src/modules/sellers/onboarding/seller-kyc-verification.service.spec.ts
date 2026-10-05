@@ -54,6 +54,8 @@ function row(
   };
 }
 
+const HOLDER = { fullName: 'Karan  Veer Industries ', dob: '2018-10-12' };
+
 describe('SellerKycVerificationService', () => {
   const prisma = {
     sellerProfile: { findFirst: vi.fn() },
@@ -99,9 +101,21 @@ describe('SellerKycVerificationService', () => {
   });
 
   it('rejects malformed identifiers before calling the provider', async () => {
-    await expect(service.verifyPan('user-s', 'ABC')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.verifyPan('user-s', 'AAPFU0939F', {
+        fullName: 'K',
+        dob: '2018-10-12',
+      }),
+    ).rejects.toThrow(/name exactly as printed/);
+    await expect(
+      service.verifyPan('user-s', 'AAPFU0939F', {
+        ...HOLDER,
+        dob: '2999-01-01',
+      }),
+    ).rejects.toThrow(/date of birth or incorporation/);
+    await expect(
+      service.verifyPan('user-s', 'ABC', HOLDER),
+    ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
       service.verifyGst('user-s', '27AAPFU0939F1ZX'),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -113,7 +127,7 @@ describe('SellerKycVerificationService', () => {
       row(KycVerificationType.PAN, 'AAPFU0939F'),
     );
 
-    const result = await service.verifyPan('user-s', 'aapfu0939f', {
+    const result = await service.verifyPan('user-s', 'aapfu0939f', HOLDER, {
       source: 'SELLER_APP',
     });
 
@@ -127,6 +141,7 @@ describe('SellerKycVerificationService', () => {
       KycVerificationType.PAN,
       'AAPFU0939F',
       { source: 'SELLER_APP' },
+      { fullName: 'Karan Veer Industries', dob: '2018-10-12' },
     );
     expect(prisma.sellerOnboarding.update).toHaveBeenCalledWith({
       where: { id: 'onb-1' },
@@ -171,16 +186,16 @@ describe('SellerKycVerificationService', () => {
       sellerProfile: { id: 'seller-1', deletedAt: null },
     });
     await expect(
-      service.verifyPan('manager-1', 'AAPFU0939F'),
+      service.verifyPan('manager-1', 'AAPFU0939F', HOLDER),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(verification.verify).not.toHaveBeenCalled();
   });
 
   it('locks verification after submission', async () => {
     onboardingStatus = SellerOnboardingStatus.SUBMITTED;
-    await expect(service.verifyPan('user-s', 'AAPFU0939F')).rejects.toThrow(
-      /under review/,
-    );
+    await expect(
+      service.verifyPan('user-s', 'AAPFU0939F', HOLDER),
+    ).rejects.toThrow(/under review/);
     expect(verification.verify).not.toHaveBeenCalled();
   });
 
