@@ -49,6 +49,13 @@ type DbClient = Prisma.TransactionClient | PrismaService;
 
 const DEMO_OTP = '123456';
 
+/**
+ * A just-rotated refresh token stays usable briefly so concurrent refreshes
+ * (multiple tabs, retried requests, lost responses) don't trip reuse detection
+ * and revoke the whole session family.
+ */
+const REFRESH_REUSE_GRACE_MS = 60_000;
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -302,15 +309,24 @@ export class AuthService {
     }
 
     if (session.revokedAt) {
-      // Reuse detection: revoke entire family
-      await this.prisma.authSession.updateMany({
-        where: { familyId: session.familyId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-      throw new AuthException(
-        AuthErrorCode.AUTH_SESSION_REVOKED,
-        'Refresh token reuse detected',
-      );
+      const rotatedWithinGrace =
+        Boolean(session.replacedById) &&
+        Date.now() - session.revokedAt.getTime() <= REFRESH_REUSE_GRACE_MS &&
+        (await this.crypto.compareRefreshToken(
+          refreshToken,
+          session.refreshTokenHash,
+        ));
+      if (!rotatedWithinGrace) {
+        // Reuse detection: revoke entire family
+        await this.prisma.authSession.updateMany({
+          where: { familyId: session.familyId, revokedAt: null },
+          data: { revokedAt: new Date() },
+        });
+        throw new AuthException(
+          AuthErrorCode.AUTH_SESSION_REVOKED,
+          'Refresh token reuse detected',
+        );
+      }
     }
 
     if (session.expiresAt.getTime() < Date.now()) {
@@ -357,7 +373,8 @@ export class AuthService {
       await tx.authSession.update({
         where: { id: session.id },
         data: {
-          revokedAt: new Date(),
+          // Keep the original rotation time so the grace window can't be extended.
+          revokedAt: session.revokedAt ?? new Date(),
           replacedById: undefined,
         },
       });
