@@ -146,8 +146,10 @@ export function normalizeSurepassPan(body: unknown): KycVerificationDetails & {
         .join(' ')
     : '';
   const code = text(data.pan_status)?.toUpperCase() ?? null;
+  const dob = text(data.dob);
   return {
     nameOnPan: text(data.full_name) ?? (split || null),
+    dateOnPan: dob && /^\d{4}-\d{2}-\d{2}$/.test(dob) ? dob : null,
     panStatus:
       text(data.pan_status_desc) ?? (code ? PAN_STATUS_MEANING[code] : null),
     panCategory: text(data.category),

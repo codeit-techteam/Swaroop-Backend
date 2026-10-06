@@ -164,6 +164,34 @@ describe('Surepass response classification', () => {
     });
   });
 
+  it('keeps the name and date returned by PAN Verify', () => {
+    const verifyBody = {
+      data: {
+        client_id: 'pan_uczgEGvviRwwpxxzfGDp',
+        pan_number: 'ABCPD1234F',
+        full_name: 'Munna Tripathi',
+        dob: '2000-01-01',
+      },
+      status_code: 200,
+      success: true,
+      message: null,
+      message_code: 'success',
+    };
+    expect(
+      classifySurepassPan(200, verifyBody, { holderMatched: true }),
+    ).toMatchObject({
+      outcome: 'VERIFIED',
+      referenceId: 'pan_uczgEGvviRwwpxxzfGDp',
+      details: { nameOnPan: 'Munna Tripathi', dateOnPan: '2000-01-01' },
+    });
+    expect(
+      classifySurepassPan(200, {
+        ...verifyBody,
+        data: { ...verifyBody.data, dob: '01/01/2000' },
+      }),
+    ).toMatchObject({ details: { dateOnPan: null } });
+  });
+
   it('applies PAN Advanced status codes', () => {
     const advanced = (code: string, desc?: string) => ({
       ...panBody,
