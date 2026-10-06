@@ -6,7 +6,7 @@ import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module.js';
 import { successResponse } from './common/utils/response.util.js';
-import type { AppConfig } from './config/configuration.js';
+import type { AppConfig, SurepassConfig } from './config/configuration.js';
 import { setupSwagger } from './docs/swagger.setup.js';
 import { HealthService } from './health/health.service.js';
 
@@ -135,6 +135,16 @@ async function bootstrap(): Promise<void> {
   logger.log(
     `Health probes: /health and /${apiPrefix}/v${appConfig.apiVersion}/health`,
   );
+  const surepass = configService.get<SurepassConfig>('kyc.surepass');
+  if (surepass?.baseUrl && surepass.token) {
+    logger.log(
+      `Surepass KYC: configured=true environment=${surepass.environment} host=${new URL(surepass.baseUrl).host}`,
+    );
+  } else {
+    logger.warn(
+      'Surepass KYC: configured=false. SUREPASS_API_BASE_URL / SUREPASS_API_TOKEN are not set, so PAN and GST checks are saved for manual review (PROVIDER_NOT_CONFIGURED).',
+    );
+  }
 }
 
 await bootstrap();
