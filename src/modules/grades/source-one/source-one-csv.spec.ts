@@ -142,6 +142,28 @@ describe('planSourceOneImport', () => {
       expect(plan.categories).toHaveLength(61);
     });
 
+    it('separates the 2 exact copies from the 9 same-key rows with differing values', () => {
+      expect(plan.exactDuplicateRows).toBe(2);
+      expect(plan.duplicates.filter((d) => d.identical)).toEqual([
+        expect.objectContaining({ keptLine: 2602, mergedLines: [2603] }),
+        expect.objectContaining({ keptLine: 3574, mergedLines: [3575] }),
+      ]);
+      expect(plan.duplicates.filter((d) => !d.identical)).toHaveLength(9);
+    });
+
+    it('keeps the priced row when a grade is listed both priced and unpriced', () => {
+      const tasnee = plan.grades.find(
+        (g) => g.gradeNo === '4025AS' && g.manufacturer === 'TASNEE',
+      );
+      expect(tasnee).toMatchObject({
+        lines: [1288, 1289],
+        fullGradeName: 'LDPE SLIP 4025AS - TASNEE',
+        inTodaysDelhiPriceList: true,
+        priceTodayRsKg: '181.67',
+        producerPriceRsKg: null,
+      });
+    });
+
     it('generates unique, deterministic grade codes', () => {
       const codes = plan.grades.map((g) => g.code);
       expect(new Set(codes).size).toBe(codes.length);

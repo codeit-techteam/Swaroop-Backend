@@ -237,6 +237,23 @@ export class GradesService {
     return this.mapGrade(grade, consumer);
   }
 
+  /**
+   * Grade detail for customer/seller apps. Hidden or inactive grades read as
+   * not found unless visible to at least one of the caller's sides.
+   */
+  async findVisible(id: string, scopes: Array<'customer' | 'seller'>) {
+    const grade = assertFound(
+      scopes.length
+        ? await this.prisma.grade.findFirst({
+            where: { id, OR: scopes.map(scopeWhere) },
+            include: gradeInclude,
+          })
+        : null,
+      'Grade not found',
+    );
+    return this.mapGrade(grade, true);
+  }
+
   private async loadForChange(id: string) {
     return assertFound(
       await this.prisma.grade.findFirst({

@@ -106,10 +106,16 @@ export class GradesController {
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user?: AuthenticatedUser,
   ) {
-    const isAdmin = (user?.roles ?? []).some(
+    const roles = user?.roles ?? [];
+    const isAdmin = roles.some(
       (r) => r === RoleCode.ADMIN || r === RoleCode.SUPER_ADMIN,
     );
-    const data = await this.gradesService.findOne(id, !isAdmin);
+    const data = isAdmin
+      ? await this.gradesService.findOne(id)
+      : await this.gradesService.findVisible(id, [
+          ...(roles.includes(RoleCode.CUSTOMER) ? ['customer' as const] : []),
+          ...(roles.includes(RoleCode.SELLER) ? ['seller' as const] : []),
+        ]);
     return successResponse(data, 'Grade retrieved');
   }
 

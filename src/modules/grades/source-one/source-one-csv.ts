@@ -71,6 +71,8 @@ export type PlannedGrade = SourceOneRow & {
 export type SourceOnePlan = {
   totalRows: number;
   validRows: number;
+  /** Rows identical in every column to an earlier row. */
+  exactDuplicateRows: number;
   invalid: SourceOneIssue[];
   warnings: SourceOneIssue[];
   duplicates: SourceOneDuplicate[];
@@ -444,9 +446,14 @@ export function planSourceOneImport(text: string): SourceOnePlan {
     throw new SourceOneCsvError('Generated grade codes are not unique');
   }
 
+  const distinctRows = new Set(
+    valid.map(({ line: _line, ...values }) => JSON.stringify(values)),
+  );
+
   return {
     totalRows,
     validRows: valid.length,
+    exactDuplicateRows: valid.length - distinctRows.size,
     invalid,
     warnings,
     duplicates,

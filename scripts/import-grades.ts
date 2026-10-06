@@ -52,7 +52,7 @@ File: ${summary.fileName} (sha256 ${summary.fileSha256.slice(0, 12)}…)
 Total rows: ${summary.totalRows}
 Valid rows: ${summary.validRows}
 Invalid: ${summary.invalidRows}
-Duplicates handled: ${summary.duplicateRows}
+Duplicates handled: ${summary.duplicateRows} (exact copies: ${summary.exactDuplicateRows}, same grade key merged: ${summary.keyMergedRows})
 Grades in file: ${summary.grades}
 Inserted: ${summary.inserted}
 Updated: ${summary.updated}

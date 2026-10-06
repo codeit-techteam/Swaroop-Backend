@@ -166,6 +166,35 @@ describe('GradesService admin changes', () => {
     });
     expect(consumer).not.toHaveProperty('priceTodayRsKg');
   });
+
+  it('scopes customer/seller grade detail to grades visible on their side', async () => {
+    const { service, prisma } = setup();
+    const grade = await service.findVisible('g1', ['customer', 'seller']);
+
+    expect(prisma.grade.findFirst).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: {
+          id: 'g1',
+          OR: [
+            { deletedAt: null, status: 'ACTIVE', customerVisible: true },
+            { deletedAt: null, status: 'ACTIVE', sellerVisible: true },
+          ],
+        },
+      }),
+    );
+    expect(grade).not.toHaveProperty('priceTodayRsKg');
+  });
+
+  it('treats hidden or inactive grades as not found for customers and sellers', async () => {
+    const { service, prisma } = setup();
+    prisma.grade.findFirst.mockResolvedValueOnce(null as never);
+    await expect(service.findVisible('g1', ['customer'])).rejects.toThrow(
+      'Grade not found',
+    );
+    await expect(service.findVisible('g1', [])).rejects.toThrow(
+      'Grade not found',
+    );
+  });
 });
 
 describe('GradeQueryDto', () => {

@@ -1,6 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { PaginationQueryDto } from '../../master-data/common/pagination.js';
 
 export class MarketplaceHomeQueryDto {
@@ -39,4 +48,38 @@ export class MarketplaceListQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsUUID()
   gradeId?: string;
+}
+
+export class MarketplaceGradeQueryDto extends MarketplaceListQueryDto {
+  @ApiPropertyOptional({ description: 'Category code, e.g. HDPE or PP_CP' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  category?: string;
+
+  @ApiPropertyOptional({ description: 'Source.One Grade Group (exact)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  gradeGroup?: string;
+
+  @ApiPropertyOptional({
+    description: 'Manufacturer (exact, case-insensitive)',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  manufacturer?: string;
+
+  @ApiPropertyOptional({ description: 'Only grades with a live offer' })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) =>
+    value === 'true' || value === '1' || value === true
+      ? true
+      : value === 'false' || value === '0' || value === false
+        ? false
+        : value,
+  )
+  @IsBoolean()
+  hasOffers?: boolean;
 }

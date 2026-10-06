@@ -34,7 +34,12 @@ export type GradeImportSummary = {
   totalRows: number;
   validRows: number;
   invalidRows: number;
+  /** Rows folded into another row: exactDuplicateRows + keyMergedRows. */
   duplicateRows: number;
+  /** Rows identical in every column to an earlier row. */
+  exactDuplicateRows: number;
+  /** Rows sharing Category|Grade Group|Grade No.|Manufacturer with differing values. */
+  keyMergedRows: number;
   grades: number;
   inserted: number;
   updated: number;
@@ -127,6 +132,7 @@ function buildReport(plan: SourceOnePlan, notInFile: string[]) {
     invalidTotal: plan.invalid.length,
     warnings: plan.warnings.slice(0, REPORT_LIMIT),
     warningsTotal: plan.warnings.length,
+    exactDuplicateRows: plan.exactDuplicateRows,
     duplicates: plan.duplicates,
     notInFile: notInFile.slice(0, REPORT_LIMIT),
     notInFileTotal: notInFile.length,
@@ -274,6 +280,8 @@ export async function importSourceOneGrades(
     validRows: plan.validRows,
     invalidRows: plan.totalRows - plan.validRows,
     duplicateRows,
+    exactDuplicateRows: plan.exactDuplicateRows,
+    keyMergedRows: duplicateRows - plan.exactDuplicateRows,
     grades: plan.grades.length,
   };
 

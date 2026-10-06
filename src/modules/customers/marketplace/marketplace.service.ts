@@ -17,7 +17,9 @@ import {
   toBlindProduct,
 } from '../common/blind-marketplace.mapper.js';
 import { CustomerContextService } from '../common/customer-context.service.js';
+import { gradeSearch } from '../../master-data/grades/grades.service.js';
 import type {
+  MarketplaceGradeQueryDto,
   MarketplaceHomeQueryDto,
   MarketplaceListQueryDto,
 } from './marketplace.dto.js';
@@ -81,6 +83,11 @@ const gradeSelect = {
   categoryId: true,
   sortOrder: true,
   status: true,
+  gradeGroup: true,
+  gradeNo: true,
+  manufacturer: true,
+  fullGradeName: true,
+  inTodaysDelhiPriceList: true,
   category: {
     select: {
       id: true,
@@ -91,6 +98,35 @@ const gradeSelect = {
     },
   },
 } satisfies Prisma.GradeSelect;
+
+/** Customer-facing grade. Source.One reference prices stay admin-only. */
+function toCustomerGrade(
+  g: Prisma.GradeGetPayload<{ select: typeof gradeSelect }>,
+  liveOfferCount?: number,
+) {
+  return {
+    id: g.id,
+    code: g.code,
+    name: g.name,
+    displayName: g.displayName ?? g.name,
+    description: g.description,
+    gradeGroup: g.gradeGroup,
+    gradeNo: g.gradeNo,
+    manufacturer: g.manufacturer,
+    fullGradeName: g.fullGradeName,
+    inTodaysDelhiPriceList: g.inTodaysDelhiPriceList,
+    category: g.category
+      ? {
+          id: g.category.id,
+          code: g.category.code,
+          name: g.category.name,
+          displayName: g.category.displayName ?? g.category.name,
+          parentGroup: g.category.parentGroup,
+        }
+      : null,
+    ...(liveOfferCount !== undefined ? { liveOfferCount } : {}),
+  };
+}
 
 const productInclude = {
   grade: {
@@ -244,22 +280,7 @@ export class MarketplaceService {
         sortOrder: c.sortOrder,
         gradeCount: c._count.grades,
       })),
-      popularGrades: popularGrades.map((g) => ({
-        id: g.id,
-        code: g.code,
-        name: g.name,
-        displayName: g.displayName ?? g.name,
-        description: g.description,
-        category: g.category
-          ? {
-              id: g.category.id,
-              code: g.category.code,
-              name: g.category.name,
-              displayName: g.category.displayName ?? g.category.name,
-              parentGroup: g.category.parentGroup,
-            }
-          : null,
-      })),
+      popularGrades: popularGrades.map((g) => toCustomerGrade(g)),
       featuredProducts: featuredProducts.map((p) => toBlindProduct(p)),
       activeOffers: activeOffers.map((o) => toBlindOffer(o)),
       summary: {
@@ -304,27 +325,37 @@ export class MarketplaceService {
     }));
   }
 
-  async listGrades(userId: string, query: MarketplaceListQueryDto) {
+  async listGrades(userId: string, query: MarketplaceGradeQueryDto) {
     await this.ctx(userId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const search = resolveSearch(query);
+    const now = new Date();
     const where: Prisma.GradeWhereInput = {
       ...customerGradeWhere,
       ...(query.categoryId ? { categoryId: query.categoryId } : {}),
-      ...(search
+      ...(query.category
+        ? { category: { code: query.category.trim().toUpperCase() } }
+        : {}),
+      ...(query.gradeGroup
         ? {
-            OR: [
-              { name: { contains: search, mode: 'insensitive' } },
-              { code: { contains: search, mode: 'insensitive' } },
-              { displayName: { contains: search, mode: 'insensitive' } },
-              {
-                category: {
-                  name: { contains: search, mode: 'insensitive' },
-                },
-              },
-            ],
+            gradeGroup: {
+              equals: query.gradeGroup.trim(),
+              mode: 'insensitive',
+            },
           }
         : {}),
+      ...(query.manufacturer
+        ? {
+            manufacturer: {
+              equals: query.manufacturer.trim(),
+              mode: 'insensitive',
+            },
+          }
+        : {}),
+      ...(query.hasOffers
+        ? { offers: { some: activeMarketplaceOfferWhere(now) } }
+        : {}),
+      ...(search ? { OR: gradeSearch(search) } : {}),
     };
 
     const [total, items] = await this.prisma.$transaction([
@@ -332,29 +363,18 @@ export class MarketplaceService {
       this.prisma.grade.findMany({
         where,
         select: gradeSelect,
-        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        orderBy: [{ sortOrder: 'asc' }, { displayName: 'asc' }, { id: 'asc' }],
         skip,
         take,
       }),
     ]);
+    const offerCounts = await this.liveOfferCounts(
+      items.map((g) => g.id),
+      now,
+    );
 
     return {
-      items: items.map((g) => ({
-        id: g.id,
-        code: g.code,
-        name: g.name,
-        displayName: g.displayName ?? g.name,
-        description: g.description,
-        category: g.category
-          ? {
-              id: g.category.id,
-              code: g.category.code,
-              name: g.category.name,
-              displayName: g.category.displayName ?? g.category.name,
-              parentGroup: g.category.parentGroup,
-            }
-          : null,
-      })),
+      items: items.map((g) => toCustomerGrade(g, offerCounts.get(g.id) ?? 0)),
       meta: paginationMeta(page, limit, total),
     };
   }
@@ -366,22 +386,18 @@ export class MarketplaceService {
       select: gradeSelect,
     });
     if (!grade) throw new NotFoundException('Grade not found');
-    return {
-      id: grade.id,
-      code: grade.code,
-      name: grade.name,
-      displayName: grade.displayName ?? grade.name,
-      description: grade.description,
-      category: grade.category
-        ? {
-            id: grade.category.id,
-            code: grade.category.code,
-            name: grade.category.name,
-            displayName: grade.category.displayName ?? grade.category.name,
-            parentGroup: grade.category.parentGroup,
-          }
-        : null,
-    };
+    const offerCounts = await this.liveOfferCounts([grade.id]);
+    return toCustomerGrade(grade, offerCounts.get(grade.id) ?? 0);
+  }
+
+  private async liveOfferCounts(gradeIds: string[], now = new Date()) {
+    if (!gradeIds.length) return new Map<string, number>();
+    const rows = await this.prisma.offer.groupBy({
+      by: ['gradeId'],
+      where: { ...activeMarketplaceOfferWhere(now), gradeId: { in: gradeIds } },
+      _count: { _all: true },
+    });
+    return new Map(rows.map((r) => [r.gradeId, r._count._all]));
   }
 
   async listGradeProducts(

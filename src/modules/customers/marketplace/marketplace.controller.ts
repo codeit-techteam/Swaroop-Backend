@@ -13,6 +13,7 @@ import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
+  MarketplaceGradeQueryDto,
   MarketplaceHomeQueryDto,
   MarketplaceListQueryDto,
 } from './marketplace.dto.js';
@@ -48,10 +49,13 @@ export class MarketplaceController {
   }
 
   @Get('grades')
-  @ApiOperation({ summary: 'List customer-visible grades' })
+  @ApiOperation({
+    summary:
+      'Browse customer-visible Grade Master (search, category, grade group, manufacturer, live offers)',
+  })
   async listGrades(
     @CurrentUser() user: AuthenticatedUser,
-    @Query() query: MarketplaceListQueryDto,
+    @Query() query: MarketplaceGradeQueryDto,
   ) {
     const { items, meta } = await this.marketplaceService.listGrades(
       user.id,
