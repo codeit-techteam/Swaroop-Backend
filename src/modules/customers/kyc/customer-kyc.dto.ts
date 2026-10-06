@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsEmail,
   IsIn,
   IsInt,
   IsOptional,
@@ -134,4 +135,38 @@ export class SubmitCustomerKycDto {
     message: 'pan must be a valid 10-character PAN',
   })
   pan?: string;
+
+  @ApiPropertyOptional({ example: 'Private Limited' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  businessType?: string;
+
+  @ApiPropertyOptional({ example: 'Petrochemical Trading' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  natureOfBusiness?: string;
+
+  @ApiPropertyOptional({ example: 'accounts@company.com' })
+  @IsOptional()
+  @IsEmail({ require_tld: false })
+  @MaxLength(200)
+  businessEmail?: string;
+}
+
+/** Contact details the customer may change at any time; GST / PAN data is verified and not editable. */
+export class UpdateCustomerBusinessProfileDto {
+  @ApiPropertyOptional({ example: 'Petrochemical Trading' })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(120)
+  natureOfBusiness?: string;
+
+  @ApiPropertyOptional({ example: 'accounts@company.com' })
+  @IsOptional()
+  @IsEmail({ require_tld: false })
+  @MaxLength(200)
+  businessEmail?: string;
 }

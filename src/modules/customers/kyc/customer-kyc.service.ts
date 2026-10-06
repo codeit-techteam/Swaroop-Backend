@@ -39,6 +39,7 @@ import {
 import type {
   CreateCustomerKycDocumentDto,
   SubmitCustomerKycDto,
+  UpdateCustomerBusinessProfileDto,
 } from './customer-kyc.dto.js';
 import { lockCustomerKyc } from './customer-kyc.lock.js';
 import {
@@ -115,6 +116,12 @@ export class CustomerKycService {
           legalName: true,
           gstin: true,
           pan: true,
+          businessType: true,
+          constitutionType: true,
+          industry: true,
+          email: true,
+          phone: true,
+          createdAt: true,
           verificationStatus: true,
         },
       }),
@@ -199,6 +206,12 @@ export class CustomerKycService {
         legalName: organization.legalName,
         gstin: organization.gstin,
         pan: organization.pan,
+        businessType: organization.businessType,
+        constitutionType: organization.constitutionType,
+        natureOfBusiness: organization.industry,
+        email: organization.email,
+        phone: organization.phone,
+        memberSince: organization.createdAt.toISOString(),
         verificationStatus: organization.verificationStatus,
       },
       slots,
@@ -448,6 +461,9 @@ export class CustomerKycService {
         ? toVerificationView(verifications.gst).details.legalName
         : null;
     const businessName = dto.businessName?.trim() || null;
+    const businessType = dto.businessType?.trim() || null;
+    const industry = dto.natureOfBusiness?.trim() || null;
+    const businessEmail = dto.businessEmail?.trim().toLowerCase() || null;
 
     const now = new Date();
     const previousStatus = await this.prisma.$transaction(async (tx) => {
@@ -472,6 +488,9 @@ export class CustomerKycService {
         data: {
           verificationStatus: VerificationStatus.UNDER_REVIEW,
           ...(businessName ? { name: businessName } : {}),
+          ...(businessType ? { businessType } : {}),
+          ...(industry ? { industry } : {}),
+          ...(businessEmail ? { email: businessEmail } : {}),
           ...(verifiedLegalName || businessName
             ? { legalName: verifiedLegalName ?? businessName }
             : {}),
@@ -510,6 +529,34 @@ export class CustomerKycService {
       metadata: { type: 'KYC_SUBMITTED', resubmission },
     });
 
+    return this.overview(userId);
+  }
+
+  async updateBusinessProfile(
+    userId: string,
+    dto: UpdateCustomerBusinessProfileDto,
+  ) {
+    const ctx = await this.customerContext.getOrCreateCustomer(userId);
+    const industry = dto.natureOfBusiness?.trim() || null;
+    const email = dto.businessEmail?.trim().toLowerCase() || null;
+    const data = {
+      ...(industry ? { industry } : {}),
+      ...(email ? { email } : {}),
+    };
+    if (Object.keys(data).length > 0) {
+      await this.prisma.organization.update({
+        where: { id: ctx.organizationId },
+        data,
+      });
+      await this.audit.log({
+        action: 'CUSTOMER_BUSINESS_PROFILE_UPDATED',
+        actorUserId: userId,
+        organizationId: ctx.organizationId,
+        entityType: EntityOwnerType.CUSTOMER,
+        entityId: ctx.customerProfileId,
+        metadata: { actorRole: 'CUSTOMER', fields: Object.keys(data) },
+      });
+    }
     return this.overview(userId);
   }
 

@@ -151,6 +151,12 @@ describe('CustomerKycService', () => {
       legalName: null,
       gstin: orgGstin,
       pan: null,
+      businessType: 'Private Limited',
+      constitutionType: null,
+      industry: 'Polymer Distribution',
+      email: 'ops@customer.example',
+      phone: null,
+      createdAt: new Date('2026-01-15T00:00:00.000Z'),
       verificationStatus: VerificationStatus.PENDING,
     }));
     prisma.document.findMany.mockImplementation(
@@ -291,6 +297,62 @@ describe('CustomerKycService', () => {
         metadata: expect.objectContaining({ type: 'KYC_SUBMITTED' }),
       }),
     );
+  });
+
+  it('returns the backend company profile in the overview', async () => {
+    const overview = await service.overview('user-1');
+    expect(overview.organization).toMatchObject({
+      name: 'Customer Organization',
+      businessType: 'Private Limited',
+      natureOfBusiness: 'Polymer Distribution',
+      email: 'ops@customer.example',
+      memberSince: '2026-01-15T00:00:00.000Z',
+    });
+  });
+
+  it('updates business email and nature of business on the caller organization', async () => {
+    await service.updateBusinessProfile('user-1', {
+      natureOfBusiness: ' Polymer Distribution ',
+      businessEmail: 'Ops@KV.example',
+    });
+
+    expect(prisma.organization.update).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+      data: { industry: 'Polymer Distribution', email: 'ops@kv.example' },
+    });
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CUSTOMER_BUSINESS_PROFILE_UPDATED',
+        organizationId: 'org-1',
+      }),
+    );
+  });
+
+  it('skips the write when the business profile update is empty', async () => {
+    await service.updateBusinessProfile('user-1', {});
+    expect(prisma.organization.update).not.toHaveBeenCalled();
+  });
+
+  it('stores the business profile entered with the submission on the organization', async () => {
+    stored = [doc('pan'), doc('gst'), doc('aadhaar')];
+    verifyBoth({ legalName: 'Karan Veer Industries Pvt Ltd' });
+
+    await service.submit('user-1', {
+      businessType: ' Private Limited ',
+      natureOfBusiness: 'Petrochemical Trading',
+      businessEmail: 'Accounts@KV.example',
+    });
+
+    expect(prisma.organization.update).toHaveBeenCalledWith({
+      where: { id: 'org-1' },
+      data: {
+        verificationStatus: VerificationStatus.UNDER_REVIEW,
+        businessType: 'Private Limited',
+        industry: 'Petrochemical Trading',
+        email: 'accounts@kv.example',
+        legalName: 'Karan Veer Industries Pvt Ltd',
+      },
+    });
   });
 
   it('rejects a submitted PAN that differs from the verified one', async () => {

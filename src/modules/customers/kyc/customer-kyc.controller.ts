@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Req,
   UseGuards,
@@ -25,6 +26,7 @@ import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import {
   CreateCustomerKycDocumentDto,
   SubmitCustomerKycDto,
+  UpdateCustomerBusinessProfileDto,
   VerifyCustomerGstDto,
   VerifyCustomerPanDto,
 } from './customer-kyc.dto.js';
@@ -188,6 +190,20 @@ export class CustomerKycController {
     return successResponse(
       await this.kyc.submit(user.id, dto),
       'KYC submitted for review',
+    );
+  }
+
+  @Patch('business-profile')
+  @ApiOperation({
+    summary: 'Update business email / nature of business on the organization',
+  })
+  async updateBusinessProfile(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: UpdateCustomerBusinessProfileDto,
+  ) {
+    return successResponse(
+      await this.kyc.updateBusinessProfile(user.id, dto),
+      'Business profile updated',
     );
   }
 }
