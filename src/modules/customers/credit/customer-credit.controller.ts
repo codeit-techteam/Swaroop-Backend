@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -11,6 +12,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
+import {
+  UserRateLimit,
+  UserRateLimitGuard,
+} from '../../../common/guards/user-rate-limit.guard.js';
+import { ClientSourceResolver } from '../../../common/utils/client-source.js';
 import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
@@ -24,13 +30,26 @@ import {
 } from './customer-credit.dto.js';
 import { CustomerCreditService } from './customer-credit.service.js';
 
+const HOUR_MS = 60 * 60 * 1000;
+
+const APPLICATION_SUBMIT_LIMIT = {
+  bucket: 'credit-application-submit',
+  limitConfigKey: 'credit.submitsPerHour',
+  defaultLimit: 20,
+  windowMs: HOUR_MS,
+  message: 'Too many credit submissions. Please try again later.',
+};
+
 @ApiTags('Customer Credit')
 @Controller({ path: 'customer/credit', version: '1' })
 @UseGuards(JwtAuthGuard, RolesGuard)
 @ApiBearerAuth('bearer')
 @Roles(RoleCode.CUSTOMER)
 export class CustomerCreditController {
-  constructor(private readonly credit: CustomerCreditService) {}
+  constructor(
+    private readonly credit: CustomerCreditService,
+    private readonly clientSource: ClientSourceResolver,
+  ) {}
 
   @Get('account')
   @ApiOperation({ summary: 'Own PetroTrade credit account' })
@@ -91,6 +110,8 @@ export class CustomerCreditController {
 
   @Post('apply')
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(UserRateLimitGuard)
+  @UserRateLimit(APPLICATION_SUBMIT_LIMIT)
   @ApiOperation({
     summary:
       'Apply for PetroTrade managed credit in one step (submits immediately)',
@@ -98,25 +119,50 @@ export class CustomerCreditController {
   async apply(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CustomerCreditApplyDto,
+    @Headers() headers: Record<string, string | string[] | undefined>,
   ) {
     return successResponse(
-      await this.credit.apply(user.id, dto),
+      await this.credit.apply(user.id, dto, this.clientSource.resolve(headers)),
       'Credit application submitted',
     );
   }
 
   @Post('applications')
   @HttpCode(HttpStatus.CREATED)
+  @UseGuards(UserRateLimitGuard)
+  @UserRateLimit({
+    bucket: 'credit-application-draft',
+    limitConfigKey: 'credit.draftWritesPerHour',
+    defaultLimit: 60,
+    windowMs: HOUR_MS,
+    message: 'Too many credit application updates. Please try again later.',
+  })
   @ApiOperation({
     summary: 'Create or update the open credit application draft',
+    description:
+      'The application source (WEBSITE, CUSTOMER_WEB, CUSTOMER_APP, ...) is resolved server-side from the request Origin; any `source` in the body or metadata is ignored.',
   })
   async saveDraft(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: CustomerCreditDraftDto,
+    @Headers() headers: Record<string, string | string[] | undefined>,
   ) {
     return successResponse(
-      await this.credit.saveDraft(user.id, dto),
+      await this.credit.saveDraft(
+        user.id,
+        dto,
+        this.clientSource.resolve(headers),
+      ),
       'Credit application draft saved',
+    );
+  }
+
+  @Get('applications')
+  @ApiOperation({ summary: 'Own credit applications, newest first' })
+  async listApplications(@CurrentUser() user: AuthenticatedUser) {
+    return successResponse(
+      await this.credit.listApplications(user.id),
+      'Credit applications retrieved',
     );
   }
 
@@ -243,15 +289,20 @@ export class CustomerCreditController {
 
   @Post('applications/:id/submit')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(UserRateLimitGuard)
+  @UserRateLimit(APPLICATION_SUBMIT_LIMIT)
   @ApiOperation({
     summary: 'Submit the draft credit application for review',
+    description:
+      'Idempotent: repeating the call after a successful submit returns the same application with `alreadySubmitted: true`.',
   })
   async submit(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
+    @Headers() headers: Record<string, string | string[] | undefined>,
   ) {
     return successResponse(
-      await this.credit.submit(user.id, id),
+      await this.credit.submit(user.id, id, this.clientSource.resolve(headers)),
       'Credit application submitted',
     );
   }

@@ -1,7 +1,169 @@
+import { BadRequestException } from '@nestjs/common';
 import {
+  CreditApplicationSource,
   CreditApplicationStatus,
   DocumentCategory,
 } from '../../../generated/prisma/client.js';
+
+const S = CreditApplicationStatus;
+
+/**
+ * Every status change an application may make. Services must go through
+ * {@link assertCreditTransition} and write with a compare-and-set on the
+ * previous status so concurrent actions cannot both succeed.
+ *
+ * `→ DRAFT` from a submitted status is "resubmission requested": the
+ * application reopens for the customer to edit and submit again.
+ */
+export const CREDIT_APPLICATION_TRANSITIONS: Record<
+  CreditApplicationStatus,
+  readonly CreditApplicationStatus[]
+> = {
+  [S.DRAFT]: [S.PENDING, S.CANCELLED],
+  [S.PENDING]: [S.UNDER_REVIEW, S.DOCUMENTS_REQUIRED, S.REJECTED, S.DRAFT],
+  [S.DOCUMENTS_UNDER_REVIEW]: [
+    S.UNDER_REVIEW,
+    S.DOCUMENTS_REQUIRED,
+    S.REJECTED,
+    S.DRAFT,
+  ],
+  [S.UNDER_REVIEW]: [
+    S.DOCUMENTS_REQUIRED,
+    S.INSURANCE_REVIEW,
+    S.CREDIT_ARRANGEMENT_PENDING,
+    S.APPROVED,
+    S.PARTIALLY_APPROVED,
+    S.REJECTED,
+    S.DRAFT,
+  ],
+  [S.DOCUMENTS_REQUIRED]: [
+    S.DOCUMENTS_UNDER_REVIEW,
+    S.UNDER_REVIEW,
+    S.REJECTED,
+    S.DRAFT,
+  ],
+  [S.INSURANCE_REVIEW]: [
+    S.CREDIT_ARRANGEMENT_PENDING,
+    S.APPROVED,
+    S.PARTIALLY_APPROVED,
+    S.DOCUMENTS_REQUIRED,
+    S.REJECTED,
+  ],
+  [S.CREDIT_ARRANGEMENT_PENDING]: [
+    S.APPROVED,
+    S.PARTIALLY_APPROVED,
+    S.DOCUMENTS_REQUIRED,
+    S.REJECTED,
+  ],
+  [S.APPROVED]: [],
+  [S.PARTIALLY_APPROVED]: [],
+  [S.REJECTED]: [],
+  [S.EXPIRED]: [],
+  [S.CANCELLED]: [],
+};
+
+export function canTransitionCredit(
+  from: CreditApplicationStatus,
+  to: CreditApplicationStatus,
+): boolean {
+  return CREDIT_APPLICATION_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+export function assertCreditTransition(
+  from: CreditApplicationStatus,
+  to: CreditApplicationStatus,
+): void {
+  if (!canTransitionCredit(from, to)) {
+    throw new BadRequestException(
+      `Credit application cannot move from ${humanizeCreditStatus(from)} to ${humanizeCreditStatus(to)}`,
+    );
+  }
+}
+
+export type CreditAdminAction =
+  | 'START_REVIEW'
+  | 'REQUEST_DOCUMENTS'
+  | 'REQUEST_RESUBMISSION'
+  | 'SEND_INSURANCE_REVIEW'
+  | 'MARK_ARRANGEMENT_PENDING'
+  | 'APPROVE'
+  | 'PARTIAL_APPROVE'
+  | 'REJECT'
+  | 'ASSIGN'
+  | 'ADD_REMARK';
+
+/** Admin actions valid for an application in `status`, derived from the transition table. */
+export function creditAdminActions(
+  status: CreditApplicationStatus,
+): CreditAdminAction[] {
+  const can = (to: CreditApplicationStatus) => canTransitionCredit(status, to);
+  const actions: CreditAdminAction[] = [];
+  if (can(S.UNDER_REVIEW)) actions.push('START_REVIEW');
+  if (can(S.DOCUMENTS_REQUIRED)) actions.push('REQUEST_DOCUMENTS');
+  if (status !== S.DRAFT && can(S.DRAFT)) actions.push('REQUEST_RESUBMISSION');
+  if (can(S.INSURANCE_REVIEW)) actions.push('SEND_INSURANCE_REVIEW');
+  if (can(S.CREDIT_ARRANGEMENT_PENDING)) {
+    actions.push('MARK_ARRANGEMENT_PENDING');
+  }
+  if (can(S.APPROVED)) actions.push('APPROVE');
+  if (can(S.PARTIALLY_APPROVED)) actions.push('PARTIAL_APPROVE');
+  if (can(S.REJECTED)) actions.push('REJECT');
+  actions.push('ASSIGN', 'ADD_REMARK');
+  return actions;
+}
+
+/** Statuses an application can be in for the given target to be reachable. */
+export function creditStatusesAllowing(
+  to: CreditApplicationStatus,
+): CreditApplicationStatus[] {
+  return (
+    Object.keys(CREDIT_APPLICATION_TRANSITIONS) as CreditApplicationStatus[]
+  ).filter((from) => canTransitionCredit(from, to));
+}
+
+export function humanizeCreditStatus(status: string): string {
+  if (status === S.PENDING) return 'Submitted';
+  return status
+    .toLowerCase()
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+/**
+ * A reopened draft (admin requested resubmission) keeps its original
+ * `submittedAt`; a never-submitted draft has none.
+ */
+export function isResubmissionRequested(application: {
+  status: CreditApplicationStatus;
+  submittedAt: Date | null;
+}): boolean {
+  return application.status === S.DRAFT && application.submittedAt != null;
+}
+
+/** Status shown to people: the stored status plus the derived resubmission state. */
+export const RESUBMISSION_REQUIRED_STATUS = 'RESUBMISSION_REQUIRED';
+
+export function creditDisplayStatus(application: {
+  status: CreditApplicationStatus;
+  submittedAt: Date | null;
+}): string {
+  return isResubmissionRequested(application)
+    ? RESUBMISSION_REQUIRED_STATUS
+    : application.status;
+}
+
+export const CREDIT_APPLICATION_SOURCE_LABELS: Record<
+  CreditApplicationSource,
+  string
+> = {
+  WEBSITE: 'Website',
+  CUSTOMER_WEB: 'Customer Web',
+  CUSTOMER_APP: 'Customer App',
+  SELLER_WEB: 'Seller Web',
+  SELLER_APP: 'Seller App',
+  ADMIN: 'Admin',
+};
 
 /** Statuses where an application is still in flight and blocks a new one. */
 export const OPEN_CREDIT_APPLICATION_STATUSES: CreditApplicationStatus[] = [
@@ -104,13 +266,22 @@ export const CREDIT_APPLICATION_EVENT = {
   APPROVED: 'CREDIT_APPROVED',
   PARTIALLY_APPROVED: 'CREDIT_PARTIALLY_APPROVED',
   REJECTED: 'CREDIT_REJECTED',
+  RESUBMISSION_REQUESTED: 'CREDIT_RESUBMISSION_REQUESTED',
+  ASSIGNED: 'CREDIT_APPLICATION_ASSIGNED',
+  REMARK_ADDED: 'CREDIT_ADMIN_REMARK',
 } as const;
 
 export type CreditApplicationEventType =
   (typeof CREDIT_APPLICATION_EVENT)[keyof typeof CREDIT_APPLICATION_EVENT];
 
 /** Short, customer-safe hint about what happens next. */
-export function creditNextStep(status: CreditApplicationStatus): string {
+export function creditNextStep(
+  status: CreditApplicationStatus,
+  opts?: { resubmissionRequested?: boolean },
+): string {
+  if (status === CreditApplicationStatus.DRAFT && opts?.resubmissionRequested) {
+    return 'Our credit team asked for changes. Update your application and submit it again.';
+  }
   switch (status) {
     case CreditApplicationStatus.DRAFT:
       return 'Upload the required documents and submit your application.';

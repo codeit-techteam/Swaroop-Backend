@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CreditApplicationSource,
   CreditApplicationStatus,
   DocumentCategory,
   DocumentStatus,
@@ -9,6 +10,12 @@ import {
 import { AdminCreditService } from '../../admin/credit/admin-credit.service.js';
 import { formatCreditApplicationNumber } from '../../payments/common/credit-number.js';
 import { CustomerCreditService } from './customer-credit.service.js';
+
+const websiteClient = {
+  source: CreditApplicationSource.WEBSITE,
+  origin: 'https://swaroop-website.vercel.app',
+  unrecognizedOrigin: false,
+};
 
 const ctx = {
   userId: 'user-1',
@@ -120,14 +127,18 @@ describe('CustomerCreditService credit request workflow', () => {
   const prisma = {
     creditApplication: {
       findFirst: vi.fn(),
+      findMany: vi.fn(),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
     customerCreditProfile: { findUnique: vi.fn(), upsert: vi.fn() },
     customerProfile: { update: vi.fn() },
     document: { findMany: vi.fn() },
     userRole: { findMany: vi.fn() },
+    $queryRaw: vi.fn(),
     $transaction: vi.fn(),
   };
   const context = { requireCustomer: vi.fn() };
@@ -159,8 +170,10 @@ describe('CustomerCreditService credit request workflow', () => {
           creditApplication: prisma.creditApplication,
           customerProfile: prisma.customerProfile,
           customerCreditProfile: prisma.customerCreditProfile,
+          $queryRaw: prisma.$queryRaw,
         }),
     );
+    prisma.$queryRaw.mockResolvedValue([{ '?column?': 1 }]);
     timeline.list.mockResolvedValue([]);
     storage.isConfigured.mockReturnValue(true);
     service = new CustomerCreditService(
@@ -181,10 +194,10 @@ describe('CustomerCreditService credit request workflow', () => {
     );
 
     await expect(
-      service.apply('user-1', { requestedLimit: 1000 }),
+      service.apply('user-1', { requestedLimit: 1000 }, websiteClient),
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
-      service.saveDraft('user-1', { requestedLimit: 1000 }),
+      service.saveDraft('user-1', { requestedLimit: 1000 }, websiteClient),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.creditApplication.create).not.toHaveBeenCalled();
   });
@@ -195,9 +208,11 @@ describe('CustomerCreditService credit request workflow', () => {
       application({ requestedLimit: '3000000' }),
     );
 
-    const result = await service.saveDraft('user-1', {
-      requestedLimit: 3000000,
-    });
+    const result = await service.saveDraft(
+      'user-1',
+      { requestedLimit: 3000000 },
+      websiteClient,
+    );
 
     expect(prisma.creditApplication.create).not.toHaveBeenCalled();
     expect(prisma.creditApplication.update).toHaveBeenCalledWith(
@@ -212,21 +227,25 @@ describe('CustomerCreditService credit request workflow', () => {
       creditDocument('gst_registration', DocumentCategory.GST),
     ]);
 
-    await expect(service.submit('user-1', 'app-1')).rejects.toThrow(
-      /Bank Statement/,
-    );
-    expect(prisma.creditApplication.update).not.toHaveBeenCalled();
+    await expect(
+      service.submit('user-1', 'app-1', websiteClient),
+    ).rejects.toThrow(/Bank Statement/);
+    expect(prisma.creditApplication.updateMany).not.toHaveBeenCalled();
   });
 
   it('submits once every required document is attached', async () => {
     prisma.creditApplication.findUnique.mockResolvedValue(application());
     prisma.document.findMany.mockResolvedValue(ALL_REQUIRED_DOCUMENTS);
-    prisma.creditApplication.update.mockImplementation(
-      async ({ data }: { data: Record<string, unknown> }) =>
-        application({ ...data }),
+    prisma.creditApplication.updateMany.mockResolvedValue({ count: 1 });
+    prisma.creditApplication.findUniqueOrThrow.mockResolvedValue(
+      application({
+        status: CreditApplicationStatus.PENDING,
+        submittedAt: new Date(),
+        source: CreditApplicationSource.WEBSITE,
+      }),
     );
 
-    const result = await service.submit('user-1', 'app-1');
+    const result = await service.submit('user-1', 'app-1', websiteClient);
 
     expect(result.status).toBe(CreditApplicationStatus.PENDING);
     expect(result.submittedAt).toBeInstanceOf(Date);
@@ -246,9 +265,9 @@ describe('CustomerCreditService credit request workflow', () => {
       application({ status: CreditApplicationStatus.UNDER_REVIEW }),
     );
 
-    await expect(service.submit('user-1', 'app-1')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      service.submit('user-1', 'app-1', websiteClient),
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('only allows resubmitting documents from DOCUMENTS_REQUIRED', async () => {
@@ -262,7 +281,8 @@ describe('CustomerCreditService credit request workflow', () => {
     prisma.creditApplication.findUnique.mockResolvedValue(
       application({ status: CreditApplicationStatus.DOCUMENTS_REQUIRED }),
     );
-    prisma.creditApplication.update.mockResolvedValue(
+    prisma.creditApplication.updateMany.mockResolvedValue({ count: 1 });
+    prisma.creditApplication.findUniqueOrThrow.mockResolvedValue(
       application({ status: CreditApplicationStatus.DOCUMENTS_UNDER_REVIEW }),
     );
 
@@ -351,11 +371,17 @@ describe('CustomerCreditService credit request workflow', () => {
 
 describe('AdminCreditService credit decisions', () => {
   const prisma = {
-    creditApplication: { findUnique: vi.fn(), update: vi.fn() },
+    creditApplication: {
+      findUnique: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
     customerCreditProfile: { findUnique: vi.fn(), upsert: vi.fn() },
     customerProfile: { update: vi.fn() },
     document: { findMany: vi.fn(), findFirst: vi.fn() },
     auditLog: { findMany: vi.fn() },
+    kycVerification: { findMany: vi.fn() },
+    user: { findFirst: vi.fn(), findUnique: vi.fn(), findMany: vi.fn() },
     $transaction: vi.fn(),
   };
   const audit = { log: vi.fn() };
@@ -376,6 +402,8 @@ describe('AdminCreditService credit decisions', () => {
       id: 'credit-1',
     });
     prisma.creditApplication.update.mockResolvedValue(application());
+    prisma.creditApplication.updateMany.mockResolvedValue({ count: 1 });
+    prisma.kycVerification.findMany.mockResolvedValue([]);
     prisma.$transaction.mockImplementation(
       async (fn: (tx: unknown) => Promise<unknown>) =>
         fn({
@@ -410,8 +438,9 @@ describe('AdminCreditService credit decisions', () => {
     expect(upsert.update.approvedLimit.toFixed(2)).toBe('1500000.00');
     expect(upsert.update.availableLimit.toFixed(2)).toBe('1500000.00');
     expect(upsert.update.utilizedAmount).toBe(0);
-    expect(prisma.creditApplication.update).toHaveBeenCalledWith(
+    expect(prisma.creditApplication.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        where: { id: 'app-1', status: CreditApplicationStatus.UNDER_REVIEW },
         data: expect.objectContaining({
           status: CreditApplicationStatus.APPROVED,
           approvedTenureDays: 45,
@@ -434,7 +463,7 @@ describe('AdminCreditService credit decisions', () => {
       approvedLimit: 500000,
     });
 
-    expect(prisma.creditApplication.update).toHaveBeenCalledWith(
+    expect(prisma.creditApplication.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           status: CreditApplicationStatus.PARTIALLY_APPROVED,
@@ -469,7 +498,7 @@ describe('AdminCreditService credit decisions', () => {
     await expect(
       service.reject('app-1', 'admin-1', { reason: '   ' }),
     ).rejects.toBeInstanceOf(BadRequestException);
-    expect(prisma.creditApplication.update).not.toHaveBeenCalled();
+    expect(prisma.creditApplication.updateMany).not.toHaveBeenCalled();
   });
 
   it('blocks starting a review from a decided application', async () => {

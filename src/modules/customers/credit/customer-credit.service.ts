@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -15,10 +16,19 @@ import {
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { RoleCode } from '../../../common/enums/domain.enums.js';
-import { generateUniqueCreditApplicationNumber } from '../../payments/common/credit-number.js';
+import type { ResolvedClientSource } from '../../../common/utils/client-source.js';
+import {
+  generateUniqueCreditApplicationNumber,
+  isUniqueViolationOn,
+} from '../../payments/common/credit-number.js';
 import { toDecimal } from '../../payments/common/money.util.js';
 import {
   CREDIT_APPLICATION_EVENT,
+  CREDIT_APPLICATION_SOURCE_LABELS,
+  assertCreditTransition,
+  creditDisplayStatus,
+  humanizeCreditStatus,
+  isResubmissionRequested,
   CREDIT_DOCUMENT_TYPE_LABELS,
   CREDIT_DOCUMENT_UPLOAD_STATUSES,
   OPEN_CREDIT_APPLICATION_STATUSES,
@@ -44,6 +54,34 @@ import type {
 } from './customer-credit.dto.js';
 
 const OPEN = OPEN_CREDIT_APPLICATION_STATUSES;
+
+/** Keys the server owns; clients cannot set them through free-form metadata. */
+const RESERVED_METADATA_KEYS = new Set([
+  'source',
+  'channel',
+  'status',
+  'applicationNumber',
+  'customerId',
+  'customerProfileId',
+  'userId',
+  'kycStatus',
+  'approved',
+  'approvedLimit',
+  'assignedAdminId',
+]);
+
+function sanitizeClientMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Prisma.InputJsonValue | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(metadata).filter(
+      ([key]) => !RESERVED_METADATA_KEYS.has(key),
+    ),
+  ) as Prisma.InputJsonValue;
+}
 
 const ADMIN_NOTIFY_ROLES = [
   RoleCode.ADMIN,
@@ -180,35 +218,45 @@ export class CustomerCreditService {
    * Backward-compatible one-shot apply: creates an already-submitted
    * application. New clients should use saveDraft + documents + submit.
    */
-  async apply(userId: string, dto: CustomerCreditApplyDto) {
+  async apply(
+    userId: string,
+    dto: CustomerCreditApplyDto,
+    client: ResolvedClientSource,
+  ) {
     const ctx = await this.context.requireCustomer(userId);
-    const open = await this.findOpenApplication(ctx.customerProfileId);
-    if (open) {
-      throw new BadRequestException(
-        `An open credit application already exists (${open.applicationNumber})`,
-      );
-    }
-
     const requestedLimit = toDecimal(dto.requestedLimit);
-    const applicationNumber = await this.nextApplicationNumber();
     const submittedAt = new Date();
 
-    const created = await this.prisma.$transaction(async (tx) => {
-      const application = await tx.creditApplication.create({
-        data: {
-          applicationNumber,
-          customerProfileId: ctx.customerProfileId,
-          status: CreditApplicationStatus.PENDING,
+    const created = await this.withCustomerApplicationLock(
+      ctx.customerProfileId,
+      async (tx) => {
+        const open = await this.findOpenApplication(tx, ctx.customerProfileId);
+        if (open) {
+          throw new BadRequestException(
+            `An open credit application already exists (${open.applicationNumber})`,
+          );
+        }
+        const application = await tx.creditApplication.create({
+          data: {
+            applicationNumber: await this.nextApplicationNumber(),
+            customerProfileId: ctx.customerProfileId,
+            status: CreditApplicationStatus.PENDING,
+            source: client.source,
+            requestedLimit,
+            requestedTenureDays: dto.requestedTenureDays,
+            purpose: dto.purpose,
+            submittedAt,
+            metadata: sanitizeClientMetadata(dto.metadata),
+          },
+        });
+        await this.markCustomerPending(
+          tx,
+          ctx.customerProfileId,
           requestedLimit,
-          requestedTenureDays: dto.requestedTenureDays,
-          purpose: dto.purpose,
-          submittedAt,
-          metadata: dto.metadata as Prisma.InputJsonValue | undefined,
-        },
-      });
-      await this.markCustomerPending(tx, ctx.customerProfileId, requestedLimit);
-      return application;
-    });
+        );
+        return application;
+      },
+    );
 
     await this.timeline.record({
       creditApplicationId: created.id,
@@ -217,6 +265,7 @@ export class CustomerCreditService {
       actorUserId: userId,
       actorRole: 'CUSTOMER',
       customerVisible: true,
+      metadata: this.channelMetadata(client),
     });
     await this.timeline.record({
       creditApplicationId: created.id,
@@ -225,7 +274,12 @@ export class CustomerCreditService {
       actorUserId: userId,
       actorRole: 'CUSTOMER',
       customerVisible: true,
-      metadata: { requestedLimit: requestedLimit.toFixed(2) },
+      metadata: {
+        requestedLimit: requestedLimit.toFixed(2),
+        fromStatus: null,
+        toStatus: CreditApplicationStatus.PENDING,
+        ...this.channelMetadata(client),
+      },
     });
 
     await this.audit.log({
@@ -236,20 +290,19 @@ export class CustomerCreditService {
       entityId: created.id,
       newData: {
         applicationNumber: created.applicationNumber,
+        status: created.status,
+        source: created.source,
         requestedLimit: requestedLimit.toFixed(2),
       },
     });
 
-    await this.notifyAdmins(
-      created.id,
-      'New credit application',
-      `${ctx.organizationName} requested credit of ${requestedLimit.toFixed(2)}`,
-    );
+    await this.notifySubmitted(created, ctx, userId, requestedLimit, false);
 
     return {
       id: created.id,
       applicationNumber: created.applicationNumber,
       status: created.status,
+      source: created.source,
       requestedLimit: requestedLimit.toFixed(2),
       requestedTenureDays: created.requestedTenureDays,
       purpose: created.purpose,
@@ -260,61 +313,114 @@ export class CustomerCreditService {
   }
 
   /** Create the open draft, or update it when one already exists. */
-  async saveDraft(userId: string, dto: CustomerCreditDraftDto) {
+  async saveDraft(
+    userId: string,
+    dto: CustomerCreditDraftDto,
+    client: ResolvedClientSource,
+  ) {
     const ctx = await this.context.requireCustomer(userId);
     const requestedLimit = toDecimal(dto.requestedLimit);
-    const open = await this.findOpenApplication(ctx.customerProfileId);
+    const metadata = sanitizeClientMetadata(dto.metadata);
 
-    if (open && open.status !== CreditApplicationStatus.DRAFT) {
-      throw new BadRequestException(
-        `An open credit application already exists (${open.applicationNumber})`,
-      );
-    }
+    const { application, created } = await this.withCustomerApplicationLock(
+      ctx.customerProfileId,
+      async (tx) => {
+        const open = await this.findOpenApplication(tx, ctx.customerProfileId);
+        if (open && open.status !== CreditApplicationStatus.DRAFT) {
+          throw new BadRequestException(
+            `An open credit application already exists (${open.applicationNumber})`,
+          );
+        }
 
-    if (open) {
-      const updated = await this.prisma.creditApplication.update({
-        where: { id: open.id },
-        data: {
-          requestedLimit,
-          requestedTenureDays: dto.requestedTenureDays ?? null,
-          purpose: dto.purpose ?? null,
-          metadata: dto.metadata as Prisma.InputJsonValue | undefined,
+        if (open) {
+          const updated = await tx.creditApplication.update({
+            where: { id: open.id },
+            data: {
+              requestedLimit,
+              requestedTenureDays: dto.requestedTenureDays ?? null,
+              purpose: dto.purpose ?? null,
+              metadata,
+              // Drafts created before source tracking adopt the channel completing them.
+              ...(open.source == null ? { source: client.source } : {}),
+            },
+          });
+          return { application: updated, created: false };
+        }
+
+        const draft = await tx.creditApplication.create({
+          data: {
+            applicationNumber: await this.nextApplicationNumber(),
+            customerProfileId: ctx.customerProfileId,
+            status: CreditApplicationStatus.DRAFT,
+            source: client.source,
+            requestedLimit,
+            requestedTenureDays: dto.requestedTenureDays,
+            purpose: dto.purpose,
+            metadata,
+          },
+        });
+        return { application: draft, created: true };
+      },
+    );
+
+    if (created) {
+      await this.timeline.record({
+        creditApplicationId: application.id,
+        eventType: CREDIT_APPLICATION_EVENT.CREATED,
+        description: 'Credit application draft created',
+        actorUserId: userId,
+        actorRole: 'CUSTOMER',
+        customerVisible: true,
+        metadata: this.channelMetadata(client),
+      });
+      await this.audit.log({
+        action: CREDIT_APPLICATION_EVENT.CREATED,
+        actorUserId: userId,
+        organizationId: ctx.organizationId,
+        entityType: EntityOwnerType.CREDIT,
+        entityId: application.id,
+        newData: {
+          applicationNumber: application.applicationNumber,
+          status: application.status,
+          source: application.source,
+          requestedLimit: requestedLimit.toFixed(2),
         },
       });
-      return this.buildApplicationView(updated, ctx.customerProfileId);
     }
 
-    const applicationNumber = await this.nextApplicationNumber();
-    const created = await this.prisma.creditApplication.create({
-      data: {
-        applicationNumber,
-        customerProfileId: ctx.customerProfileId,
-        status: CreditApplicationStatus.DRAFT,
-        requestedLimit,
-        requestedTenureDays: dto.requestedTenureDays,
-        purpose: dto.purpose,
-        metadata: dto.metadata as Prisma.InputJsonValue | undefined,
-      },
-    });
+    return this.buildApplicationView(application, ctx.customerProfileId);
+  }
 
-    await this.timeline.record({
-      creditApplicationId: created.id,
-      eventType: CREDIT_APPLICATION_EVENT.CREATED,
-      description: 'Credit application draft created',
-      actorUserId: userId,
-      actorRole: 'CUSTOMER',
-      customerVisible: true,
+  /** The signed-in customer's applications, newest first, without internal fields. */
+  async listApplications(userId: string) {
+    const ctx = await this.context.requireCustomer(userId);
+    const rows = await this.prisma.creditApplication.findMany({
+      where: { customerProfileId: ctx.customerProfileId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
     });
-    await this.audit.log({
-      action: CREDIT_APPLICATION_EVENT.CREATED,
-      actorUserId: userId,
-      organizationId: ctx.organizationId,
-      entityType: EntityOwnerType.CREDIT,
-      entityId: created.id,
-      newData: { applicationNumber, requestedLimit: requestedLimit.toFixed(2) },
+    return rows.map((row) => {
+      const resubmissionRequested = isResubmissionRequested(row);
+      return {
+        id: row.id,
+        applicationNumber: row.applicationNumber,
+        status: row.status,
+        displayStatus: creditDisplayStatus(row),
+        resubmissionRequested,
+        requestedLimit: toDecimal(row.requestedLimit).toFixed(2),
+        approvedLimit:
+          row.approvedLimit != null
+            ? toDecimal(row.approvedLimit).toFixed(2)
+            : null,
+        currency: row.currency,
+        customerMessage: row.customerMessage,
+        submittedAt: row.submittedAt,
+        decidedAt: row.decidedAt,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        nextStep: creditNextStep(row.status, { resubmissionRequested }),
+      };
     });
-
-    return this.buildApplicationView(created, ctx.customerProfileId);
   }
 
   async getApplication(userId: string, id: string) {
@@ -355,10 +461,14 @@ export class CustomerCreditService {
           : null,
       approvedTenureDays: application.approvedTenureDays,
       missingDocuments: missing,
+      displayStatus: creditDisplayStatus(application),
+      resubmissionRequested: isResubmissionRequested(application),
       canSubmit:
         application.status === CreditApplicationStatus.DRAFT &&
         missing.length === 0,
-      nextStep: creditNextStep(application.status),
+      nextStep: creditNextStep(application.status, {
+        resubmissionRequested: isResubmissionRequested(application),
+      }),
     };
   }
 
@@ -367,11 +477,19 @@ export class CustomerCreditService {
     return this.timeline.list(application.id, { customerVisibleOnly: true });
   }
 
-  async submit(userId: string, id: string) {
+  /**
+   * Submits a draft. Idempotent: repeating the call (double click, network
+   * retry) after a successful submit returns the same result instead of an
+   * error, and concurrent calls can only move the draft once.
+   */
+  async submit(userId: string, id: string, client: ResolvedClientSource) {
     const { ctx, application } = await this.requireOwnApplication(userId, id);
     if (application.status !== CreditApplicationStatus.DRAFT) {
+      if (application.status === CreditApplicationStatus.PENDING) {
+        return this.submitResult(application, true);
+      }
       throw new BadRequestException(
-        `Cannot submit an application in ${application.status}`,
+        `This application was already submitted and is now ${humanizeCreditStatus(application.status)}`,
       );
     }
 
@@ -384,28 +502,53 @@ export class CustomerCreditService {
       );
     }
 
+    const resubmission = isResubmissionRequested(application);
     const requestedLimit = toDecimal(application.requestedLimit);
     const submittedAt = new Date();
     const updated = await this.prisma.$transaction(async (tx) => {
-      const next = await tx.creditApplication.update({
-        where: { id: application.id },
+      const moved = await tx.creditApplication.updateMany({
+        where: { id: application.id, status: CreditApplicationStatus.DRAFT },
         data: {
           status: CreditApplicationStatus.PENDING,
           submittedAt,
+          ...(resubmission ? { customerMessage: null } : {}),
         },
       });
+      if (moved.count === 0) return null;
       await this.markCustomerPending(tx, ctx.customerProfileId, requestedLimit);
-      return next;
+      return tx.creditApplication.findUniqueOrThrow({
+        where: { id: application.id },
+      });
     });
+
+    if (!updated) {
+      const current = await this.prisma.creditApplication.findUnique({
+        where: { id: application.id },
+      });
+      if (current?.status === CreditApplicationStatus.PENDING) {
+        return this.submitResult(current, true);
+      }
+      throw new ConflictException(
+        'This application changed while you were submitting. Refresh and try again.',
+      );
+    }
 
     await this.timeline.record({
       creditApplicationId: application.id,
       eventType: CREDIT_APPLICATION_EVENT.SUBMITTED,
-      description: 'Credit application submitted for review',
+      description: resubmission
+        ? 'Credit application resubmitted for review'
+        : 'Credit application submitted for review',
       actorUserId: userId,
       actorRole: 'CUSTOMER',
       customerVisible: true,
-      metadata: { requestedLimit: requestedLimit.toFixed(2) },
+      metadata: {
+        requestedLimit: requestedLimit.toFixed(2),
+        fromStatus: CreditApplicationStatus.DRAFT,
+        toStatus: CreditApplicationStatus.PENDING,
+        resubmission,
+        ...this.channelMetadata(client),
+      },
     });
     await this.audit.log({
       action: CREDIT_APPLICATION_EVENT.SUBMITTED,
@@ -416,31 +559,111 @@ export class CustomerCreditService {
       previousData: { status: CreditApplicationStatus.DRAFT },
       newData: {
         status: CreditApplicationStatus.PENDING,
+        source: updated.source,
         requestedLimit: requestedLimit.toFixed(2),
+        resubmission,
       },
     });
 
+    await this.notifySubmitted(
+      updated,
+      ctx,
+      userId,
+      requestedLimit,
+      resubmission,
+    );
+
+    return this.submitResult(updated, false);
+  }
+
+  private submitResult(
+    application: CreditApplication,
+    alreadySubmitted: boolean,
+  ) {
+    return {
+      id: application.id,
+      applicationNumber: application.applicationNumber,
+      status: application.status,
+      source: application.source,
+      submittedAt: application.submittedAt,
+      alreadySubmitted,
+      message:
+        'Your credit request has been submitted successfully. Our team will review your application and contact you.',
+      nextStep: creditNextStep(application.status),
+    };
+  }
+
+  private async notifySubmitted(
+    application: CreditApplication,
+    ctx: { organizationId: string; organizationName: string },
+    userId: string,
+    requestedLimit: Prisma.Decimal,
+    resubmission: boolean,
+  ) {
+    const channel = application.source
+      ? CREDIT_APPLICATION_SOURCE_LABELS[application.source]
+      : null;
+    const title = resubmission
+      ? 'Credit application resubmitted'
+      : channel
+        ? `New credit application from ${channel}`
+        : 'New credit application';
     await this.notifyAdmins(
       application.id,
-      'New credit application',
-      `${ctx.organizationName} requested credit of ${requestedLimit.toFixed(2)}`,
+      title,
+      `${ctx.organizationName} requested credit of INR ${requestedLimit.toFixed(2)} (${application.applicationNumber}).`,
     );
     await this.notifications.create({
       userId,
       organizationId: ctx.organizationId,
-      title: 'Credit application submitted',
-      body: `Application ${updated.applicationNumber} is now with PetroTrade Credit Management.`,
+      title: resubmission
+        ? 'Credit application resubmitted'
+        : 'Credit application submitted',
+      body: `Application ${application.applicationNumber} has been received. Our credit team will review it and contact you.`,
       entityType: EntityOwnerType.CREDIT,
       entityId: application.id,
     });
+  }
 
+  /** Request channel details safe to keep on the timeline (no IPs or tokens). */
+  private channelMetadata(client: ResolvedClientSource) {
     return {
-      id: updated.id,
-      applicationNumber: updated.applicationNumber,
-      status: updated.status,
-      submittedAt: updated.submittedAt,
-      nextStep: creditNextStep(updated.status),
+      channel: client.source,
+      ...(client.unrecognizedOrigin && client.origin
+        ? { unrecognizedOrigin: client.origin }
+        : {}),
     };
+  }
+
+  /**
+   * Runs `fn` in a transaction holding a per-customer advisory lock so two
+   * concurrent requests cannot both create an open application. Retries when
+   * a generated application number collides with the unique constraint.
+   */
+  private async withCustomerApplicationLock<T>(
+    customerProfileId: string,
+    fn: (tx: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    const lockKey = `credit-application:${customerProfileId}`;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))) AS locked`;
+          return fn(tx);
+        });
+      } catch (error) {
+        if (
+          attempt < 3 &&
+          isUniqueViolationOn(error, [
+            'applicationNumber',
+            'application_number',
+          ])
+        ) {
+          continue;
+        }
+        throw error;
+      }
+    }
   }
 
   /** Customer signals that requested documents have been re-uploaded. */
@@ -456,9 +679,24 @@ export class CustomerCreditService {
       );
     }
 
-    const updated = await this.prisma.creditApplication.update({
-      where: { id: application.id },
+    assertCreditTransition(
+      application.status,
+      CreditApplicationStatus.DOCUMENTS_UNDER_REVIEW,
+    );
+    const moved = await this.prisma.creditApplication.updateMany({
+      where: {
+        id: application.id,
+        status: CreditApplicationStatus.DOCUMENTS_REQUIRED,
+      },
       data: { status: CreditApplicationStatus.DOCUMENTS_UNDER_REVIEW },
+    });
+    if (moved.count === 0) {
+      throw new ConflictException(
+        'This application changed while you were resubmitting. Refresh and try again.',
+      );
+    }
+    const updated = await this.prisma.creditApplication.findUniqueOrThrow({
+      where: { id: application.id },
     });
 
     await this.timeline.record({
@@ -468,7 +706,11 @@ export class CustomerCreditService {
       actorUserId: userId,
       actorRole: 'CUSTOMER',
       customerVisible: true,
-      metadata: dto.message ? { message: dto.message } : undefined,
+      metadata: {
+        fromStatus: application.status,
+        toStatus: updated.status,
+        ...(dto.message ? { message: dto.message } : {}),
+      },
     });
     await this.audit.log({
       action: CREDIT_APPLICATION_EVENT.DOCUMENTS_RESUBMITTED,
@@ -690,8 +932,11 @@ export class CustomerCreditService {
     return { ctx, application };
   }
 
-  private findOpenApplication(customerProfileId: string) {
-    return this.prisma.creditApplication.findFirst({
+  private findOpenApplication(
+    client: Prisma.TransactionClient,
+    customerProfileId: string,
+  ) {
+    return client.creditApplication.findFirst({
       where: { customerProfileId, status: { in: OPEN } },
       orderBy: { createdAt: 'desc' },
     });
@@ -831,10 +1076,14 @@ export class CustomerCreditService {
       .filter((item) => !item.uploaded)
       .map((item) => ({ documentType: item.documentType, label: item.label }));
 
+    const resubmissionRequested = isResubmissionRequested(application);
     return {
       id: application.id,
       applicationNumber: application.applicationNumber,
       status: application.status,
+      displayStatus: creditDisplayStatus(application),
+      resubmissionRequested,
+      source: application.source,
       requestedLimit: toDecimal(application.requestedLimit).toFixed(2),
       requestedTenureDays: application.requestedTenureDays,
       purpose: application.purpose,
@@ -853,7 +1102,7 @@ export class CustomerCreditService {
       expiresAt: application.expiresAt,
       createdAt: application.createdAt,
       updatedAt: application.updatedAt,
-      nextStep: creditNextStep(application.status),
+      nextStep: creditNextStep(application.status, { resubmissionRequested }),
       canSubmit:
         application.status === CreditApplicationStatus.DRAFT &&
         missing.length === 0,

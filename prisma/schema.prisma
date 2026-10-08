@@ -612,6 +612,17 @@ enum CreditApplicationStatus {
   CANCELLED
 }
 
+/// Client channel a credit application was created from. Always resolved
+/// server-side (request Origin / native client), never taken from the body.
+enum CreditApplicationSource {
+  WEBSITE
+  CUSTOMER_WEB
+  CUSTOMER_APP
+  SELLER_WEB
+  SELLER_APP
+  ADMIN
+}
+
 enum BulkLogisticsQuoteStatus {
   SUBMITTED
   UNDER_REVIEW
@@ -1126,6 +1137,8 @@ model CreditApplication {
   customerProfileId   String                   @map("customer_profile_id") @db.Uuid
   creditProfileId     String?                  @map("credit_profile_id") @db.Uuid
   status              CreditApplicationStatus  @default(PENDING)
+  /// Null only for applications created before source tracking existed.
+  source              CreditApplicationSource?
   requestedLimit      Decimal                  @map("requested_limit") @db.Decimal(18, 2)
   requestedTenureDays Int?                     @map("requested_tenure_days")
   purpose             String?
@@ -1158,6 +1171,8 @@ model CreditApplication {
   @@index([customerProfileId, status])
   @@index([status, createdAt])
   @@index([assignedAdminId])
+  @@index([source, createdAt])
+  @@index([submittedAt])
   @@map("credit_applications")
 }
 

@@ -61,22 +61,54 @@ export class CreditTimelineService {
     creditApplicationId: string,
     opts?: { customerVisibleOnly?: boolean; take?: number },
   ) {
+    const customerView = opts?.customerVisibleOnly === true;
     const rows = await this.prisma.creditApplicationEvent.findMany({
       where: {
         creditApplicationId,
-        ...(opts?.customerVisibleOnly ? { customerVisible: true } : {}),
+        ...(customerView ? { customerVisible: true } : {}),
       },
       orderBy: { createdAt: 'asc' },
       take: opts?.take ?? 200,
+      // Staff names stay internal; customers only see the actor role.
+      include: customerView
+        ? undefined
+        : {
+            actor: {
+              select: {
+                firstName: true,
+                lastName: true,
+                displayName: true,
+                email: true,
+              },
+            },
+          },
     });
-    return rows.map((row) => ({
-      id: row.id,
-      eventType: row.eventType,
-      description: row.description,
-      actorRole: row.actorRole,
-      customerVisible: row.customerVisible,
-      metadata: row.metadata,
-      createdAt: row.createdAt,
-    }));
+    return rows.map((row) => {
+      const actor = (
+        row as typeof row & {
+          actor?: {
+            firstName: string | null;
+            lastName: string | null;
+            displayName: string | null;
+            email: string | null;
+          } | null;
+        }
+      ).actor;
+      const actorName = actor
+        ? actor.displayName ||
+          [actor.firstName, actor.lastName].filter(Boolean).join(' ').trim() ||
+          actor.email
+        : null;
+      return {
+        id: row.id,
+        eventType: row.eventType,
+        description: row.description,
+        actorRole: row.actorRole,
+        ...(customerView ? {} : { actorUserId: row.actorUserId, actorName }),
+        customerVisible: row.customerVisible,
+        metadata: row.metadata,
+        createdAt: row.createdAt,
+      };
+    });
   }
 }

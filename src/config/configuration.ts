@@ -11,6 +11,17 @@ export type AppConfig = {
     corsOrigins: string[];
     skipDbConnectOnBoot: boolean;
   };
+  /**
+   * Browser origins of each first-party client, used to attribute records
+   * (e.g. credit application source) server-side. Entries may use a single
+   * `*` wildcard in the host, e.g. `https://swaroop-website-*.vercel.app`.
+   */
+  clientOrigins: {
+    website: string[];
+    customerWeb: string[];
+    sellerWeb: string[];
+    adminWeb: string[];
+  };
   database: {
     url: string;
   };
@@ -125,6 +136,18 @@ const splitOrigins = (value: string): string[] =>
     .map((origin) => origin.trim())
     .filter(Boolean);
 
+const clientOrigins = (
+  envKey: string,
+  productionDefaults: string[],
+  localDefaults: string[],
+): string[] => {
+  const configured = process.env[envKey];
+  if (configured && configured.trim()) return splitOrigins(configured);
+  return process.env.NODE_ENV === 'production'
+    ? productionDefaults
+    : [...productionDefaults, ...localDefaults];
+};
+
 /**
  * Central configuration factory used by Nest ConfigModule.
  * Prefer ConfigService.get('...') over process.env in application code.
@@ -173,6 +196,40 @@ export default (): AppConfig => {
       skipDbConnectOnBoot:
         process.env.SKIP_DB_CONNECT_ON_BOOT === 'true' ||
         process.env.NODE_ENV === 'test',
+    },
+    clientOrigins: {
+      website: clientOrigins(
+        'WEBSITE_ORIGINS',
+        [
+          'https://swaroop-website.vercel.app',
+          'https://swaroop-website-*.vercel.app',
+        ],
+        ['http://localhost:3004'],
+      ),
+      customerWeb: clientOrigins(
+        'CUSTOMER_WEB_ORIGINS',
+        [
+          'https://swaroop-customer-webapp.vercel.app',
+          'https://swaroop-customer-webapp-*.vercel.app',
+        ],
+        ['http://localhost:3000', 'http://localhost:3001'],
+      ),
+      sellerWeb: clientOrigins(
+        'SELLER_WEB_ORIGINS',
+        [
+          'https://swaroop-seller-webapp.vercel.app',
+          'https://swaroop-seller-webapp-*.vercel.app',
+        ],
+        ['http://localhost:3003'],
+      ),
+      adminWeb: clientOrigins(
+        'ADMIN_WEB_ORIGINS',
+        [
+          'https://swaroop-admin-pi.vercel.app',
+          'https://swaroop-admin-*.vercel.app',
+        ],
+        ['http://localhost:3002'],
+      ),
     },
     database: {
       url: process.env.DATABASE_URL ?? '',

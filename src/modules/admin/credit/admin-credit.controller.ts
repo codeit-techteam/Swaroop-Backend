@@ -20,8 +20,12 @@ import {
   AdminCreditAccountActionDto,
   AdminCreditAccountsQueryDto,
   AdminCreditAdjustLimitDto,
+  AdminCreditApplicationStatsQueryDto,
   AdminCreditApplicationsQueryDto,
   AdminCreditApproveDto,
+  AdminCreditAssignDto,
+  AdminCreditRemarkDto,
+  AdminCreditRequestResubmissionDto,
   AdminCreditArrangementDto,
   AdminCreditAuditQueryDto,
   AdminCreditDocumentRejectDto,
@@ -59,6 +63,29 @@ export class AdminCreditController {
     return successResponse(items, 'Credit applications retrieved', meta);
   }
 
+  @Get('applications/stats')
+  @ApiOperation({
+    summary:
+      'Credit application KPIs: status counts, source breakdown, website today / this month (IST)',
+  })
+  async applicationStats(@Query() query: AdminCreditApplicationStatsQueryDto) {
+    return successResponse(
+      await this.credit.applicationStats(query),
+      'Credit application stats',
+    );
+  }
+
+  @Get('applications/assignees')
+  @ApiOperation({
+    summary: 'Admins that credit applications can be assigned to',
+  })
+  async assignees() {
+    return successResponse(
+      await this.credit.listAssignees(),
+      'Credit application assignees',
+    );
+  }
+
   @Get('applications/:id')
   @ApiOperation({ summary: 'Credit application detail' })
   async getApplication(@Param('id', ParseUUIDPipe) id: string) {
@@ -78,6 +105,55 @@ export class AdminCreditController {
     return successResponse(
       await this.credit.startReview(id, user.id),
       'Credit review started',
+    );
+  }
+
+  @Post('applications/:id/assign')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Assign a credit application (defaults to yourself)',
+  })
+  async assign(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreditAssignDto,
+  ) {
+    return successResponse(
+      await this.credit.assign(id, user.id, dto),
+      'Credit application assigned',
+    );
+  }
+
+  @Post('applications/:id/remarks')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Add an internal remark (never shown to the customer)',
+  })
+  async addRemark(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreditRemarkDto,
+  ) {
+    return successResponse(
+      await this.credit.addRemark(id, user.id, dto),
+      'Remark added',
+    );
+  }
+
+  @Post('applications/:id/request-resubmission')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Reopen a submitted application for the customer to correct and resubmit',
+  })
+  async requestResubmission(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminCreditRequestResubmissionDto,
+  ) {
+    return successResponse(
+      await this.credit.requestResubmission(id, user.id, dto),
+      'Resubmission requested',
     );
   }
 
@@ -368,9 +444,12 @@ export class AdminCreditController {
   @ApiOperation({
     summary: 'Download credit document (R2 pending if unconfigured)',
   })
-  async download(@Param('id', ParseUUIDPipe) id: string) {
+  async download(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
     return successResponse(
-      await this.credit.downloadDocument(id),
+      await this.credit.downloadDocument(id, user.id),
       'Credit document download',
     );
   }

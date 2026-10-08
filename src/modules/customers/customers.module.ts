@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ClientSourceResolver } from '../../common/utils/client-source.js';
 import { AuthModule } from '../auth/index.js';
 import { DocumentsModule } from '../documents/index.js';
 import { KycVerificationModule } from '../kyc-verification/index.js';
@@ -81,6 +82,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CustomerKycVerificationService,
     CustomerKycApprovedGuard,
     CustomerCreditService,
+    ClientSourceResolver,
     BulkLogisticsQuotesService,
   ],
   exports: [

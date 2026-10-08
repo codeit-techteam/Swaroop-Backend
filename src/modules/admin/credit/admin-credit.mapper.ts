@@ -10,6 +10,12 @@ import {
   type PaymentSchedule,
   type PurchaseOrder,
 } from '../../../generated/prisma/client.js';
+import { maskPan } from '../../kyc-verification/kyc-identifiers.js';
+import {
+  CREDIT_APPLICATION_SOURCE_LABELS,
+  creditDisplayStatus,
+  isResubmissionRequested,
+} from '../../payments/common/credit-workflow.js';
 import { toDecimal } from '../../payments/common/money.util.js';
 import { utilizationPercentage } from '../../payments/services/credit-ledger.service.js';
 
@@ -75,6 +81,24 @@ export type CreditCustomerRecord = {
   };
 };
 
+/** Admin KYC filter buckets → Organization.verificationStatus values. */
+export const CREDIT_KYC_FILTER_STATUSES: Record<
+  'VERIFIED' | 'PENDING' | 'FAILED' | 'MANUAL_REVIEW',
+  string[]
+> = {
+  VERIFIED: ['APPROVED'],
+  PENDING: ['PENDING', 'EXPIRED'],
+  FAILED: ['REJECTED'],
+  MANUAL_REVIEW: ['UNDER_REVIEW'],
+};
+
+export function creditKycBucket(verificationStatus: string): string {
+  const match = (
+    Object.entries(CREDIT_KYC_FILTER_STATUSES) as Array<[string, string[]]>
+  ).find(([, statuses]) => statuses.includes(verificationStatus));
+  return match?.[0] ?? 'PENDING';
+}
+
 function money(value: unknown): string {
   return toDecimal(value as string | number | null).toFixed(2);
 }
@@ -100,7 +124,7 @@ export function mapCustomerCard(customer: CreditCustomerRecord) {
     businessType: customer.organization.businessType,
     code: customer.organization.code,
     gstin: customer.organization.gstin,
-    pan: customer.organization.pan,
+    pan: customer.organization.pan ? maskPan(customer.organization.pan) : null,
     email: customer.user.email ?? customer.organization.email,
     phone: customer.user.phone ?? customer.organization.phone,
     contactName: actorName(customer.user),
@@ -140,7 +164,6 @@ export function mapApplicationDetails(metadata: unknown) {
   const declarations = record(root.declarations);
   if (!applicant && !requirement && !declarations) return null;
   return {
-    source: text(root.source, 40),
     applicant: applicant
       ? {
           companyName: text(applicant.companyName, 160),
@@ -197,6 +220,15 @@ export function mapApplication(
     id: row.id,
     applicationNumber: row.applicationNumber,
     status: row.status as CreditApplicationStatus,
+    displayStatus: creditDisplayStatus(row),
+    resubmissionRequested: isResubmissionRequested(row),
+    source: row.source,
+    sourceLabel: row.source
+      ? CREDIT_APPLICATION_SOURCE_LABELS[row.source]
+      : 'Not recorded',
+    kycStatus: creditKycBucket(
+      row.customerProfile.organization.verificationStatus,
+    ),
     requestedLimit: money(row.requestedLimit),
     requestedTenureDays: row.requestedTenureDays,
     purpose: row.purpose,

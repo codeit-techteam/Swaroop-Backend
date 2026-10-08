@@ -1,10 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsEnum,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -17,6 +19,7 @@ import {
 } from 'class-validator';
 import {
   CreditAccountStatus,
+  CreditApplicationSource,
   CreditApplicationStatus,
   CreditInsuranceClaimStatus,
   CreditInsuranceStatus,
@@ -25,16 +28,133 @@ import {
 } from '../../../generated/prisma/client.js';
 import { AdminListQueryDto } from '../common/admin-query.dto.js';
 
+export const CREDIT_APPLICATION_STATUS_FILTERS = [
+  ...Object.values(CreditApplicationStatus),
+  'RESUBMISSION_REQUIRED',
+] as const;
+
+export type CreditApplicationStatusFilter =
+  (typeof CREDIT_APPLICATION_STATUS_FILTERS)[number];
+
+export const CREDIT_APPLICATION_SOURCE_FILTERS = [
+  ...Object.values(CreditApplicationSource),
+  'NOT_RECORDED',
+] as const;
+
+export type CreditApplicationSourceFilter =
+  (typeof CREDIT_APPLICATION_SOURCE_FILTERS)[number];
+
+/** Admin-facing KYC buckets mapped onto Organization.verificationStatus. */
+export const CREDIT_KYC_FILTERS = [
+  'VERIFIED',
+  'PENDING',
+  'FAILED',
+  'MANUAL_REVIEW',
+] as const;
+
+export type CreditKycFilter = (typeof CREDIT_KYC_FILTERS)[number];
+
+export const CREDIT_APPLICATION_SORTS = [
+  'newest',
+  'oldest',
+  'submitted_desc',
+  'submitted_asc',
+  'updated_desc',
+  'amount_desc',
+  'amount_asc',
+] as const;
+
+export type CreditApplicationSort = (typeof CREDIT_APPLICATION_SORTS)[number];
+
 export class AdminCreditApplicationsQueryDto extends AdminListQueryDto {
-  @ApiPropertyOptional({ enum: CreditApplicationStatus })
+  @ApiPropertyOptional({
+    enum: CREDIT_APPLICATION_STATUS_FILTERS,
+    description:
+      'Application status. PENDING is shown as "Submitted"; RESUBMISSION_REQUIRED matches drafts reopened by an admin.',
+  })
   @IsOptional()
-  @IsEnum(CreditApplicationStatus)
-  status?: CreditApplicationStatus;
+  @IsIn(CREDIT_APPLICATION_STATUS_FILTERS)
+  status?: CreditApplicationStatusFilter;
+
+  @ApiPropertyOptional({
+    enum: CREDIT_APPLICATION_SOURCE_FILTERS,
+    description:
+      'NOT_RECORDED matches applications created before source tracking.',
+  })
+  @IsOptional()
+  @IsIn(CREDIT_APPLICATION_SOURCE_FILTERS)
+  source?: CreditApplicationSourceFilter;
+
+  @ApiPropertyOptional({ enum: CREDIT_KYC_FILTERS })
+  @IsOptional()
+  @IsIn(CREDIT_KYC_FILTERS)
+  kycStatus?: CreditKycFilter;
+
+  @ApiPropertyOptional({ enum: CREDIT_APPLICATION_SORTS, default: 'newest' })
+  @IsOptional()
+  @IsIn(CREDIT_APPLICATION_SORTS)
+  sort?: CreditApplicationSort;
+
+  @ApiPropertyOptional({
+    description: 'Include never-submitted drafts (default true).',
+  })
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined ? undefined : value === true || value === 'true',
+  )
+  @IsBoolean()
+  includeDrafts?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsUUID()
   customerId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Only applications assigned to this admin.',
+  })
+  @IsOptional()
+  @IsUUID()
+  assignedAdminId?: string;
+}
+
+export class AdminCreditApplicationStatsQueryDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  from?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  to?: string;
+}
+
+export class AdminCreditAssignDto {
+  @ApiPropertyOptional({
+    description: 'Admin user to assign. Omit to assign yourself.',
+  })
+  @IsOptional()
+  @IsUUID()
+  assigneeUserId?: string;
+}
+
+export class AdminCreditRemarkDto {
+  @ApiProperty({ description: 'Internal remark; never shown to the customer.' })
+  @IsString()
+  @MinLength(2)
+  @MaxLength(2000)
+  remark!: string;
+}
+
+export class AdminCreditRequestResubmissionDto {
+  @ApiProperty({
+    description: 'What the customer must change. Shown to the customer.',
+  })
+  @IsString()
+  @MinLength(5)
+  @MaxLength(2000)
+  message!: string;
 }
 
 export class AdminCreditAccountsQueryDto extends AdminListQueryDto {

@@ -112,7 +112,8 @@ describe('mapApplicationDetails', () => {
       declarations: { accepted: true, acceptedAt: '2026-10-08T10:00:00Z' },
       internal: { secret: 'x' },
     });
-    expect(details?.source).toBe('WEBSITE');
+    // Source comes from the server-resolved column, never client metadata.
+    expect(details).not.toHaveProperty('source');
     expect(details?.applicant).not.toHaveProperty('pan');
     expect(details?.applicant?.companyName).toBe('Rao Polymers');
     expect(details?.requirement?.monthlyProcurement).toBe(500000);

@@ -1,11 +1,13 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   CreditAccountStatus,
+  CreditApplicationSource,
   CreditApplicationStatus,
   CreditInsuranceClaimStatus,
   CreditInsuranceStatus,
@@ -13,9 +15,12 @@ import {
   CreditTransactionType,
   DocumentCategory,
   EntityOwnerType,
+  KycVerificationType,
   Prisma,
   StorageProvider,
+  type KycVerification,
 } from '../../../generated/prisma/client.js';
+import { ADMIN_FINANCE_ROLES } from '../common/admin-roles.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { StorageService } from '../../../storage/storage.service.js';
 import {
@@ -28,7 +33,10 @@ import { PLATFORM_CREDIT_METHODS } from '../../payments/common/platform-credit.j
 import {
   ACTIONABLE_CREDIT_APPLICATION_STATUSES,
   CREDIT_APPLICATION_EVENT,
-  TERMINAL_CREDIT_APPLICATION_STATUSES,
+  CREDIT_APPLICATION_SOURCE_LABELS,
+  RESUBMISSION_REQUIRED_STATUS,
+  assertCreditTransition,
+  creditAdminActions,
 } from '../../payments/common/credit-workflow.js';
 import {
   CreditLedgerService,
@@ -42,8 +50,13 @@ import type {
   AdminCreditAccountActionDto,
   AdminCreditAccountsQueryDto,
   AdminCreditAdjustLimitDto,
+  AdminCreditApplicationStatsQueryDto,
   AdminCreditApplicationsQueryDto,
   AdminCreditApproveDto,
+  AdminCreditAssignDto,
+  AdminCreditRemarkDto,
+  AdminCreditRequestResubmissionDto,
+  CreditApplicationSort,
   AdminCreditArrangementDto,
   AdminCreditAuditQueryDto,
   AdminCreditDocumentRejectDto,
@@ -60,6 +73,8 @@ import type {
 } from './admin-credit.dto.js';
 import {
   CREDIT_CUSTOMER_SELECT,
+  CREDIT_KYC_FILTER_STATUSES,
+  creditKycBucket,
   mapAccount,
   mapApplication,
   mapAuditEvent,
@@ -81,13 +96,171 @@ const CREDIT_DOC_CATEGORIES: DocumentCategory[] = [
 
 const CREDIT_METHODS = PLATFORM_CREDIT_METHODS;
 
-const OPEN_APPLICATION = ACTIONABLE_CREDIT_APPLICATION_STATUSES;
+function adminName(
+  user?: {
+    firstName?: string | null;
+    lastName?: string | null;
+    displayName?: string | null;
+    email?: string | null;
+  } | null,
+): string | null {
+  if (!user) return null;
+  const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  return user.displayName || name || user.email || null;
+}
 
-const START_REVIEW_FROM: CreditApplicationStatus[] = [
-  CreditApplicationStatus.PENDING,
-  CreditApplicationStatus.DOCUMENTS_UNDER_REVIEW,
-  CreditApplicationStatus.DOCUMENTS_REQUIRED,
-];
+function kycResultText(result: unknown, key: string): string | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return null;
+  }
+  const value = (result as Record<string, unknown>)[key];
+  return typeof value === 'string' && value.trim()
+    ? value.trim().slice(0, 200)
+    : null;
+}
+
+/** Masked, admin-safe summary of the latest PAN/GST verification. */
+function mapKycVerification(row: KycVerification | undefined) {
+  if (!row) return null;
+  return {
+    status: row.status,
+    identifierMasked: row.identifierMasked,
+    legalName: kycResultText(row.result, 'legalName'),
+    tradeName: kycResultText(row.result, 'tradeName'),
+    gstStatus: kycResultText(row.result, 'gstStatus'),
+    failureReason: row.failureReason,
+    verifiedAt: row.verifiedAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+const IST_OFFSET_MS = 330 * 60 * 1000;
+
+/** Start of the current day and month in India Standard Time, as UTC instants. */
+export function istPeriodStarts(now = new Date()) {
+  const local = new Date(now.getTime() + IST_OFFSET_MS);
+  local.setUTCHours(0, 0, 0, 0);
+  const dayStart = new Date(local.getTime() - IST_OFFSET_MS);
+  local.setUTCDate(1);
+  const monthStart = new Date(local.getTime() - IST_OFFSET_MS);
+  return { dayStart, monthStart };
+}
+
+function dateRange(
+  from?: string,
+  to?: string,
+): Prisma.DateTimeFilter | undefined {
+  if (!from && !to) return undefined;
+  return {
+    ...(from ? { gte: new Date(from) } : {}),
+    ...(to ? { lte: new Date(to) } : {}),
+  };
+}
+
+/** Server-side filters for the admin applications list. */
+export function buildApplicationsWhere(
+  query: AdminCreditApplicationsQueryDto,
+): Prisma.CreditApplicationWhereInput {
+  const and: Prisma.CreditApplicationWhereInput[] = [];
+
+  if (query.status === RESUBMISSION_REQUIRED_STATUS) {
+    and.push({
+      status: CreditApplicationStatus.DRAFT,
+      submittedAt: { not: null },
+    });
+  } else if (query.status === CreditApplicationStatus.DRAFT) {
+    and.push({ status: CreditApplicationStatus.DRAFT, submittedAt: null });
+  } else if (query.status) {
+    and.push({ status: query.status });
+  }
+  if (query.includeDrafts === false) {
+    and.push({
+      NOT: { status: CreditApplicationStatus.DRAFT, submittedAt: null },
+    });
+  }
+
+  if (query.source === 'NOT_RECORDED') {
+    and.push({ source: null });
+  } else if (query.source) {
+    and.push({ source: query.source });
+  }
+
+  if (query.kycStatus) {
+    and.push({
+      customerProfile: {
+        organization: {
+          verificationStatus: {
+            in: CREDIT_KYC_FILTER_STATUSES[query.kycStatus] as never[],
+          },
+        },
+      },
+    });
+  }
+
+  if (query.customerId) and.push({ customerProfileId: query.customerId });
+  if (query.assignedAdminId) {
+    and.push({ assignedAdminId: query.assignedAdminId });
+  }
+
+  // Submitted date, falling back to creation date for unsubmitted drafts.
+  const range = dateRange(query.from, query.to);
+  if (range) {
+    and.push({
+      OR: [{ submittedAt: range }, { submittedAt: null, createdAt: range }],
+    });
+  }
+
+  const search = (query.search ?? query.q)?.trim();
+  if (search) {
+    const contains = { contains: search, mode: 'insensitive' as const };
+    const or: Prisma.CreditApplicationWhereInput[] = [
+      { applicationNumber: contains },
+      { customerProfile: { organization: { name: contains } } },
+      { customerProfile: { organization: { legalName: contains } } },
+      { customerProfile: { organization: { gstin: contains } } },
+      { customerProfile: { organization: { email: contains } } },
+      { customerProfile: { user: { email: contains } } },
+    ];
+    const digits = search.replace(/\D/g, '');
+    if (digits.length >= 4) {
+      const phone = { contains: digits.slice(-10) };
+      or.push(
+        { customerProfile: { user: { phone } } },
+        { customerProfile: { organization: { phone } } },
+      );
+    }
+    and.push({ OR: or });
+  }
+
+  return and.length > 0 ? { AND: and } : {};
+}
+
+export function applicationsOrderBy(
+  sort: CreditApplicationSort | undefined,
+): Prisma.CreditApplicationOrderByWithRelationInput[] {
+  switch (sort) {
+    case 'oldest':
+      return [{ createdAt: 'asc' }];
+    case 'submitted_desc':
+      return [
+        { submittedAt: { sort: 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+      ];
+    case 'submitted_asc':
+      return [
+        { submittedAt: { sort: 'asc', nulls: 'last' } },
+        { createdAt: 'asc' },
+      ];
+    case 'updated_desc':
+      return [{ updatedAt: 'desc' }];
+    case 'amount_desc':
+      return [{ requestedLimit: 'desc' }, { createdAt: 'desc' }];
+    case 'amount_asc':
+      return [{ requestedLimit: 'asc' }, { createdAt: 'desc' }];
+    default:
+      return [{ createdAt: 'desc' }];
+  }
+}
 
 const ADMIN_SELECT = {
   id: true,
@@ -197,37 +370,12 @@ export class AdminCreditService {
 
   async listApplications(query: AdminCreditApplicationsQueryDto) {
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
-    const where: Prisma.CreditApplicationWhereInput = {};
-    if (query.status) where.status = query.status;
-    if (query.customerId) where.customerProfileId = query.customerId;
-    if (query.from || query.to) {
-      where.createdAt = {};
-      if (query.from) where.createdAt.gte = new Date(query.from);
-      if (query.to) where.createdAt.lte = new Date(query.to);
-    }
-    const search = query.search?.trim();
-    if (search) {
-      where.OR = [
-        { applicationNumber: { contains: search, mode: 'insensitive' } },
-        {
-          customerProfile: {
-            organization: { name: { contains: search, mode: 'insensitive' } },
-          },
-        },
-        {
-          customerProfile: {
-            organization: {
-              legalName: { contains: search, mode: 'insensitive' },
-            },
-          },
-        },
-      ];
-    }
+    const where = buildApplicationsWhere(query);
 
     const [rows, total] = await Promise.all([
       this.prisma.creditApplication.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: applicationsOrderBy(query.sort),
         skip,
         take,
         include: {
@@ -294,7 +442,7 @@ export class AdminCreditService {
     });
     if (!row) throw new NotFoundException('Credit application not found');
 
-    const [documents, audit, timeline] = await Promise.all([
+    const [documents, audit, timeline, kycRows] = await Promise.all([
       this.prisma.document.findMany({
         where: {
           deletedAt: null,
@@ -328,10 +476,39 @@ export class AdminCreditService {
         include: { actor: { select: ADMIN_SELECT } },
       }),
       this.timeline.list(id),
+      this.prisma.kycVerification.findMany({
+        where: { organizationId: row.customerProfile.organization.id },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
     ]);
 
     return {
       ...mapApplication(row, { documentCount: documents.length }),
+      availableActions: creditAdminActions(row.status),
+      kyc: {
+        status: creditKycBucket(
+          row.customerProfile.organization.verificationStatus,
+        ),
+        organizationStatus: row.customerProfile.organization.verificationStatus,
+        pan: mapKycVerification(
+          kycRows.find((item) => item.type === KycVerificationType.PAN),
+        ),
+        gst: mapKycVerification(
+          kycRows.find((item) => item.type === KycVerificationType.GST),
+        ),
+      },
+      remarks: timeline
+        .filter(
+          (event) => event.eventType === CREDIT_APPLICATION_EVENT.REMARK_ADDED,
+        )
+        .map((event) => ({
+          id: event.id,
+          remark: event.description,
+          actorName: 'actorName' in event ? event.actorName : null,
+          createdAt: event.createdAt,
+        }))
+        .reverse(),
       submittedAt: row.submittedAt,
       approvedTenureDays: row.approvedTenureDays,
       customerMessage: row.customerMessage,
@@ -345,7 +522,11 @@ export class AdminCreditService {
           : null,
       effectiveAt: row.effectiveAt,
       expiresAt: row.expiresAt,
-      documents: documents.map((doc) => mapDocument(doc)),
+      documents: documents.map((doc) => ({
+        ...mapDocument(doc),
+        belongsToApplication:
+          doc.ownerType === EntityOwnerType.CREDIT && doc.ownerId === id,
+      })),
       audit: audit.map((item) => mapAuditEvent(item)),
       timeline,
       storage: {
@@ -362,20 +543,12 @@ export class AdminCreditService {
 
   async startReview(id: string, actorUserId: string) {
     const application = await this.requireApplication(id);
-    if (!START_REVIEW_FROM.includes(application.status)) {
-      throw new BadRequestException(
-        `Cannot start review from ${application.status}`,
-      );
-    }
+    const to = CreditApplicationStatus.UNDER_REVIEW;
+    assertCreditTransition(application.status, to);
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const next = await tx.creditApplication.update({
-        where: { id },
-        data: {
-          status: CreditApplicationStatus.UNDER_REVIEW,
-          assignedAdminId: actorUserId,
-        },
-      });
+    const assignedAdminId = application.assignedAdminId ?? actorUserId;
+    await this.prisma.$transaction(async (tx) => {
+      await this.moveStatus(tx, application, to, { assignedAdminId });
       await tx.customerProfile.update({
         where: { id: application.customerProfileId },
         data: { creditStatus: CreditStatus.UNDER_REVIEW },
@@ -384,17 +557,16 @@ export class AdminCreditService {
         where: { customerProfileId: application.customerProfileId },
         update: {
           status: CreditStatus.UNDER_REVIEW,
-          assignedAdminId: actorUserId,
+          assignedAdminId,
         },
         create: {
           customerProfileId: application.customerProfileId,
           status: CreditStatus.UNDER_REVIEW,
           requestedLimit: application.requestedLimit,
-          assignedAdminId: actorUserId,
+          assignedAdminId,
           accountNumber: await this.nextAccountNumber(tx),
         },
       });
-      return next;
     });
 
     await this.audit.log({
@@ -403,8 +575,11 @@ export class AdminCreditService {
       organizationId: application.customerProfile.organizationId,
       entityType: EntityOwnerType.CREDIT,
       entityId: id,
-      previousData: { status: application.status },
-      newData: { status: CreditApplicationStatus.UNDER_REVIEW },
+      previousData: {
+        status: application.status,
+        assignedAdminId: application.assignedAdminId,
+      },
+      newData: { status: to, assignedAdminId },
     });
 
     await this.timeline.record({
@@ -414,9 +589,16 @@ export class AdminCreditService {
       actorUserId,
       actorRole: 'ADMIN',
       customerVisible: true,
+      metadata: { fromStatus: application.status, toStatus: to },
     });
 
-    return this.getApplication(updated.id);
+    await this.notifyCustomer(
+      application,
+      'Credit application under review',
+      `Application ${application.applicationNumber} is now under review by our credit team.`,
+    );
+
+    return this.getApplication(id);
   }
 
   async requestDocuments(
@@ -425,21 +607,14 @@ export class AdminCreditService {
     dto: AdminCreditRequestDocumentsDto,
   ) {
     const application = await this.requireApplication(id);
-    if (!OPEN_APPLICATION.includes(application.status)) {
-      throw new BadRequestException(
-        `Cannot request documents from ${application.status}`,
-      );
-    }
+    const to = CreditApplicationStatus.DOCUMENTS_REQUIRED;
+    assertCreditTransition(application.status, to);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.creditApplication.update({
-        where: { id },
-        data: {
-          status: CreditApplicationStatus.DOCUMENTS_REQUIRED,
-          assignedAdminId: actorUserId,
-          notes: dto.message ?? application.notes,
-          customerMessage: dto.message ?? application.customerMessage,
-        },
+      await this.moveStatus(tx, application, to, {
+        assignedAdminId: application.assignedAdminId ?? actorUserId,
+        notes: dto.message ?? application.notes,
+        customerMessage: dto.message ?? application.customerMessage,
       });
       await tx.customerProfile.update({
         where: { id: application.customerProfileId },
@@ -454,7 +629,11 @@ export class AdminCreditService {
       actorUserId,
       actorRole: 'ADMIN',
       customerVisible: true,
-      metadata: { documentTypes: dto.documentTypes ?? [] },
+      metadata: {
+        documentTypes: dto.documentTypes ?? [],
+        fromStatus: application.status,
+        toStatus: to,
+      },
     });
 
     await this.audit.log({
@@ -505,19 +684,15 @@ export class AdminCreditService {
     partial: boolean,
   ) {
     const application = await this.requireApplication(id);
-    if (TERMINAL_CREDIT_APPLICATION_STATUSES.includes(application.status)) {
-      throw new BadRequestException(
-        `Cannot approve application in ${application.status}`,
-      );
-    }
+    const nextStatus = partial
+      ? CreditApplicationStatus.PARTIALLY_APPROVED
+      : CreditApplicationStatus.APPROVED;
+    assertCreditTransition(application.status, nextStatus);
 
     const approvedLimit = toDecimal(dto.approvedLimit);
     if (approvedLimit.lessThanOrEqualTo(0)) {
       throw new BadRequestException('Approved limit must be greater than zero');
     }
-    const nextStatus = partial
-      ? CreditApplicationStatus.PARTIALLY_APPROVED
-      : CreditApplicationStatus.APPROVED;
     const termDays =
       dto.creditTermDays ?? application.requestedTenureDays ?? 30;
 
@@ -561,21 +736,17 @@ export class AdminCreditService {
         },
       });
 
-      await tx.creditApplication.update({
-        where: { id },
-        data: {
-          status: nextStatus,
-          creditProfileId: profile.id,
-          assignedAdminId: actorUserId,
-          decidedAt: new Date(),
-          decisionReason: dto.reason,
-          customerMessage: dto.customerMessage ?? application.customerMessage,
-          approvedLimit,
-          approvedTenureDays: termDays,
-          effectiveAt: new Date(),
-          expiresAt: dto.reviewAt ? new Date(dto.reviewAt) : undefined,
-          arrangementStatus: 'COMPLETED',
-        },
+      await this.moveStatus(tx, application, nextStatus, {
+        creditProfileId: profile.id,
+        assignedAdminId: application.assignedAdminId ?? actorUserId,
+        decidedAt: new Date(),
+        decisionReason: dto.reason,
+        customerMessage: dto.customerMessage ?? application.customerMessage,
+        approvedLimit,
+        approvedTenureDays: termDays,
+        effectiveAt: new Date(),
+        expiresAt: dto.reviewAt ? new Date(dto.reviewAt) : undefined,
+        arrangementStatus: 'COMPLETED',
       });
       await tx.customerProfile.update({
         where: { id: application.customerProfileId },
@@ -632,6 +803,8 @@ export class AdminCreditService {
       metadata: {
         approvedLimit: approvedLimit.toFixed(2),
         creditTermDays: termDays,
+        fromStatus: application.status,
+        toStatus: nextStatus,
       },
     });
 
@@ -651,11 +824,8 @@ export class AdminCreditService {
 
   async reject(id: string, actorUserId: string, dto: AdminCreditRejectDto) {
     const application = await this.requireApplication(id);
-    if (TERMINAL_CREDIT_APPLICATION_STATUSES.includes(application.status)) {
-      throw new BadRequestException(
-        `Cannot reject application in ${application.status}`,
-      );
-    }
+    const to = CreditApplicationStatus.REJECTED;
+    assertCreditTransition(application.status, to);
     const reason = dto.reason?.trim();
     if (!reason) {
       throw new BadRequestException('Rejection reason is required');
@@ -663,15 +833,11 @@ export class AdminCreditService {
     const customerMessage = dto.customerMessage?.trim() || reason;
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.creditApplication.update({
-        where: { id },
-        data: {
-          status: CreditApplicationStatus.REJECTED,
-          assignedAdminId: actorUserId,
-          decidedAt: new Date(),
-          decisionReason: reason,
-          customerMessage,
-        },
+      await this.moveStatus(tx, application, to, {
+        assignedAdminId: application.assignedAdminId ?? actorUserId,
+        decidedAt: new Date(),
+        decisionReason: reason,
+        customerMessage,
       });
       await tx.customerProfile.update({
         where: { id: application.customerProfileId },
@@ -707,6 +873,7 @@ export class AdminCreditService {
       actorUserId,
       actorRole: 'ADMIN',
       customerVisible: true,
+      metadata: { fromStatus: application.status, toStatus: to },
     });
 
     await this.notifications.create({
@@ -727,30 +894,20 @@ export class AdminCreditService {
     dto: AdminCreditInsuranceReviewDto,
   ) {
     const application = await this.requireApplication(id);
-    if (!OPEN_APPLICATION.includes(application.status)) {
-      throw new BadRequestException(
-        `Cannot send ${application.status} application to insurance review`,
-      );
-    }
+    const to = CreditApplicationStatus.INSURANCE_REVIEW;
+    assertCreditTransition(application.status, to);
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.creditApplication.update({
-        where: { id },
-        data: {
-          status: CreditApplicationStatus.INSURANCE_REVIEW,
-          assignedAdminId: actorUserId,
-          insuranceStatus: 'IN_REVIEW',
-          insurancePartner:
-            dto.insurancePartner ?? application.insurancePartner,
-          insuranceReference:
-            dto.insuranceReference ?? application.insuranceReference,
-          insuredAmount:
-            dto.insuredAmount != null
-              ? toDecimal(dto.insuredAmount)
-              : undefined,
-          customerMessage: dto.customerMessage ?? application.customerMessage,
-          notes: dto.notes ?? application.notes,
-        },
+      await this.moveStatus(tx, application, to, {
+        assignedAdminId: application.assignedAdminId ?? actorUserId,
+        insuranceStatus: 'IN_REVIEW',
+        insurancePartner: dto.insurancePartner ?? application.insurancePartner,
+        insuranceReference:
+          dto.insuranceReference ?? application.insuranceReference,
+        insuredAmount:
+          dto.insuredAmount != null ? toDecimal(dto.insuredAmount) : undefined,
+        customerMessage: dto.customerMessage ?? application.customerMessage,
+        notes: dto.notes ?? application.notes,
       });
       await tx.customerProfile.update({
         where: { id: application.customerProfileId },
@@ -783,6 +940,7 @@ export class AdminCreditService {
       actorUserId,
       actorRole: 'ADMIN',
       customerVisible: true,
+      metadata: { fromStatus: application.status, toStatus: to },
     });
 
     await this.notifications.create({
@@ -803,34 +961,26 @@ export class AdminCreditService {
     dto: AdminCreditArrangementDto,
   ) {
     const application = await this.requireApplication(id);
-    if (!OPEN_APPLICATION.includes(application.status)) {
-      throw new BadRequestException(
-        `Cannot move ${application.status} application to credit arrangement`,
-      );
-    }
+    const to = CreditApplicationStatus.CREDIT_ARRANGEMENT_PENDING;
+    assertCreditTransition(application.status, to);
 
     const insuredAmount =
       dto.insuredAmount != null ? toDecimal(dto.insuredAmount) : undefined;
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.creditApplication.update({
-        where: { id },
-        data: {
-          status: CreditApplicationStatus.CREDIT_ARRANGEMENT_PENDING,
-          assignedAdminId: actorUserId,
-          arrangementStatus: 'IN_PROGRESS',
-          insuranceStatus:
-            dto.insuranceReference || dto.insurancePartner
-              ? 'COMPLETED'
-              : (application.insuranceStatus ?? 'NOT_STARTED'),
-          insurancePartner:
-            dto.insurancePartner ?? application.insurancePartner,
-          insuranceReference:
-            dto.insuranceReference ?? application.insuranceReference,
-          insuredAmount,
-          customerMessage: dto.customerMessage ?? application.customerMessage,
-          notes: dto.notes ?? application.notes,
-        },
+      await this.moveStatus(tx, application, to, {
+        assignedAdminId: application.assignedAdminId ?? actorUserId,
+        arrangementStatus: 'IN_PROGRESS',
+        insuranceStatus:
+          dto.insuranceReference || dto.insurancePartner
+            ? 'COMPLETED'
+            : (application.insuranceStatus ?? 'NOT_STARTED'),
+        insurancePartner: dto.insurancePartner ?? application.insurancePartner,
+        insuranceReference:
+          dto.insuranceReference ?? application.insuranceReference,
+        insuredAmount,
+        customerMessage: dto.customerMessage ?? application.customerMessage,
+        notes: dto.notes ?? application.notes,
       });
 
       const creditProfile = await tx.customerCreditProfile.findUnique({
@@ -882,6 +1032,7 @@ export class AdminCreditService {
       actorUserId,
       actorRole: 'ADMIN',
       customerVisible: true,
+      metadata: { fromStatus: application.status, toStatus: to },
     });
 
     await this.notifications.create({
@@ -1605,12 +1756,37 @@ export class AdminCreditService {
     };
   }
 
-  async downloadDocument(id: string) {
-    if (!this.storage.isConfigured()) {
-      const doc = await this.prisma.document.findFirst({
-        where: { id, deletedAt: null },
+  /**
+   * Signed URL for a credit document. Only credit-scoped documents (owned by a
+   * credit application or in a credit category) are reachable from here, and
+   * every successful request is audited without the URL itself.
+   */
+  async downloadDocument(id: string, actorUserId?: string) {
+    const doc = await this.prisma.document.findFirst({
+      where: {
+        id,
+        deletedAt: null,
+        OR: [
+          { ownerType: EntityOwnerType.CREDIT },
+          { category: { in: CREDIT_DOC_CATEGORIES } },
+        ],
+      },
+    });
+    if (!doc) throw new NotFoundException('Credit document not found');
+
+    if (actorUserId) {
+      await this.audit.log({
+        action: 'CREDIT_DOCUMENT_DOWNLOADED',
+        actorUserId,
+        organizationId: doc.organizationId ?? undefined,
+        entityType: EntityOwnerType.CREDIT,
+        entityId:
+          doc.ownerType === EntityOwnerType.CREDIT ? doc.ownerId : doc.id,
+        newData: { documentId: doc.id, category: doc.category },
       });
-      if (!doc) throw new NotFoundException('Document not found');
+    }
+
+    if (!this.storage.isConfigured()) {
       return {
         id: doc.id,
         fileName: doc.fileName,
@@ -1726,6 +1902,328 @@ export class AdminCreditService {
         paidAt: row.payments[0]?.verifiedAt ?? null,
       }),
     );
+  }
+
+  /** Application counts for the dashboard, including the source breakdown. */
+  async applicationStats(query: AdminCreditApplicationStatsQueryDto) {
+    const range = dateRange(query.from, query.to);
+    const submitted: Prisma.CreditApplicationWhereInput = {
+      submittedAt: range ?? { not: null },
+    };
+    const { dayStart, monthStart } = istPeriodStarts();
+
+    const [byStatus, bySource, websiteToday, websiteThisMonth, drafts] =
+      await Promise.all([
+        this.prisma.creditApplication.groupBy({
+          by: ['status'],
+          where: submitted,
+          _count: { _all: true },
+        }),
+        this.prisma.creditApplication.groupBy({
+          by: ['source'],
+          where: submitted,
+          _count: { _all: true },
+        }),
+        this.prisma.creditApplication.count({
+          where: {
+            source: CreditApplicationSource.WEBSITE,
+            submittedAt: { gte: dayStart },
+          },
+        }),
+        this.prisma.creditApplication.count({
+          where: {
+            source: CreditApplicationSource.WEBSITE,
+            submittedAt: { gte: monthStart },
+          },
+        }),
+        this.prisma.creditApplication.count({
+          where: {
+            status: CreditApplicationStatus.DRAFT,
+            submittedAt: null,
+            ...(range ? { createdAt: range } : {}),
+          },
+        }),
+      ]);
+
+    const statusCount = (status: CreditApplicationStatus) =>
+      byStatus.find((row) => row.status === status)?._count._all ?? 0;
+    const sources = Object.values(CreditApplicationSource).map((source) => ({
+      source,
+      label: CREDIT_APPLICATION_SOURCE_LABELS[source],
+      count: bySource.find((row) => row.source === source)?._count._all ?? 0,
+    }));
+    const notRecorded =
+      bySource.find((row) => row.source === null)?._count._all ?? 0;
+
+    return {
+      // Applications that reached the credit team (never-submitted drafts excluded).
+      total: byStatus.reduce((sum, row) => sum + row._count._all, 0),
+      submitted: statusCount(CreditApplicationStatus.PENDING),
+      pendingReview:
+        statusCount(CreditApplicationStatus.PENDING) +
+        statusCount(CreditApplicationStatus.DOCUMENTS_UNDER_REVIEW),
+      underReview:
+        statusCount(CreditApplicationStatus.UNDER_REVIEW) +
+        statusCount(CreditApplicationStatus.INSURANCE_REVIEW) +
+        statusCount(CreditApplicationStatus.CREDIT_ARRANGEMENT_PENDING),
+      documentsRequired: statusCount(
+        CreditApplicationStatus.DOCUMENTS_REQUIRED,
+      ),
+      resubmissionRequired: statusCount(CreditApplicationStatus.DRAFT),
+      approved:
+        statusCount(CreditApplicationStatus.APPROVED) +
+        statusCount(CreditApplicationStatus.PARTIALLY_APPROVED),
+      rejected: statusCount(CreditApplicationStatus.REJECTED),
+      draftsInProgress: drafts,
+      website: sources.find((row) => row.source === 'WEBSITE')?.count ?? 0,
+      websiteToday,
+      websiteThisMonth,
+      bySource: [
+        ...sources,
+        { source: null, label: 'Not recorded', count: notRecorded },
+      ],
+      byStatus: byStatus.map((row) => ({
+        status: row.status,
+        count: row._count._all,
+      })),
+      range: { from: query.from ?? null, to: query.to ?? null },
+      periodStarts: {
+        today: dayStart,
+        month: monthStart,
+        timeZone: 'Asia/Kolkata',
+      },
+    };
+  }
+
+  /** Active admins who may be assigned credit applications. */
+  async listAssignees() {
+    const users = await this.prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        status: 'ACTIVE',
+        userRoles: {
+          some: { role: { code: { in: [...ADMIN_FINANCE_ROLES] } } },
+        },
+      },
+      select: { ...ADMIN_SELECT },
+      orderBy: [{ firstName: 'asc' }, { email: 'asc' }],
+      take: 200,
+    });
+    return users.map((user) => ({
+      id: user.id,
+      name: adminName(user) ?? 'Admin',
+    }));
+  }
+
+  async assign(id: string, actorUserId: string, dto: AdminCreditAssignDto) {
+    const application = await this.requireApplication(id);
+    const assigneeId = dto.assigneeUserId ?? actorUserId;
+    const assignee = await this.prisma.user.findFirst({
+      where: {
+        id: assigneeId,
+        deletedAt: null,
+        status: 'ACTIVE',
+        userRoles: {
+          some: { role: { code: { in: [...ADMIN_FINANCE_ROLES] } } },
+        },
+      },
+      select: ADMIN_SELECT,
+    });
+    if (!assignee) {
+      throw new BadRequestException(
+        'Assignee must be an active admin with credit access',
+      );
+    }
+    if (application.assignedAdminId === assigneeId) {
+      return this.getApplication(id);
+    }
+
+    const previous = application.assignedAdminId
+      ? await this.prisma.user.findUnique({
+          where: { id: application.assignedAdminId },
+          select: ADMIN_SELECT,
+        })
+      : null;
+
+    const moved = await this.prisma.creditApplication.updateMany({
+      where: { id, assignedAdminId: application.assignedAdminId },
+      data: { assignedAdminId: assigneeId },
+    });
+    if (moved.count === 0) {
+      throw new ConflictException(
+        'This application was reassigned by someone else. Refresh and try again.',
+      );
+    }
+
+    const assigneeName = adminName(assignee);
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.ASSIGNED,
+      description: `Assigned to ${assigneeName ?? 'admin'}`,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: false,
+      metadata: {
+        previousAssigneeId: application.assignedAdminId,
+        previousAssigneeName: adminName(previous),
+        assigneeId,
+        assigneeName,
+      },
+    });
+    await this.audit.log({
+      action: CREDIT_APPLICATION_EVENT.ASSIGNED,
+      actorUserId,
+      organizationId: application.customerProfile.organizationId,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+      previousData: { assignedAdminId: application.assignedAdminId },
+      newData: { assignedAdminId: assigneeId },
+    });
+    if (assigneeId !== actorUserId) {
+      await this.notifications.create({
+        userId: assigneeId,
+        title: 'Credit application assigned to you',
+        body: `Application ${application.applicationNumber} was assigned to you for review.`,
+        entityType: EntityOwnerType.CREDIT,
+        entityId: id,
+      });
+    }
+
+    return this.getApplication(id);
+  }
+
+  /** Internal remark; recorded on the timeline but never shown to the customer. */
+  async addRemark(id: string, actorUserId: string, dto: AdminCreditRemarkDto) {
+    const application = await this.requireApplication(id);
+    const remark = dto.remark.trim();
+    if (remark.length < 2) {
+      throw new BadRequestException('Remark is required');
+    }
+
+    await this.prisma.creditApplication.update({
+      where: { id },
+      data: { notes: remark },
+    });
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.REMARK_ADDED,
+      description: remark,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: false,
+    });
+    await this.audit.log({
+      action: CREDIT_APPLICATION_EVENT.REMARK_ADDED,
+      actorUserId,
+      organizationId: application.customerProfile.organizationId,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+      previousData: { notes: application.notes },
+      newData: { notes: remark },
+    });
+
+    return this.getApplication(id);
+  }
+
+  /**
+   * Reopens a submitted application as a draft so the customer can correct
+   * it and submit again. Shown as "Resubmission required".
+   */
+  async requestResubmission(
+    id: string,
+    actorUserId: string,
+    dto: AdminCreditRequestResubmissionDto,
+  ) {
+    const application = await this.requireApplication(id);
+    const to = CreditApplicationStatus.DRAFT;
+    if (application.status === to) {
+      throw new BadRequestException(
+        'This application is already open for the customer to edit',
+      );
+    }
+    assertCreditTransition(application.status, to);
+    const message = dto.message.trim();
+
+    await this.prisma.$transaction(async (tx) => {
+      await this.moveStatus(tx, application, to, {
+        customerMessage: message,
+        assignedAdminId: application.assignedAdminId ?? actorUserId,
+        submittedAt: application.submittedAt ?? application.createdAt,
+      });
+      await tx.customerProfile.update({
+        where: { id: application.customerProfileId },
+        data: { creditStatus: CreditStatus.DOCUMENTS_REQUIRED },
+      });
+    });
+
+    await this.timeline.record({
+      creditApplicationId: id,
+      eventType: CREDIT_APPLICATION_EVENT.RESUBMISSION_REQUESTED,
+      description: message,
+      actorUserId,
+      actorRole: 'ADMIN',
+      customerVisible: true,
+      metadata: {
+        fromStatus: application.status,
+        toStatus: RESUBMISSION_REQUIRED_STATUS,
+      },
+    });
+    await this.audit.log({
+      action: CREDIT_APPLICATION_EVENT.RESUBMISSION_REQUESTED,
+      actorUserId,
+      organizationId: application.customerProfile.organizationId,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: id,
+      previousData: { status: application.status },
+      newData: { status: RESUBMISSION_REQUIRED_STATUS, message },
+    });
+    await this.notifyCustomer(
+      application,
+      'Changes requested on your credit application',
+      `Application ${application.applicationNumber}: ${message}`,
+    );
+
+    return this.getApplication(id);
+  }
+
+  /**
+   * Compare-and-set status change: asserts the transition, then only updates
+   * if the row still has the status the caller read.
+   */
+  private async moveStatus(
+    tx: Prisma.TransactionClient,
+    application: { id: string; status: CreditApplicationStatus },
+    to: CreditApplicationStatus,
+    data: Prisma.CreditApplicationUncheckedUpdateManyInput,
+  ) {
+    assertCreditTransition(application.status, to);
+    const moved = await tx.creditApplication.updateMany({
+      where: { id: application.id, status: application.status },
+      data: { ...data, status: to },
+    });
+    if (moved.count === 0) {
+      throw new ConflictException(
+        'This application was updated by someone else. Refresh and try again.',
+      );
+    }
+  }
+
+  private async notifyCustomer(
+    application: {
+      id: string;
+      customerProfile: { userId: string; organizationId: string };
+    },
+    title: string,
+    body: string,
+  ) {
+    await this.notifications.create({
+      userId: application.customerProfile.userId,
+      organizationId: application.customerProfile.organizationId,
+      title,
+      body,
+      entityType: EntityOwnerType.CREDIT,
+      entityId: application.id,
+    });
   }
 
   private async requireApplication(id: string) {
