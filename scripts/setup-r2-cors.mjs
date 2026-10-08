@@ -1,5 +1,6 @@
 /**
- * Apply CORS on the R2 bucket so Seller Web (browser) can PUT via signed URLs.
+ * Apply CORS on the R2 bucket so browser clients (Customer/Seller web, public
+ * website credit flow) can PUT via signed URLs. This replaces the bucket's rules.
  * Run once: node scripts/setup-r2-cors.mjs
  */
 import { config } from 'dotenv';
@@ -43,6 +44,10 @@ await client.send(
             'http://localhost:3001',
             'http://localhost:3002',
             'http://localhost:8081',
+            'http://localhost:3004',
+            'https://swaroop-customer-webapp.vercel.app',
+            'https://swaroop-seller-webapp.vercel.app',
+            'https://swaroop-website.vercel.app',
           ],
           ExposeHeaders: ['ETag', 'Content-Type', 'Content-Length'],
           MaxAgeSeconds: 3600,

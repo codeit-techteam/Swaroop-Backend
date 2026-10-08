@@ -110,6 +110,69 @@ export function mapCustomerCard(customer: CreditCustomerRecord) {
   };
 }
 
+function record(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function text(value: unknown, max = 500): string | null {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().slice(0, max)
+    : null;
+}
+
+function num(value: unknown): number | null {
+  const parsed = typeof value === 'string' ? Number(value) : value;
+  return typeof parsed === 'number' && Number.isFinite(parsed) ? parsed : null;
+}
+
+/**
+ * Whitelisted applicant-supplied details from application metadata (e.g. the
+ * public website flow). Unknown keys are dropped so free-form metadata never
+ * leaks into admin responses unreviewed.
+ */
+export function mapApplicationDetails(metadata: unknown) {
+  const root = record(metadata);
+  if (!root) return null;
+  const applicant = record(root.applicant);
+  const requirement = record(root.requirement);
+  const declarations = record(root.declarations);
+  if (!applicant && !requirement && !declarations) return null;
+  return {
+    source: text(root.source, 40),
+    applicant: applicant
+      ? {
+          companyName: text(applicant.companyName, 160),
+          contactPerson: text(applicant.contactPerson, 120),
+          mobile: text(applicant.mobile, 20),
+          email: text(applicant.email, 200),
+          businessType: text(applicant.businessType, 80),
+          city: text(applicant.city, 80),
+          state: text(applicant.state, 80),
+        }
+      : null,
+    requirement: requirement
+      ? {
+          monthlyProcurement: num(requirement.monthlyProcurement),
+          preferredPaymentTermsDays: num(requirement.preferredPaymentTermsDays),
+          businessDuration: text(requirement.businessDuration, 40),
+          existingCreditFacility:
+            typeof requirement.existingCreditFacility === 'boolean'
+              ? requirement.existingCreditFacility
+              : null,
+          existingCreditDetails: text(requirement.existingCreditDetails),
+        }
+      : null,
+    declarations: declarations
+      ? {
+          accepted: declarations.accepted === true,
+          acceptedAt: text(declarations.acceptedAt, 40),
+        }
+      : null,
+  };
+}
+
 export function mapApplication(
   row: CreditApplication & {
     customerProfile: CreditCustomerRecord;
@@ -140,12 +203,14 @@ export function mapApplication(
     currency: row.currency,
     assignedAdminId: row.assignedAdminId,
     assignedAdminName: actorName(row.assignedAdmin),
+    submittedAt: row.submittedAt,
     decidedAt: row.decidedAt,
     decisionReason: row.decisionReason,
     approvedLimit: row.approvedLimit != null ? money(row.approvedLimit) : null,
     notes: row.notes,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    applicationDetails: mapApplicationDetails(row.metadata),
     documentCount: extras?.documentCount ?? 0,
     existingExposure: money(row.creditProfile?.outstandingAmount ?? 0),
     customer: mapCustomerCard(row.customerProfile),
