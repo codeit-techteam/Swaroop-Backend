@@ -1,5 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '../../../generated/prisma/client.js';
+import {
+  DocumentCategory,
+  DocumentStatus,
+  EntityOwnerType,
+  Prisma,
+} from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import {
   paginationMeta,
@@ -29,11 +34,12 @@ export class ProductsService {
     private readonly productDocuments: ProductDocumentsQueryService,
   ) {}
 
-  private async ctx(userId: string) {
+  private async ctx(userId?: string | null) {
+    if (!userId) return null;
     return this.customerContext.getOrCreateCustomer(userId);
   }
 
-  async findAll(userId: string, query: CustomerProductQueryDto) {
+  async findAll(userId: string | null | undefined, query: CustomerProductQueryDto) {
     await this.ctx(userId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const search = resolveSearch(query);
@@ -60,6 +66,19 @@ export class ProductsService {
                     { name: { contains: search, mode: 'insensitive' } },
                     { code: { contains: search, mode: 'insensitive' } },
                     { displayName: { contains: search, mode: 'insensitive' } },
+                    {
+                      fullGradeName: {
+                        contains: search,
+                        mode: 'insensitive',
+                      },
+                    },
+                    {
+                      manufacturer: {
+                        contains: search,
+                        mode: 'insensitive',
+                      },
+                    },
+                    { gradeNo: { contains: search, mode: 'insensitive' } },
                   ],
                 },
               },
@@ -85,7 +104,7 @@ export class ProductsService {
     };
   }
 
-  async findOne(userId: string, id: string) {
+  async findOne(userId: string | null | undefined, id: string) {
     await this.ctx(userId);
     const product = await this.prisma.product.findFirst({
       where: {
@@ -103,7 +122,7 @@ export class ProductsService {
     return { ...blind, documents };
   }
 
-  async listDocuments(userId: string, productId: string) {
+  async listDocuments(userId: string | null | undefined, productId: string) {
     await this.ctx(userId);
     const product = await this.prisma.product.findFirst({
       where: {
@@ -148,8 +167,90 @@ export class ProductsService {
     return this.productDocuments.customerDownloadUrl(product.id, documentId);
   }
 
+  /**
+   * TDS metadata for buyable products under a grade. Never invents documents
+   * or attaches another grade's file. Download URLs stay auth-gated.
+   */
+  async listGradeTdsDocuments(
+    userId: string | null | undefined,
+    gradeId: string,
+  ) {
+    await this.ctx(userId);
+    const grade = await this.prisma.grade.findFirst({
+      where: { id: gradeId, ...customerGradeWhere },
+      select: { id: true, code: true, name: true, displayName: true },
+    });
+    if (!grade) throw new NotFoundException('Grade not found');
+
+    const products = await this.prisma.product.findMany({
+      where: { ...buyableMarketplaceProductWhere(), gradeId },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        brand: true,
+        manufacturer: true,
+      },
+      take: 50,
+    });
+    if (!products.length) {
+      return {
+        grade: {
+          id: grade.id,
+          code: grade.code,
+          name: grade.displayName ?? grade.name,
+        },
+        available: false,
+        message: 'TDS unavailable — no buyable products for this grade yet.',
+        items: [] as const,
+      };
+    }
+
+    const docs = await this.prisma.document.findMany({
+      where: {
+        deletedAt: null,
+        ownerType: EntityOwnerType.PRODUCT,
+        ownerId: { in: products.map((p) => p.id) },
+        category: {
+          in: [DocumentCategory.TDS, DocumentCategory.PRODUCT_TDS],
+        },
+        status: {
+          in: [DocumentStatus.VERIFIED, DocumentStatus.UPLOADED],
+        },
+      },
+      orderBy: [{ version: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    const byProduct = new Map(products.map((p) => [p.id, p]));
+    const items = docs.map((doc) => {
+      const product = byProduct.get(doc.ownerId);
+      return {
+        ...this.productDocuments.mapCustomerDoc(doc),
+        productId: product?.id ?? doc.ownerId,
+        productCode: product?.code ?? null,
+        productName: product?.name ?? null,
+        manufacturer: product?.manufacturer ?? product?.brand ?? null,
+        downloadRequiresAuth: true,
+      };
+    });
+
+    return {
+      grade: {
+        id: grade.id,
+        code: grade.code,
+        name: grade.displayName ?? grade.name,
+      },
+      available: items.length > 0,
+      message:
+        items.length > 0
+          ? null
+          : 'TDS unavailable — no approved Technical Data Sheet is on file for products in this grade.',
+      items,
+    };
+  }
+
   async listOffers(
-    userId: string,
+    userId: string | null | undefined,
     productId: string,
     query: CustomerProductQueryDto,
   ) {

@@ -841,10 +841,10 @@
       "code": "TIO2",
       "name": "TiO2",
       "categoryId": "cat-chemicals",
-      "description": "Titanium dioxide pigment for paints, plastics and masterbatch.",
+      "description": "Legacy coarse TiO2 placeholder. Customer browse uses Source.One TIO2 category pigment grades — do not invent replacements.",
       "status": "ACTIVE",
-      "customerVisible": true,
-      "sellerVisible": true,
+      "customerVisible": false,
+      "sellerVisible": false,
       "applications": [
         "Paints",
         "Plastics",

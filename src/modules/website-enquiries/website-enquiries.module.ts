@@ -4,6 +4,7 @@ import { AuthModule } from '../auth/index.js';
 import { DatabaseModule } from '../../database/database.module.js';
 import { NotificationsModule } from '../notifications/index.js';
 import { AdminWebsiteEnquiriesController } from './admin-website-enquiries.controller.js';
+import { PublicLegalLinksController } from './public-legal-links.controller.js';
 import { PublicWebsiteEnquiriesController } from './public-website-enquiries.controller.js';
 import { WebsiteEnquiriesService } from './website-enquiries.service.js';
 
@@ -11,6 +12,7 @@ import { WebsiteEnquiriesService } from './website-enquiries.service.js';
   imports: [AuthModule, DatabaseModule, AuditModule, NotificationsModule],
   controllers: [
     PublicWebsiteEnquiriesController,
+    PublicLegalLinksController,
     AdminWebsiteEnquiriesController,
   ],
   providers: [WebsiteEnquiriesService],

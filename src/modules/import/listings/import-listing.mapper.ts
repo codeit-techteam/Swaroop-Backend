@@ -177,7 +177,8 @@ export function mapListing(
     commercial: {
       price: decimalString(l.price),
       currencyId: l.currencyId,
-      currencyCode: l.currencyCode,
+      // Prefer snapshotted ISO code; fall back to live currency master — never invent INR.
+      currencyCode: l.currencyCode ?? names.currency?.code ?? null,
       currency: names.currency,
       priceUnit: l.priceUnit,
       priceType: l.priceType,

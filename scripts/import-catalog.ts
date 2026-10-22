@@ -18,6 +18,9 @@ type CatalogProduct = {
   grade: string;
   productCode: string;
   gradeMasterCode: string;
+  /** When true, skip import and report for Admin review (do not invent grade mappings). */
+  reviewRequired?: boolean;
+  reviewReason?: string;
   parentCategoryId: string;
   materialType: string;
   subCategory?: string;
@@ -200,6 +203,19 @@ export async function runCatalogImport(prisma: PrismaClient) {
       continue;
     }
     seenCodes.add(item.productCode);
+
+    if (item.reviewRequired || !item.gradeMasterCode?.trim()) {
+      report.products.unmatched += 1;
+      report.unmatched.push({
+        sourceId: item.sourceId,
+        productCode: item.productCode,
+        gradeMasterCode: item.gradeMasterCode || '',
+        message:
+          item.reviewReason ||
+          'Held for Admin review — no authoritative gradeMasterCode (not inventing a mapping)',
+      });
+      continue;
+    }
 
     const grade = await prisma.grade.findFirst({
       where: { code: item.gradeMasterCode, deletedAt: null },

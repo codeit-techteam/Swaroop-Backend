@@ -129,7 +129,16 @@ export class ImportMatchingService {
         categoryId: listing.categoryId,
         deletedAt: null,
         ownerOrgId: { not: listing.ownerOrgId },
-        OR: [{ validUntil: null }, { validUntil: { gt: now } }],
+        // Match only listings with a persisted currency — never assume INR.
+        AND: [
+          { OR: [{ validUntil: null }, { validUntil: { gt: now } }] },
+          {
+            OR: [
+              { currencyCode: { not: null } },
+              { currencyId: { not: null } },
+            ],
+          },
+        ],
       },
       select: MATCHABLE_SELECT,
       orderBy: { publishedAt: 'desc' },

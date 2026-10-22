@@ -804,6 +804,7 @@ model User {
   managerAssignmentsMade  SellerManagerAssignment[] @relation("ManagerAssignmentAssigner")
   permissionGrants        UserPermissionGrant[]
   createdImportListings   ImportListing[]          @relation("ImportListingCreatedBy")
+  priceAlerts             PriceAlert[]
 
   @@index([status])
   @@index([createdAt])
@@ -1038,10 +1039,45 @@ model CustomerProfile {
   checkoutQuotes   CheckoutQuote[]
   bulkLogisticsQuotes BulkLogisticsQuoteRequest[]
   importListings   ImportListing[]
+  priceAlerts      PriceAlert[]
 
   @@index([status])
   @@index([creditStatus])
   @@map("customer_profiles")
+}
+
+/// User-configured price threshold alerts. Evaluation requires an authoritative
+/// price update feed / worker — CRUD is supported without fabricating triggers.
+model PriceAlert {
+  id                String       @id @default(uuid()) @db.Uuid
+  customerProfileId String       @map("customer_profile_id") @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  gradeId           String       @map("grade_id") @db.Uuid
+  productId         String?      @map("product_id") @db.Uuid
+  /// Target unit price in `currency` / `unit` (typically INR per MT).
+  targetPrice       Decimal      @map("target_price") @db.Decimal(18, 4)
+  currency          CurrencyCode @default(INR)
+  unit              String       @default("MT")
+  /// BELOW = notify when market/offer price is at or below target.
+  direction         String       @default("BELOW")
+  enabled           Boolean      @default(true)
+  lastTriggeredAt   DateTime?    @map("last_triggered_at")
+  lastTriggeredPrice Decimal?    @map("last_triggered_price") @db.Decimal(18, 4)
+  metadata          Json?
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
+  deletedAt         DateTime?    @map("deleted_at")
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  grade           Grade           @relation(fields: [gradeId], references: [id])
+  product         Product?        @relation(fields: [productId], references: [id])
+
+  @@index([customerProfileId, enabled])
+  @@index([userId])
+  @@index([gradeId, enabled])
+  @@index([productId])
+  @@map("price_alerts")
 }
 
 model BulkLogisticsQuoteRequest {
@@ -1688,6 +1724,7 @@ model Grade {
   orderItems           OrderItem[]
   checkoutQuotes       CheckoutQuote[]
   importListings       ImportListing[]
+  priceAlerts          PriceAlert[]
 
   @@index([categoryId])
   @@index([subcategoryId])
@@ -1873,6 +1910,7 @@ model Product {
   purchaseRequestItems PurchaseRequestItem[]
   orderItems           OrderItem[]
   checkoutQuotes       CheckoutQuote[]
+  priceAlerts          PriceAlert[]
 
   @@unique([organizationId, code])
   @@index([gradeId])

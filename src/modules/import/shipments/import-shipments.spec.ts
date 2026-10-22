@@ -45,9 +45,13 @@ describe('import shipment status machine', () => {
     );
   });
 
-  it('lets an exception recover or be cancelled', () => {
+  it('lets an exception recover into the milestone chain or be cancelled — never jump to delivered', () => {
     expect(shipmentTransitions(S.EXCEPTION)).toEqual(
-      expect.arrayContaining([S.IN_TRANSIT, S.DELIVERED, S.CANCELLED]),
+      expect.arrayContaining([S.IN_TRANSIT, S.OUT_FOR_DELIVERY, S.CANCELLED]),
+    );
+    expect(shipmentTransitions(S.EXCEPTION)).not.toContain(S.DELIVERED);
+    expect(() => assertShipmentTransition(S.EXCEPTION, S.DELIVERED)).toThrow(
+      ImportException,
     );
   });
 });

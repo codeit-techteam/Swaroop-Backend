@@ -52,6 +52,51 @@ function warehouseHintFromSpecs(technicalSpecs: unknown): string | null {
   return typeof label === 'string' ? label : null;
 }
 
+type GradeLabelSource = {
+  fullGradeName?: string | null;
+  displayName?: string | null;
+  gradeGroup?: string | null;
+  gradeNo?: string | null;
+  name?: string | null;
+  manufacturer?: string | null;
+};
+
+/**
+ * Best verified listing title from Grade Master — never invents values.
+ * Prefer fullGradeName → displayName → "group + gradeNo" → product name.
+ */
+export function listingDisplayName(
+  productName: string,
+  grade?: GradeLabelSource | null,
+): string {
+  const full = grade?.fullGradeName?.trim();
+  if (full) return full;
+  const display = grade?.displayName?.trim();
+  if (display) return display;
+  const composed = [grade?.gradeGroup, grade?.gradeNo]
+    .map((p) => p?.trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+  if (composed) return composed;
+  const gradeName = grade?.name?.trim();
+  if (gradeName) return gradeName;
+  return productName;
+}
+
+export function listingManufacturer(
+  productManufacturer: string | null | undefined,
+  productBrand: string | null | undefined,
+  grade?: GradeLabelSource | null,
+): string | null {
+  return (
+    productManufacturer?.trim() ||
+    grade?.manufacturer?.trim() ||
+    productBrand?.trim() ||
+    null
+  );
+}
+
 function inactiveTierIds(metadata: unknown): Set<string> {
   if (!metadata || typeof metadata !== 'object') return new Set();
   const raw = (metadata as Record<string, unknown>).inactivePriceTier;
@@ -99,7 +144,16 @@ export function toBlindProduct(product: {
     code: string;
     name: string;
     displayName: string | null;
-    category?: { id: string; code: string; name: string } | null;
+    fullGradeName?: string | null;
+    gradeNo?: string | null;
+    gradeGroup?: string | null;
+    manufacturer?: string | null;
+    category?: {
+      id: string;
+      code: string;
+      name: string;
+      parentGroup?: string | null;
+    } | null;
   } | null;
   media?: Array<{
     id: string;
@@ -130,15 +184,21 @@ export function toBlindProduct(product: {
   const offer = product.offers?.[0];
   const warehouseHint = warehouseHintFromSpecs(product.technicalSpecs);
   const tiers = commercialPriceTiers(offer?.priceTiers, offer?.metadata);
+  const manufacturer = listingManufacturer(
+    product.manufacturer,
+    product.brand,
+    product.grade,
+  );
   return {
     id: product.id,
     code: product.code,
-    name: product.name,
-    brand: product.brand ?? product.manufacturer ?? null,
-    manufacturer: product.manufacturer ?? product.brand ?? null,
+    name: listingDisplayName(product.name, product.grade),
+    brand: manufacturer,
+    manufacturer,
     description: product.description,
     technicalSpecs: product.technicalSpecs,
-    mfi: product.mfi,
+    // Only surface MFI when present on the verified product record.
+    mfi: product.mfi?.trim() || null,
     density: product.density,
     packaging: product.packaging,
     unit: product.unit,
@@ -151,6 +211,10 @@ export function toBlindProduct(product: {
           code: product.grade.code,
           name: product.grade.name,
           displayName: product.grade.displayName ?? product.grade.name,
+          fullGradeName: product.grade.fullGradeName ?? null,
+          gradeNo: product.grade.gradeNo ?? null,
+          gradeGroup: product.grade.gradeGroup ?? null,
+          manufacturer: product.grade.manufacturer ?? null,
           category: product.grade.category ?? null,
         }
       : null,
@@ -207,12 +271,18 @@ export function toBlindOffer(offer: {
     name: string;
     packaging: string | null;
     unit: string;
+    manufacturer?: string | null;
+    brand?: string | null;
   } | null;
   grade?: {
     id: string;
     code: string;
     name: string;
     displayName: string | null;
+    fullGradeName?: string | null;
+    gradeNo?: string | null;
+    gradeGroup?: string | null;
+    manufacturer?: string | null;
   } | null;
   warehouse?: {
     city: string | null;
@@ -266,8 +336,13 @@ export function toBlindOffer(offer: {
       ? {
           id: offer.product.id,
           code: offer.product.code,
-          name: offer.product.name,
+          name: listingDisplayName(offer.product.name, offer.grade),
           unit: offer.product.unit,
+          manufacturer: listingManufacturer(
+            offer.product.manufacturer,
+            offer.product.brand,
+            offer.grade,
+          ),
         }
       : null,
     grade: offer.grade
@@ -276,6 +351,10 @@ export function toBlindOffer(offer: {
           code: offer.grade.code,
           name: offer.grade.name,
           displayName: offer.grade.displayName ?? offer.grade.name,
+          fullGradeName: offer.grade.fullGradeName ?? null,
+          gradeNo: offer.grade.gradeNo ?? null,
+          gradeGroup: offer.grade.gradeGroup ?? null,
+          manufacturer: offer.grade.manufacturer ?? null,
         }
       : null,
     priceTiers: commercialPriceTiers(offer.priceTiers, offer.metadata).map(

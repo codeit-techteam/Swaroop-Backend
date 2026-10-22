@@ -84,11 +84,11 @@ export class CreateOfferDto {
   @Min(0)
   quantity!: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ description: 'Minimum order quantity; must be > 0 when set' })
   @IsOptional()
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @Min(0.001, { message: 'MOQ must be greater than zero' })
   moq?: number;
 
   @ApiPropertyOptional({ default: 'MT' })
@@ -100,7 +100,7 @@ export class CreateOfferDto {
   @ApiProperty()
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @Min(0.01, { message: 'Base price must be a positive amount' })
   basePrice!: number;
 
   @ApiPropertyOptional({ enum: CurrencyCode, default: CurrencyCode.INR })

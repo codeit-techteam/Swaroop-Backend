@@ -20,7 +20,8 @@ export class OffersService {
     private readonly customerContext: CustomerContextService,
   ) {}
 
-  private async ctx(userId: string) {
+  private async ctx(userId?: string | null) {
+    if (!userId) return null;
     return this.customerContext.getOrCreateCustomer(userId);
   }
 
@@ -75,7 +76,7 @@ export class OffersService {
     return { AND: and };
   }
 
-  async findAll(userId: string, query: CustomerOfferQueryDto) {
+  async findAll(userId: string | null | undefined, query: CustomerOfferQueryDto) {
     await this.ctx(userId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const sortBy = query.sortBy ?? 'createdAt';
@@ -99,7 +100,7 @@ export class OffersService {
     };
   }
 
-  async findOne(userId: string, id: string) {
+  async findOne(userId: string | null | undefined, id: string) {
     await this.ctx(userId);
     const offer = await this.prisma.offer.findFirst({
       where: { id, ...activeMarketplaceOfferWhere() },

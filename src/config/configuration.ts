@@ -41,7 +41,7 @@ export type AppConfig = {
     otpMaxAttempts: number;
     otpResendCooldownSeconds: number;
     authDevExposeOtp: boolean;
-    /** When true (or non-production), demo phone +918240890242 always uses OTP 123456. */
+    /** When true in non-production, demo phone +918240890242 uses OTP 123456. */
     authDevFixedOtp: boolean;
     passwordResetExpiresInSeconds: number;
     bcryptSaltRounds: number;
@@ -77,6 +77,14 @@ export type AppConfig = {
     /** GRADE_MASTER_BUNDLED_IMPORT — import the bundled Source.One CSV once per file version. */
     bundledImport: boolean;
   };
+  settlements: {
+    /** Days after creation before settlementDate (due). */
+    cycleDays: number;
+    /** Fixed platform fee deducted from seller settlement (configured, default 0). */
+    platformFee: string;
+    /** TDS rate 0–1 applied to (gross + tax); configured, default 0. */
+    tdsRate: string;
+  };
   kyc: {
     surepass: SurepassConfig;
     pan: KycProviderConfig;
@@ -88,6 +96,17 @@ export type AppConfig = {
     uploadsPerHour: number;
     /** When true, ordering / purchase-request APIs reject customers without approved KYC. */
     enforceForTrading: boolean;
+  };
+  /**
+   * Public legal / support destinations for login screens. Empty strings mean
+   * "not configured" — clients must not invent placeholders.
+   */
+  legal: {
+    websiteUrl: string;
+    termsUrl: string;
+    privacyUrl: string;
+    supportUrl: string;
+    supportEmail: string;
   };
 };
 
@@ -250,9 +269,11 @@ export default (): AppConfig => {
         process.env.OTP_RESEND_COOLDOWN_SECONDS ?? 60,
       ),
       authDevExposeOtp: process.env.AUTH_DEV_EXPOSE_OTP === 'true',
-      // Demo phone +918240890242 / OTP 123456. On by default for current go-live
-      // testing; set AUTH_DEV_FIXED_OTP=false to disable in real production.
-      authDevFixedOtp: process.env.AUTH_DEV_FIXED_OTP !== 'false',
+      // Fixed demo OTP (123456 for +918240890242). Opt-in only, NEVER in production.
+      // Client-supplied AUTH_DEV_FIXED_OTP is ignored when NODE_ENV=production.
+      authDevFixedOtp:
+        process.env.NODE_ENV !== 'production' &&
+        process.env.AUTH_DEV_FIXED_OTP === 'true',
       passwordResetExpiresInSeconds: Number(
         process.env.PASSWORD_RESET_EXPIRES_IN_SECONDS ?? 1800,
       ),
@@ -297,6 +318,11 @@ export default (): AppConfig => {
           .toLowerCase(),
       ),
     },
+    settlements: {
+      cycleDays: Number(process.env.SETTLEMENT_CYCLE_DAYS ?? 7),
+      platformFee: process.env.SETTLEMENT_PLATFORM_FEE ?? '0',
+      tdsRate: process.env.SETTLEMENT_TDS_RATE ?? '0',
+    },
     kyc: {
       surepass: surepassConfig(),
       pan: kycProvider('PAN'),
@@ -312,5 +338,29 @@ export default (): AppConfig => {
         (process.env.KYC_ENFORCE_FOR_TRADING ?? 'false').trim().toLowerCase(),
       ),
     },
+    legal: (() => {
+      const trim = (v: string | undefined) => (v ?? '').trim().replace(/\/+$/, '');
+      const websiteUrl =
+        trim(process.env.PUBLIC_WEBSITE_URL) ||
+        // First concrete origin from WEBSITE_ORIGINS (skip wildcard preview hosts).
+        (
+          process.env.WEBSITE_ORIGINS ??
+          'https://swaroop-website.vercel.app'
+        )
+          .split(',')
+          .map((o) => o.trim())
+          .find((o) => o.startsWith('http') && !o.includes('*')) ||
+        '';
+      const join = (path: string) =>
+        websiteUrl ? `${websiteUrl}${path.startsWith('/') ? path : `/${path}`}` : '';
+      return {
+        websiteUrl,
+        termsUrl: trim(process.env.PUBLIC_TERMS_URL) || join('/terms'),
+        privacyUrl: trim(process.env.PUBLIC_PRIVACY_URL) || join('/privacy'),
+        supportUrl: trim(process.env.PUBLIC_SUPPORT_URL) || join('/contact'),
+        // Never invent an email — only expose when explicitly configured.
+        supportEmail: trim(process.env.PUBLIC_SUPPORT_EMAIL),
+      };
+    })(),
   };
 };

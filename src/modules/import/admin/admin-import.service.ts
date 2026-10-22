@@ -4,6 +4,7 @@ import {
   ImportDealStatus,
   ImportListingStatus,
   ImportNegotiationStatus,
+  ImportShipmentStatus,
   ImportSide,
   ImportTradeParty,
   Prisma,
@@ -1161,6 +1162,46 @@ export class AdminImportService {
         to: status,
         allowed: allowed[deal.status],
       });
+    }
+
+    // Fulfilment must follow delivered shipment quantity — Admin cannot invent
+    // a delivered state without matching logistics milestones.
+    if (
+      status === ImportDealStatus.FULFILLED ||
+      status === ImportDealStatus.PARTIALLY_FULFILLED
+    ) {
+      const agg = await this.prisma.importShipment.aggregate({
+        where: {
+          dealId: id,
+          status: ImportShipmentStatus.DELIVERED,
+        },
+        _sum: { quantity: true },
+      });
+      const delivered = agg._sum.quantity ?? new Prisma.Decimal(0);
+      if (delivered.lte(0)) {
+        throw new ImportException(
+          'IMPORT_INVALID_STATUS_TRANSITION',
+          'Mark shipments as delivered before setting deal fulfilment. Delivery status cannot be invented without logistics milestones.',
+        );
+      }
+      if (
+        status === ImportDealStatus.FULFILLED &&
+        delivered.lt(deal.quantity)
+      ) {
+        throw new ImportException(
+          'IMPORT_INVALID_STATUS_TRANSITION',
+          `Only ${decimalString(delivered)} of ${decimalString(deal.quantity)} ${deal.quantityUnit} is delivered; use partially fulfilled or wait for remaining shipments.`,
+        );
+      }
+      if (
+        status === ImportDealStatus.PARTIALLY_FULFILLED &&
+        delivered.gte(deal.quantity)
+      ) {
+        throw new ImportException(
+          'IMPORT_INVALID_STATUS_TRANSITION',
+          'Delivered quantity covers the full deal; set fulfilled instead of partially fulfilled.',
+        );
+      }
     }
 
     const listingTarget: ImportListingStatus | null =

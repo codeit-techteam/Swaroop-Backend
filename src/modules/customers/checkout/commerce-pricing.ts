@@ -165,3 +165,19 @@ export function creditDoesNotChangeSellerPrice(
 ): boolean {
   return isPlatformCredit(paymentMethod);
 }
+
+/**
+ * ₹/kg from an authoritative ₹/MT unit price (1 MT = 1,000 kg).
+ * Uses Decimal — never float division.
+ */
+export function pricePerKgFromMt(
+  pricePerMt: Prisma.Decimal | number | string,
+): Prisma.Decimal {
+  return toDecimal(pricePerMt).dividedBy(1000);
+}
+
+export function pricePerMtFromKg(
+  pricePerKg: Prisma.Decimal | number | string,
+): Prisma.Decimal {
+  return toDecimal(pricePerKg).times(1000);
+}

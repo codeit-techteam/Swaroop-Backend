@@ -123,7 +123,7 @@ export class AdminSellersService {
       ];
     }
 
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.sellerProfile.findMany({
         where,
         include: sellerInclude,
@@ -133,6 +133,14 @@ export class AdminSellersService {
       }),
       this.prisma.sellerProfile.count({ where }),
     ]);
+
+    // Overall seller KYC follows account + onboarding status — not org.verificationStatus alone.
+    const items = rows.map((seller) => ({
+      ...seller,
+      kycStatus: seller.status,
+      onboardingStatus: seller.onboarding?.status ?? null,
+      kycVerified: seller.status === SellerStatus.APPROVED,
+    }));
 
     return { items, meta: paginationMeta(page, limit, total) };
   }

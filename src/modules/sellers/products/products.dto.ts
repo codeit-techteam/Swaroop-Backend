@@ -249,10 +249,10 @@ export class CreateMarketplaceListingDto extends CreateProductDto {
   @Min(0)
   reservedStock?: number;
 
-  @ApiProperty({ example: 12 })
+  @ApiProperty({ example: 12, description: 'Minimum order quantity; must be > 0' })
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @Min(0.001, { message: 'MOQ must be greater than zero' })
   moq!: number;
 
   @ApiProperty({ example: 94500, description: 'Selling price ₹/MT' })

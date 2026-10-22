@@ -19,11 +19,94 @@ export type CreateNotificationInput = {
   metadata?: Record<string, unknown>;
 };
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const DISPLAY_REF_KEYS = [
+  'displayReference',
+  'referenceNumber',
+  'reference',
+  'orderNumber',
+  'poNumber',
+  'invoiceNumber',
+  'ticketNumber',
+  'applicationNumber',
+  'requestNumber',
+  'settlementNumber',
+  'shipmentNumber',
+  'dealNumber',
+  'listingNumber',
+] as const;
+
+function asHumanReference(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed || UUID_RE.test(trimmed)) return null;
+  return trimmed;
+}
+
+/** Prefer business reference numbers; never return a raw UUID. */
+export function resolveDisplayReference(
+  metadata?: Record<string, unknown> | null,
+): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  for (const key of DISPLAY_REF_KEYS) {
+    const hit = asHumanReference(metadata[key]);
+    if (hit) return hit;
+  }
+  return null;
+}
+
+/** Client-facing notification DTO — entityId kept for deep links only. */
+export function toPublicNotification<
+  T extends {
+    id: string;
+    title: string;
+    body: string;
+    entityType: EntityOwnerType | null;
+    entityId: string | null;
+    metadata: unknown;
+    status: NotificationStatus;
+    readAt: Date | null;
+    sentAt: Date | null;
+    createdAt: Date;
+    channel: NotificationChannel;
+  },
+>(row: T) {
+  const metadata =
+    row.metadata && typeof row.metadata === 'object'
+      ? (row.metadata as Record<string, unknown>)
+      : {};
+  const displayReference = resolveDisplayReference(metadata);
+  return {
+    id: row.id,
+    title: row.title,
+    body: row.body,
+    channel: row.channel,
+    status: row.status,
+    entityType: row.entityType,
+    entityId: row.entityId,
+    displayReference,
+    metadata: {
+      ...metadata,
+      ...(displayReference ? { displayReference } : {}),
+    },
+    readAt: row.readAt,
+    sentAt: row.sentAt,
+    createdAt: row.createdAt,
+  };
+}
+
 @Injectable()
 export class NotificationService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(input: CreateNotificationInput) {
+    const metadata = { ...(input.metadata ?? {}) };
+    const displayReference = resolveDisplayReference(metadata);
+    if (displayReference && !metadata.displayReference) {
+      metadata.displayReference = displayReference;
+    }
     return this.prisma.notification.create({
       data: {
         userId: input.userId,
@@ -34,7 +117,7 @@ export class NotificationService {
         body: input.body,
         entityType: input.entityType,
         entityId: input.entityId,
-        metadata: input.metadata as Prisma.InputJsonValue | undefined,
+        metadata: metadata as Prisma.InputJsonValue,
         sentAt: new Date(),
       },
     });
@@ -57,7 +140,7 @@ export class NotificationService {
         : {}),
     };
 
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.notification.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -67,7 +150,10 @@ export class NotificationService {
       this.prisma.notification.count({ where }),
     ]);
 
-    return { items, meta: paginationMeta(page, limit, total) };
+    return {
+      items: rows.map((row) => toPublicNotification(row)),
+      meta: paginationMeta(page, limit, total),
+    };
   }
 
   async unreadCount(userId: string) {
@@ -90,13 +176,14 @@ export class NotificationService {
     if (!existing) {
       throw new NotFoundException('Notification not found');
     }
-    return this.prisma.notification.update({
+    const updated = await this.prisma.notification.update({
       where: { id },
       data: {
         status: NotificationStatus.READ,
         readAt: new Date(),
       },
     });
+    return toPublicNotification(updated);
   }
 
   async markAllRead(userId: string) {

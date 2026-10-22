@@ -5,13 +5,16 @@ import {
 } from '../../../generated/prisma/client.js';
 import { ImportException } from './import.errors.js';
 
+/**
+ * Recovery from EXCEPTION must re-enter the milestone chain — never jump
+ * straight to DELIVERED (customers must not see fabricated delivery status).
+ */
 const RECOVERABLE: readonly S[] = [
   S.SHIPPED,
   S.IN_TRANSIT,
   S.ARRIVED,
   S.CUSTOMS_CLEARANCE,
   S.OUT_FOR_DELIVERY,
-  S.DELIVERED,
 ];
 
 const TRANSITIONS: Record<S, readonly S[]> = {

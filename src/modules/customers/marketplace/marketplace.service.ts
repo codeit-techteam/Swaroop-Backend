@@ -135,7 +135,13 @@ const productInclude = {
       code: true,
       name: true,
       displayName: true,
-      category: { select: { id: true, code: true, name: true } },
+      fullGradeName: true,
+      gradeNo: true,
+      gradeGroup: true,
+      manufacturer: true,
+      category: {
+        select: { id: true, code: true, name: true, parentGroup: true },
+      },
     },
   },
   media: {
@@ -178,7 +184,15 @@ const productInclude = {
 
 const offerInclude = {
   product: {
-    select: { id: true, code: true, name: true, packaging: true, unit: true },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      packaging: true,
+      unit: true,
+      manufacturer: true,
+      brand: true,
+    },
   },
   grade: {
     select: {
@@ -186,6 +200,10 @@ const offerInclude = {
       code: true,
       name: true,
       displayName: true,
+      fullGradeName: true,
+      gradeNo: true,
+      gradeGroup: true,
+      manufacturer: true,
       status: true,
       customerVisible: true,
       deletedAt: true,
@@ -204,11 +222,13 @@ export class MarketplaceService {
     private readonly customerContext: CustomerContextService,
   ) {}
 
-  private async ctx(userId: string) {
+  /** Optional: guests browse without creating a customer profile. */
+  private async ctx(userId?: string | null) {
+    if (!userId) return null;
     return this.customerContext.getOrCreateCustomer(userId);
   }
 
-  async home(userId: string, query: MarketplaceHomeQueryDto) {
+  async home(userId: string | null | undefined, query: MarketplaceHomeQueryDto) {
     await this.ctx(userId);
     const now = new Date();
     const featuredLimit = query.featuredLimit ?? 8;
@@ -292,7 +312,7 @@ export class MarketplaceService {
     };
   }
 
-  async listCategories(userId: string) {
+  async listCategories(userId?: string | null) {
     await this.ctx(userId);
     const categories = await this.prisma.gradeCategory.findMany({
       where: {
@@ -325,7 +345,7 @@ export class MarketplaceService {
     }));
   }
 
-  async listGrades(userId: string, query: MarketplaceGradeQueryDto) {
+  async listGrades(userId: string | null | undefined, query: MarketplaceGradeQueryDto) {
     await this.ctx(userId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const search = resolveSearch(query);
@@ -379,7 +399,7 @@ export class MarketplaceService {
     };
   }
 
-  async getGrade(userId: string, id: string) {
+  async getGrade(userId: string | null | undefined, id: string) {
     await this.ctx(userId);
     const grade = await this.prisma.grade.findFirst({
       where: { id, ...customerGradeWhere },
@@ -401,7 +421,7 @@ export class MarketplaceService {
   }
 
   async listGradeProducts(
-    userId: string,
+    userId: string | null | undefined,
     gradeId: string,
     query: MarketplaceListQueryDto,
   ) {
@@ -430,7 +450,7 @@ export class MarketplaceService {
   }
 
   async listGradeOffers(
-    userId: string,
+    userId: string | null | undefined,
     gradeId: string,
     query: MarketplaceListQueryDto,
   ) {

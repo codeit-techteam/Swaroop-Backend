@@ -14,6 +14,58 @@ import {
 } from './blind-marketplace.mapper.js';
 
 describe('blind marketplace mapper', () => {
+  it('prefers Grade Master fullGradeName over denormalized product name', () => {
+    const payload = toBlindProduct({
+      id: 'prod-1',
+      code: 'HDPE-FL-002',
+      name: 'F46003',
+      brand: null,
+      manufacturer: null,
+      description: 'Film grade',
+      technicalSpecs: {},
+      mfi: '0.36',
+      density: null,
+      packaging: '25kg bags',
+      unit: 'MT',
+      countryOfOrigin: 'IN',
+      supplyOrigin: 'domestic',
+      status: 'ACTIVE',
+      grade: {
+        id: 'grade-1',
+        code: 'SO-HDPE-F46003',
+        name: 'F46003',
+        displayName: 'HDPE Film F46003',
+        fullGradeName: 'HDPE FILM F46003 - RIL',
+        gradeNo: 'F46003',
+        gradeGroup: 'HDPE FILM',
+        manufacturer: 'RIL',
+        category: {
+          id: 'cat-1',
+          code: 'HDPE',
+          name: 'HDPE',
+          parentGroup: 'POLYMERS',
+        },
+      },
+      offers: [
+        {
+          id: 'offer-1',
+          quantity: 1000,
+          moq: 20,
+          unit: 'MT',
+          basePrice: 137.45,
+          currency: 'INR',
+          deliveryTerms: '2-3 Days',
+          organizationId: 'org-seller-secret',
+        },
+      ],
+    });
+    expect(payload.name).toBe('HDPE FILM F46003 - RIL');
+    expect(payload.manufacturer).toBe('RIL');
+    expect(payload.mfi).toBe('0.36');
+    expect(payload.grade?.fullGradeName).toBe('HDPE FILM F46003 - RIL');
+    expect(payload.grade?.category?.parentGroup).toBe('POLYMERS');
+  });
+
   it('never exposes seller identity on products', () => {
     const payload = toBlindProduct({
       id: 'prod-1',

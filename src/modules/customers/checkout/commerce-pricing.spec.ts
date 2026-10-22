@@ -5,6 +5,9 @@ import {
   buildPricingVersion,
   calculateQuoteAmounts,
   platformDiscountBps,
+  pricePerKgFromMt,
+  pricePerMtFromKg,
+  unitPriceString,
 } from './commerce-pricing.js';
 
 describe('commerce pricing', () => {
@@ -124,5 +127,29 @@ describe('commerce pricing', () => {
       expect((err as { code?: string }).code).toBe('INSUFFICIENT_INVENTORY');
     }
     expect(new Prisma.Decimal(25).isInteger()).toBe(true);
+  });
+
+  it('rejects zero and negative quantities', () => {
+    for (const quantity of [0, -1, '-5', '0']) {
+      try {
+        assertQuantityRules({
+          quantity,
+          moq: 0,
+          available: 100,
+          increment: 1,
+        });
+        throw new Error(`expected throw for quantity=${quantity}`);
+      } catch (err) {
+        expect((err as { code?: string }).code).toBe('INVALID_QUANTITY');
+      }
+    }
+  });
+
+  it('converts ₹/MT ↔ ₹/kg with decimal-safe arithmetic (148000 → 148)', () => {
+    const perKg = pricePerKgFromMt('148000');
+    expect(unitPriceString(perKg)).toBe('148.0000');
+    expect(unitPriceString(pricePerMtFromKg(perKg))).toBe('148000.0000');
+    // Odd MT prices keep precision (no float drift).
+    expect(unitPriceString(pricePerKgFromMt('148001.50'))).toBe('148.0015');
   });
 });

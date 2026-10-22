@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   Prisma,
   SettlementStatus,
@@ -8,12 +9,25 @@ import {
 import { PrismaService } from '../../../database/prisma.service.js';
 import { REFERENCE_NUMBER_PREFIX } from '../../../common/enums/domain.enums.js';
 import { FinanceException } from '../common/finance.errors.js';
-import { toDecimal } from '../common/money.util.js';
+import { round2, toDecimal } from '../common/money.util.js';
 import {
   anonymousBuyer,
   BLIND_BUYER_DISPLAY_NAME,
 } from '../../sellers/common/blind-buyer.js';
 import { SettlementCalculationService } from './settlement-calculation.service.js';
+
+/** Add calendar days in Asia/Kolkata wall-clock (settlement due policy). */
+function addSettlementCycleDays(from: Date, days: number): Date {
+  const safeDays = Number.isFinite(days) && days >= 0 ? Math.floor(days) : 7;
+  // Interpret "now" in IST (+05:30), add days, return UTC Date at end of that IST day.
+  const istOffsetMs = 5.5 * 60 * 60 * 1000;
+  const ist = new Date(from.getTime() + istOffsetMs);
+  const y = ist.getUTCFullYear();
+  const m = ist.getUTCMonth();
+  const d = ist.getUTCDate() + safeDays;
+  // 23:59:59.999 IST → UTC
+  return new Date(Date.UTC(y, m, d, 23, 59, 59, 999) - istOffsetMs);
+}
 
 type TxClient = Prisma.TransactionClient;
 
@@ -49,6 +63,7 @@ export class SettlementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly calc: SettlementCalculationService,
+    private readonly configService: ConfigService,
   ) {}
 
   nextReference(now = new Date()): string {
@@ -61,7 +76,8 @@ export class SettlementService {
 
   /**
    * Creates PENDING settlement draft for a fully paid PO. Idempotent.
-   * Deductions default to 0 unless explicitly provided.
+   * Fees/TDS come from configured settlement policy (default 0).
+   * Due date = now + SETTLEMENT_CYCLE_DAYS in Asia/Kolkata.
    */
   async createPendingDraft(
     tx: TxClient,
@@ -84,11 +100,34 @@ export class SettlementService {
     });
     if (existing) return existing;
 
+    // Prefer PO totalAmount when it already includes tax; otherwise subtotal + tax.
+    const grossAmount = purchaseOrder.subtotal;
+    const taxAmount = purchaseOrder.taxAmount;
+    const configuredFee = this.configService.get<string>(
+      'settlements.platformFee',
+    );
+    const configuredTdsRate = this.configService.get<string>(
+      'settlements.tdsRate',
+    );
+    const platformFee = round2(configuredFee ?? 0);
+    const tdsRate = Number(configuredTdsRate ?? 0);
+    const taxableBase = toDecimal(grossAmount).plus(toDecimal(taxAmount));
+    const tdsAmount =
+      Number.isFinite(tdsRate) && tdsRate > 0
+        ? round2(taxableBase.mul(tdsRate))
+        : round2(0);
+
     const amounts = this.calc.calculate({
-      grossAmount: purchaseOrder.subtotal,
-      taxAmount: purchaseOrder.taxAmount,
+      grossAmount,
+      taxAmount,
+      platformFee,
+      tdsAmount,
       deductions: opts?.deductions ?? 0,
     });
+
+    const cycleDays =
+      this.configService.get<number>('settlements.cycleDays') ?? 7;
+    const settlementDate = addSettlementCycleDays(new Date(), cycleDays);
 
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
@@ -105,8 +144,12 @@ export class SettlementService {
             tdsAmount: amounts.tdsAmount,
             deductions: amounts.deductions,
             netAmount: amounts.netAmount,
+            settlementDate,
             metadata: {
               source: 'phase8_payment_cleared',
+              settlementCycleDays: cycleDays,
+              timezone: 'Asia/Kolkata',
+              poTotalAmount: purchaseOrder.totalAmount.toString(),
             } as Prisma.InputJsonValue,
             statusHistory: {
               create: {
@@ -326,7 +369,7 @@ export class SettlementService {
       netAmount: this.money(s.netAmount),
       settlementDate: s.settlementDate?.toISOString() ?? null,
       releasedAt: s.releasedAt?.toISOString() ?? null,
-      expectedSettlementDate: null as string | null,
+      expectedSettlementDate: s.settlementDate?.toISOString() ?? null,
       buyer,
       createdAt: s.createdAt.toISOString(),
       updatedAt: s.updatedAt.toISOString(),

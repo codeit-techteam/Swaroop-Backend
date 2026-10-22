@@ -251,6 +251,25 @@ export class SellerOrdersService {
     const where = this.buildWhere(seller.organizationId, query);
     const display = this.normalizeDisplayStatus(query.status);
 
+    // PROCESSING / CONFIRMED share DB status CONFIRMED — soft-filter BEFORE pagination
+    // so tabs never return empty pages while meta.total stays high.
+    if (display === 'PROCESSING' || display === 'CONFIRMED') {
+      const allRows = await this.prisma.purchaseOrder.findMany({
+        where,
+        orderBy: this.orderBy(query),
+        include: poInclude,
+      });
+      const filtered = allRows
+        .map((po) => toSellerOrderListDto(po))
+        .filter((dto) => dto.status === display);
+      const total = filtered.length;
+      const items = filtered.slice(skip, skip + take);
+      return {
+        items,
+        meta: paginationMeta(page, limit, total),
+      };
+    }
+
     const [rows, total] = await Promise.all([
       this.prisma.purchaseOrder.findMany({
         where,
@@ -262,19 +281,8 @@ export class SellerOrdersService {
       this.prisma.purchaseOrder.count({ where }),
     ]);
 
-    // Soft filter for PROCESSING / CONFIRMED which share CONFIRMED PO status.
-    const items = rows
-      .map((po) => toSellerOrderListDto(po))
-      .filter((dto) => {
-        if (!display) return true;
-        if (display === 'PROCESSING' || display === 'CONFIRMED') {
-          return dto.status === display;
-        }
-        return true;
-      });
-
     return {
-      items,
+      items: rows.map((po) => toSellerOrderListDto(po)),
       meta: paginationMeta(page, limit, total),
     };
   }

@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { listingDisplayName } from '../../customers/common/blind-marketplace.mapper.js';
 import {
   CurrencyCode,
   EntityOwnerType,
@@ -34,6 +36,19 @@ import type {
   UpdateProductStatusDto,
 } from './products.dto.js';
 
+const PARENT_CATEGORY_ID: Record<string, string> = {
+  POLYMERS: 'polymers',
+  COMPOUNDS: 'polymers',
+  ELASTOMERS: 'polymers',
+  RECYCLED: 'polymers',
+  CHEMICALS: 'chemicals',
+  SOLVENTS: 'chemicals',
+  INTERMEDIATES: 'chemicals',
+  MASTERBATCH: 'additives',
+  SPECIALTY: 'additives',
+  BASE_OILS: 'base-oils',
+};
+
 const productInclude = {
   grade: {
     select: {
@@ -41,8 +56,14 @@ const productInclude = {
       code: true,
       name: true,
       displayName: true,
+      fullGradeName: true,
+      gradeNo: true,
+      gradeGroup: true,
+      manufacturer: true,
       status: true,
-      category: { select: { id: true, code: true, name: true } },
+      category: {
+        select: { id: true, code: true, name: true, parentGroup: true },
+      },
     },
   },
   media: { where: { deletedAt: null }, orderBy: { sortOrder: 'asc' as const } },
@@ -254,6 +275,19 @@ export class ProductsService {
     const ctx = await this.ctx(userId);
     const grade = await this.assertActiveGrade(dto.gradeId);
 
+    if (!Number.isFinite(dto.moq) || dto.moq <= 0) {
+      throw new BadRequestException('MOQ must be greater than zero');
+    }
+    if (!Number.isFinite(dto.sellingPrice) || dto.sellingPrice <= 0) {
+      throw new BadRequestException('Selling price must be a positive number');
+    }
+    if (!Number.isFinite(dto.availableStock) || dto.availableStock < 0) {
+      throw new BadRequestException('Available stock must be a non-negative number');
+    }
+    if (dto.moq > dto.availableStock) {
+      throw new BadRequestException('MOQ cannot exceed available stock');
+    }
+
     const warehouse = await this.resolveListingWarehouse(ctx, dto);
     const publish = dto.publishToMarketplace !== false;
     if (publish && ctx.status !== SellerStatus.APPROVED) {
@@ -264,10 +298,70 @@ export class ProductsService {
 
     if (publish) this.assertMarketplaceGrade(grade);
 
+    // Prevent duplicate ACTIVE marketplace listings for the same grade + warehouse.
+    if (publish) {
+      const duplicate = await this.prisma.product.findFirst({
+        where: {
+          organizationId: ctx.organizationId,
+          gradeId: dto.gradeId,
+          deletedAt: null,
+          status: ProductStatus.ACTIVE,
+          inventory: {
+            some: {
+              warehouseId: warehouse.id,
+              deletedAt: null,
+            },
+          },
+          offers: {
+            some: {
+              deletedAt: null,
+              status: OfferStatus.ACTIVE,
+              OR: [{ visibility: 'MARKETPLACE' }, { visibility: null }],
+            },
+          },
+        },
+        select: { id: true, code: true },
+      });
+      if (duplicate) {
+        throw new ConflictException({
+          code: 'DUPLICATE_LISTING',
+          message:
+            'An active marketplace listing already exists for this grade at this warehouse. Update the existing listing instead of creating a duplicate.',
+          existingProductId: duplicate.id,
+          existingProductCode: duplicate.code,
+        });
+      }
+    }
+
+    const gradeWithCategory = await this.prisma.grade.findFirst({
+      where: { id: grade.id },
+      include: {
+        category: {
+          select: { code: true, name: true, parentGroup: true },
+        },
+      },
+    });
+    const parentCategoryId =
+      PARENT_CATEGORY_ID[gradeWithCategory?.category?.parentGroup ?? ''] ??
+      undefined;
+    const resolvedName = listingDisplayName(dto.name.trim(), {
+      fullGradeName: grade.fullGradeName,
+      displayName: grade.displayName,
+      gradeGroup: grade.gradeGroup,
+      gradeNo: grade.gradeNo,
+      name: grade.name,
+    });
+    const resolvedManufacturer =
+      dto.manufacturer?.trim() ||
+      dto.brand?.trim() ||
+      grade.manufacturer?.trim() ||
+      undefined;
+
     const technicalSpecs: Record<string, unknown> = {
       ...(dto.technicalSpecs ?? {}),
       ...(dto.application ? { application: dto.application } : {}),
       ...(dto.polymerType ? { polymerType: dto.polymerType } : {}),
+      ...(parentCategoryId ? { parentCategoryId } : {}),
       ...(dto.warehouseName || warehouse.name
         ? { warehouseLabel: dto.warehouseName ?? warehouse.name }
         : {}),
@@ -297,9 +391,9 @@ export class ProductsService {
             sellerProfileId: ctx.sellerProfileId,
             gradeId: dto.gradeId,
             code: productCode,
-            name: dto.name.trim(),
-            brand: dto.brand ?? dto.manufacturer,
-            manufacturer: dto.manufacturer,
+            name: resolvedName,
+            brand: dto.brand ?? resolvedManufacturer,
+            manufacturer: resolvedManufacturer,
             description: dto.description ?? dto.notes,
             technicalSpecs: technicalSpecs as Prisma.InputJsonValue,
             mfi: dto.mfi,

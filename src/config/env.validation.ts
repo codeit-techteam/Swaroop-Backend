@@ -62,12 +62,20 @@ export const envSchema = z
     OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
     AUTH_DEV_EXPOSE_OTP: booleanFromString.optional().default(false),
+    /** Opt-in fixed demo OTP. Ignored / rejected in production. */
+    AUTH_DEV_FIXED_OTP: booleanFromString.optional().default(false),
     PASSWORD_RESET_EXPIRES_IN_SECONDS: z.coerce
       .number()
       .int()
       .positive()
       .default(1800),
     BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(10).max(15).default(12),
+    /** Days after payment clearance before a settlement is due (Asia/Kolkata). */
+    SETTLEMENT_CYCLE_DAYS: z.coerce.number().int().min(0).max(90).default(7),
+    /** Optional platform fee amount applied to seller settlements (INR). Default 0. */
+    SETTLEMENT_PLATFORM_FEE: z.string().optional().default('0'),
+    /** Optional TDS rate (0–1) applied to (gross+tax) for settlements. Default 0. */
+    SETTLEMENT_TDS_RATE: z.string().optional().default('0'),
 
     SKIP_DB_CONNECT_ON_BOOT: booleanFromString.optional().default(false),
 
@@ -129,6 +137,17 @@ export const envSchema = z
       .default(10),
     KYC_UPLOADS_PER_HOUR: z.coerce.number().int().positive().default(30),
     KYC_ENFORCE_FOR_TRADING: booleanFromString.optional().default(false),
+
+    /** Public marketing site used to derive /terms, /privacy, /contact when overrides are empty. */
+    PUBLIC_WEBSITE_URL: z.url().optional().or(z.literal('')).default(''),
+    PUBLIC_TERMS_URL: z.url().optional().or(z.literal('')).default(''),
+    PUBLIC_PRIVACY_URL: z.url().optional().or(z.literal('')).default(''),
+    PUBLIC_SUPPORT_URL: z.url().optional().or(z.literal('')).default(''),
+    /** Optional approved support mailbox. Empty = not configured (do not invent). */
+    PUBLIC_SUPPORT_EMAIL: z
+      .union([z.literal(''), z.string().email()])
+      .optional()
+      .default(''),
   })
   .superRefine((data, ctx) => {
     const accessSecret = data.JWT_ACCESS_SECRET || data.JWT_SECRET;
@@ -252,6 +271,15 @@ export const envSchema = z
           code: 'custom',
           path: ['AUTH_DEV_EXPOSE_OTP'],
           message: 'AUTH_DEV_EXPOSE_OTP must be false in production',
+        });
+      }
+
+      if (data.AUTH_DEV_FIXED_OTP) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['AUTH_DEV_FIXED_OTP'],
+          message:
+            'AUTH_DEV_FIXED_OTP must be false in production — fixed OTP bypass is forbidden',
         });
       }
     }

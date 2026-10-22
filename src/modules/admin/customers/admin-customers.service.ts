@@ -14,6 +14,10 @@ import {
   paginationMeta,
   skipTake,
 } from '../../master-data/common/pagination.js';
+import {
+  isCustomerKycVerified,
+  readCustomerKycState,
+} from '../../customers/kyc/customer-kyc.slots.js';
 import { AdminAuditService } from '../common/admin-audit.service.js';
 import type {
   AdminCustomerActionDto,
@@ -44,6 +48,7 @@ const customerInclude = {
       pan: true,
     },
   },
+  // CustomerProfile.metadata.kyc is the overall KYC workflow SoT.
   creditProfile: true,
   _count: {
     select: {
@@ -52,6 +57,25 @@ const customerInclude = {
     },
   },
 } satisfies Prisma.CustomerProfileInclude;
+
+type CustomerListRow = Prisma.CustomerProfileGetPayload<{
+  include: typeof customerInclude;
+}>;
+
+/** Overall KYC from metadata.kyc — never treat PAN/GST alone as full approval. */
+function mapCustomerListItem(customer: CustomerListRow) {
+  const kyc = readCustomerKycState(customer.metadata);
+  return {
+    ...customer,
+    kycStatus: kyc.status,
+    kycVerified: isCustomerKycVerified(
+      kyc.status,
+      customer.organization.verificationStatus,
+    ),
+    kycSubmittedAt: kyc.submittedAt,
+    kycReviewedAt: kyc.reviewedAt,
+  };
+}
 
 @Injectable()
 export class AdminCustomersService {
@@ -79,7 +103,7 @@ export class AdminCustomersService {
       ];
     }
 
-    const [items, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.customerProfile.findMany({
         where,
         include: customerInclude,
@@ -90,7 +114,10 @@ export class AdminCustomersService {
       this.prisma.customerProfile.count({ where }),
     ]);
 
-    return { items, meta: paginationMeta(page, limit, total) };
+    return {
+      items: rows.map(mapCustomerListItem),
+      meta: paginationMeta(page, limit, total),
+    };
   }
 
   async findOne(id: string) {

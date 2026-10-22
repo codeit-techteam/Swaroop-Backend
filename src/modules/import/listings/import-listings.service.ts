@@ -717,11 +717,27 @@ export class ImportListingsService {
     }
     owner.canTrade();
     const resolved = await this.check(listing, this.docIds(listing), 'publish');
+    if (!resolved.currencyCode) {
+      throw new ImportException(
+        'INVALID_CURRENCY',
+        'A published import offer must have an import-enabled currency (e.g. USD). Prices are never assumed to be INR.',
+      );
+    }
     const now = new Date();
     const validity =
       side === ImportSide.BUY
         ? await this.buyRequestValidity(now)
-        : { validFrom: listing.validFrom ?? now };
+        : {
+            validFrom: listing.validFrom ?? now,
+            // Persist seller-chosen validity explicitly so market browse can see the offer.
+            validUntil: listing.validUntil,
+          };
+    if (side === ImportSide.SELL && !listing.validUntil) {
+      throw new ImportException(
+        'IMPORT_VALIDATION_FAILED',
+        'Offer validity (validUntil) is required before publishing a sell offer.',
+      );
+    }
 
     await this.prisma.$transaction(async (tx) => {
       const res = await tx.importListing.updateMany({
@@ -924,6 +940,9 @@ export class ImportListingsService {
       if (query.status?.length) and.push({ status: { in: query.status } });
     } else {
       const viewerOrg = this.marketViewerOrg(actor, side);
+      // Draft / paused / rejected / expired never appear — only OPEN_LISTING_STATUSES.
+      // Validity aligns with matching: missing validUntil is treated as open until expired
+      // by the expiry worker; future-dated validFrom stays hidden.
       and.push(
         { ownerOrgId: { not: viewerOrg } },
         {
@@ -933,8 +952,18 @@ export class ImportListingsService {
               : OPEN_LISTING_STATUSES,
           },
         },
-        { validUntil: { gt: now } },
+        {
+          OR: [{ validUntil: null }, { validUntil: { gt: now } }],
+        },
         { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
+        // Published import offers must carry an explicit currency (USD, EUR, …)
+        // either snapshotted on the row or via currencyId. Never invent INR.
+        {
+          OR: [
+            { currencyCode: { not: null } },
+            { currencyId: { not: null } },
+          ],
+        },
       );
     }
 
@@ -1090,12 +1119,20 @@ export class ImportListingsService {
       orderBy: { createdAt: 'desc' },
       select: { id: true, referenceNumber: true, status: true },
     });
+    const now = new Date();
+    const withinValidity =
+      (!listing.validFrom || listing.validFrom <= now) &&
+      (!listing.validUntil || listing.validUntil > now);
+    const hasCurrency = Boolean(
+      listing.currencyCode ?? listing.currency?.code,
+    );
     const visible =
       OPEN_LISTING_STATUSES.includes(listing.status) &&
-      (!listing.validFrom || listing.validFrom <= new Date());
+      withinValidity &&
+      hasCurrency;
     if (!visible && !mine) throw new ImportException('IMPORT_NOT_FOUND');
     return {
-      ...mapListing(listing, 'market'),
+      ...mapListing(listing, 'market', { now }),
       viewerRole: 'COUNTERPARTY' as const,
       myNegotiation: mine,
     };

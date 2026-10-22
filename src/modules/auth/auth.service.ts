@@ -621,11 +621,15 @@ export class AuthService {
     };
   }
 
+  /**
+   * Fixed demo OTP is development/test only. Production never accepts it,
+   * even if AUTH_DEV_FIXED_OTP was set in the environment by mistake.
+   */
   private isFixedDevOtpEnabled(): boolean {
-    if (this.configService.get<boolean>('security.authDevFixedOtp') === true) {
-      return true;
+    if (this.configService.get<string>('app.env') === 'production') {
+      return false;
     }
-    return this.configService.get<string>('app.env') !== 'production';
+    return this.configService.get<boolean>('security.authDevFixedOtp') === true;
   }
 
   private async issueSessionForIdentifier(

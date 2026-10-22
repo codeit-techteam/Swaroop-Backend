@@ -25,6 +25,7 @@ import { BulkLogisticsQuotesController } from './bulk-logistics-quotes/bulk-logi
 import { BulkLogisticsQuotesService } from './bulk-logistics-quotes/bulk-logistics-quotes.service.js';
 import { MarketplaceController } from './marketplace/marketplace.controller.js';
 import { MarketplaceService } from './marketplace/marketplace.service.js';
+import { PublicMarketplaceController } from './public/public-marketplace.controller.js';
 import { OffersController } from './offers/offers.controller.js';
 import { OffersService } from './offers/offers.service.js';
 import { ProductsController } from './products/products.controller.js';
@@ -38,6 +39,8 @@ import { CustomerAddressesController } from './addresses/addresses.controller.js
 import { CustomerAddressesService } from './addresses/addresses.service.js';
 import { CustomerOrdersController } from './orders/customer-orders.controller.js';
 import { CustomerOrdersService } from './orders/customer-orders.service.js';
+import { PriceAlertsController } from './price-alerts/price-alerts.controller.js';
+import { PriceAlertsService } from './price-alerts/price-alerts.service.js';
 
 @Module({
   imports: [
@@ -50,6 +53,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     KycVerificationModule,
   ],
   controllers: [
+    PublicMarketplaceController,
     MarketplaceController,
     ProductsController,
     OffersController,
@@ -63,6 +67,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CustomerKycController,
     CustomerCreditController,
     BulkLogisticsQuotesController,
+    PriceAlertsController,
   ],
   providers: [
     CustomerContextService,
@@ -84,6 +89,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CustomerCreditService,
     ClientSourceResolver,
     BulkLogisticsQuotesService,
+    PriceAlertsService,
   ],
   exports: [
     CustomerContextService,
@@ -102,6 +108,7 @@ import { CustomerOrdersService } from './orders/customer-orders.service.js';
     CustomerCreditService,
     BulkLogisticsQuotesService,
     CustomerKycApprovedGuard,
+    PriceAlertsService,
   ],
 })
 export class CustomersModule {}

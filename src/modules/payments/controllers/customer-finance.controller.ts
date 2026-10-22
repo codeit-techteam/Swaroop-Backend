@@ -34,6 +34,7 @@ import { FinanceSummaryService } from '../services/finance-summary.service.js';
 import { PaymentService } from '../services/payment.service.js';
 import { ProformaInvoiceService } from '../services/proforma-invoice.service.js';
 import { FinanceActorService } from '../services/finance-actor.service.js';
+import { StorageService } from '../../../storage/storage.service.js';
 
 @ApiTags('Customer Finance')
 @Controller({ path: 'customer', version: '1' })
@@ -48,7 +49,34 @@ export class CustomerFinanceController {
     private readonly proformas: ProformaInvoiceService,
     private readonly payments: PaymentService,
     private readonly dispatchGate: DispatchGateService,
+    private readonly storage: StorageService,
   ) {}
+
+  private async signedDocumentDownload(documentId: string) {
+    const doc = await this.prisma.document.findFirst({
+      where: { id: documentId, deletedAt: null },
+      select: {
+        id: true,
+        storageKey: true,
+        originalFileName: true,
+        fileName: true,
+        mimeType: true,
+      },
+    });
+    if (!doc?.storageKey) return null;
+    const url = await this.storage.getSignedUrl({
+      key: doc.storageKey,
+      operation: 'get',
+      expiresInSeconds: 900,
+    });
+    return {
+      documentId: doc.id,
+      url,
+      expiresInSeconds: 900,
+      fileName: doc.originalFileName ?? doc.fileName,
+      mimeType: doc.mimeType,
+    };
+  }
 
   @Get('finance/summary')
   @ApiOperation({ summary: 'Customer finance summary' })
@@ -159,6 +187,185 @@ export class CustomerFinanceController {
     return successResponse(
       this.proformas.toCustomerView(pi),
       'Proforma invoice retrieved',
+    );
+  }
+
+  @Get('proforma-invoices/:id/download')
+  @ApiOperation({
+    summary:
+      'Download proforma PDF when a vaulted document exists. Returns a clear unavailable state otherwise — never fabricates PDF content.',
+  })
+  async downloadProforma(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const customer = await this.actors.requireCustomerOrg(user.id);
+    const pi = await this.prisma.proformaInvoice.findFirst({
+      where: {
+        id,
+        customerOrgId: customer.organizationId,
+        deletedAt: null,
+      },
+      select: { id: true, piNumber: true, metadata: true, status: true },
+    });
+    if (!pi) throw new FinanceException('PROFORMA_NOT_FOUND');
+    const meta = (pi.metadata ?? {}) as Record<string, unknown>;
+    const documentId =
+      typeof meta.documentId === 'string' ? meta.documentId : null;
+    if (!documentId) {
+      return successResponse(
+        {
+          available: false,
+          piNumber: pi.piNumber,
+          status: pi.status,
+          message:
+            'Proforma invoice PDF has not been generated yet. The commercial record is available; a signed PDF will appear here once issued by finance.',
+          url: null,
+        },
+        'Proforma PDF unavailable',
+      );
+    }
+    const signed = await this.signedDocumentDownload(documentId);
+    if (!signed) {
+      return successResponse(
+        {
+          available: false,
+          piNumber: pi.piNumber,
+          status: pi.status,
+          documentId,
+          message:
+            'Proforma PDF reference exists but the file is missing from document storage.',
+          url: null,
+        },
+        'Proforma PDF unavailable',
+      );
+    }
+    return successResponse(
+      {
+        available: true,
+        piNumber: pi.piNumber,
+        status: pi.status,
+        ...signed,
+      },
+      'Proforma PDF download URL',
+    );
+  }
+
+  @Get('finance-invoices')
+  @ApiOperation({ summary: 'List customer tax (finance) invoices' })
+  async listFinanceInvoices(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: FinanceListQueryDto,
+  ) {
+    const customer = await this.actors.requireCustomerOrg(user.id);
+    const { skip, take, page, limit } = skipTake(query.page, query.limit);
+    const where = {
+      customerOrgId: customer.organizationId,
+      deletedAt: null,
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.financeInvoice.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+        select: {
+          id: true,
+          invoiceNumber: true,
+          status: true,
+          issueDate: true,
+          dueDate: true,
+          currency: true,
+          subtotal: true,
+          taxAmount: true,
+          totalAmount: true,
+          purchaseOrderId: true,
+          proformaInvoiceId: true,
+          createdAt: true,
+          metadata: true,
+        },
+      }),
+      this.prisma.financeInvoice.count({ where }),
+    ]);
+    return successResponse(
+      rows.map((inv) => ({
+        ...inv,
+        subtotal: toDecimal(inv.subtotal).toFixed(2),
+        taxAmount: toDecimal(inv.taxAmount).toFixed(2),
+        totalAmount: toDecimal(inv.totalAmount).toFixed(2),
+        kind: 'TAX_INVOICE' as const,
+      })),
+      'Finance invoices retrieved',
+      paginationMeta(page, limit, total),
+    );
+  }
+
+  @Get('finance-invoices/:id/download')
+  @ApiOperation({
+    summary:
+      'Download tax invoice PDF when a vaulted document exists. Never fabricates PDF content.',
+  })
+  async downloadFinanceInvoice(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    const customer = await this.actors.requireCustomerOrg(user.id);
+    const inv = await this.prisma.financeInvoice.findFirst({
+      where: {
+        id,
+        customerOrgId: customer.organizationId,
+        deletedAt: null,
+      },
+      select: {
+        id: true,
+        invoiceNumber: true,
+        status: true,
+        metadata: true,
+      },
+    });
+    if (!inv) throw new FinanceException('INVOICE_NOT_FOUND');
+    const meta = (inv.metadata ?? {}) as Record<string, unknown>;
+    const documentId =
+      typeof meta.documentId === 'string' ? meta.documentId : null;
+    if (!documentId) {
+      return successResponse(
+        {
+          available: false,
+          invoiceNumber: inv.invoiceNumber,
+          status: inv.status,
+          kind: 'TAX_INVOICE',
+          message:
+            'Tax invoice PDF has not been generated yet. The commercial record is available; a signed PDF will appear here once issued by finance.',
+          url: null,
+        },
+        'Tax invoice PDF unavailable',
+      );
+    }
+    const signed = await this.signedDocumentDownload(documentId);
+    if (!signed) {
+      return successResponse(
+        {
+          available: false,
+          invoiceNumber: inv.invoiceNumber,
+          status: inv.status,
+          kind: 'TAX_INVOICE',
+          documentId,
+          message:
+            'Tax invoice PDF reference exists but the file is missing from document storage.',
+          url: null,
+        },
+        'Tax invoice PDF unavailable',
+      );
+    }
+    return successResponse(
+      {
+        available: true,
+        invoiceNumber: inv.invoiceNumber,
+        status: inv.status,
+        kind: 'TAX_INVOICE',
+        ...signed,
+      },
+      'Tax invoice PDF download URL',
     );
   }
 
