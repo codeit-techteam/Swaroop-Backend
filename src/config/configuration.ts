@@ -41,8 +41,15 @@ export type AppConfig = {
     otpMaxAttempts: number;
     otpResendCooldownSeconds: number;
     authDevExposeOtp: boolean;
-    /** When true in non-production, demo phone +918240890242 uses OTP 123456. */
+    /**
+     * Demo phone +918240890242 accepts OTP 123456.
+     * On during the development phase unless AUTH_STRICT_OTP=true.
+     */
     authDevFixedOtp: boolean;
+    /**
+     * Hard lock for real SMS production. When true, fixed demo OTP is never accepted.
+     */
+    authStrictOtp: boolean;
     passwordResetExpiresInSeconds: number;
     bcryptSaltRounds: number;
   };
@@ -269,11 +276,10 @@ export default (): AppConfig => {
         process.env.OTP_RESEND_COOLDOWN_SECONDS ?? 60,
       ),
       authDevExposeOtp: process.env.AUTH_DEV_EXPOSE_OTP === 'true',
-      // Fixed demo OTP (123456 for +918240890242). Opt-in only, NEVER in production.
-      // Client-supplied AUTH_DEV_FIXED_OTP is ignored when NODE_ENV=production.
-      authDevFixedOtp:
-        process.env.NODE_ENV !== 'production' &&
-        process.env.AUTH_DEV_FIXED_OTP === 'true',
+      // Fixed demo OTP (123456 for +918240890242).
+      // Development phase: ON until AUTH_STRICT_OTP=true (real SMS production lock).
+      authStrictOtp: process.env.AUTH_STRICT_OTP === 'true',
+      authDevFixedOtp: process.env.AUTH_STRICT_OTP !== 'true',
       passwordResetExpiresInSeconds: Number(
         process.env.PASSWORD_RESET_EXPIRES_IN_SECONDS ?? 1800,
       ),
@@ -343,9 +349,10 @@ export default (): AppConfig => {
       const websiteUrl =
         trim(process.env.PUBLIC_WEBSITE_URL) ||
         // First concrete origin from WEBSITE_ORIGINS (skip wildcard preview hosts).
+        // Default to the live petrotrade.in site — swaroop-website.vercel.app returns 404.
         (
           process.env.WEBSITE_ORIGINS ??
-          'https://swaroop-website.vercel.app'
+          'https://petrotrade.in'
         )
           .split(',')
           .map((o) => o.trim())

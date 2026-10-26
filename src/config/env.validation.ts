@@ -62,8 +62,15 @@ export const envSchema = z
     OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
     AUTH_DEV_EXPOSE_OTP: booleanFromString.optional().default(false),
-    /** Opt-in fixed demo OTP. Ignored / rejected in production. */
-    AUTH_DEV_FIXED_OTP: booleanFromString.optional().default(false),
+    /**
+     * Legacy flag (kept for existing env files). Demo OTP is controlled by AUTH_STRICT_OTP:
+     * fixed 123456 stays on until AUTH_STRICT_OTP=true.
+     */
+    AUTH_DEV_FIXED_OTP: booleanFromString.optional().default(true),
+    /**
+     * When true, fixed demo OTP is forbidden (real SMS production lock).
+     */
+    AUTH_STRICT_OTP: booleanFromString.optional().default(false),
     PASSWORD_RESET_EXPIRES_IN_SECONDS: z.coerce
       .number()
       .int()
@@ -271,15 +278,6 @@ export const envSchema = z
           code: 'custom',
           path: ['AUTH_DEV_EXPOSE_OTP'],
           message: 'AUTH_DEV_EXPOSE_OTP must be false in production',
-        });
-      }
-
-      if (data.AUTH_DEV_FIXED_OTP) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['AUTH_DEV_FIXED_OTP'],
-          message:
-            'AUTH_DEV_FIXED_OTP must be false in production — fixed OTP bypass is forbidden',
         });
       }
     }

@@ -5,6 +5,8 @@ import {
 } from '@nestjs/common';
 import {
   EntityOwnerType,
+  KycVerificationStatus,
+  KycVerificationType,
   OrganizationStatus,
   Prisma,
   SellerOnboardingStatus,
@@ -24,6 +26,14 @@ import {
   resolvedChangeRequest,
   type KycChangeRequest,
 } from '../../documents/common/kyc-change-request.js';
+import {
+  hashIdentifier,
+  isValidGstin,
+  isValidPan,
+  maskGstin,
+  maskPan,
+  normalizeIdentifier,
+} from '../../kyc-verification/kyc-identifiers.js';
 import {
   SELLER_ONBOARDING_DOCUMENT_SLOTS,
   readJsonObject,
@@ -82,6 +92,8 @@ const sellerInclude = {
       currentStep: true,
       submittedAt: true,
       reviewedAt: true,
+      gstData: true,
+      panData: true,
     },
   },
   verification: true,
@@ -523,9 +535,10 @@ export class AdminSellersService {
     if (!seller.onboarding) {
       throw new BadRequestException('Seller has not started onboarding yet');
     }
-    if (seller.status === SellerStatus.APPROVED) {
+    const resetIdentity = Boolean(dto.resetIdentity);
+    if (seller.status === SellerStatus.APPROVED && !resetIdentity) {
       throw new BadRequestException(
-        'Seller is already approved. Suspend the seller to force re-verification.',
+        'Seller is already approved. Enable GST/PAN re-verification to unlock identity, or suspend the seller.',
       );
     }
     const reason = dto.reason.trim();
@@ -559,6 +572,21 @@ export class AdminSellersService {
       resolvedAt: null,
     };
 
+    const gstData = readJsonObject(seller.onboarding.gstData);
+    const panData = readJsonObject(seller.onboarding.panData);
+    const clearedGstData = resetIdentity
+      ? (() => {
+          const { status: _status, ...rest } = gstData;
+          return rest as Prisma.InputJsonValue;
+        })()
+      : undefined;
+    const clearedPanData = resetIdentity
+      ? (() => {
+          const { status: _status, ...rest } = panData;
+          return rest as Prisma.InputJsonValue;
+        })()
+      : undefined;
+
     await this.prisma.$transaction(async (tx) => {
       for (const doc of selected) {
         if (doc.status === DocumentStatus.REJECTED) continue;
@@ -580,9 +608,11 @@ export class AdminSellersService {
         where: { sellerProfileId: id },
         data: {
           status: SellerOnboardingStatus.IN_PROGRESS,
-          currentStep: 'documents',
+          currentStep: resetIdentity ? 'gst-pan' : 'documents',
           reviewedAt: now,
           reviewNotes: reason,
+          ...(clearedGstData ? { gstData: clearedGstData } : {}),
+          ...(clearedPanData ? { panData: clearedPanData } : {}),
         },
       });
 
@@ -601,18 +631,26 @@ export class AdminSellersService {
       const metadata = {
         ...readJsonObject(verification?.metadata),
         changeRequest,
+        ...(resetIdentity
+          ? { identityResetAt: now.toISOString(), identityResetById: actorUserId }
+          : {}),
       } as Prisma.InputJsonValue;
       await tx.sellerVerification.upsert({
         where: { sellerProfileId: id },
         create: {
           sellerProfileId: id,
           overallStatus: VerificationStatus.PENDING,
+          gstVerified: false,
+          panVerified: false,
           reviewedAt: now,
           notes: reason,
           metadata,
         },
         update: {
           overallStatus: VerificationStatus.PENDING,
+          ...(resetIdentity
+            ? { gstVerified: false, panVerified: false }
+            : {}),
           reviewedAt: now,
           notes: reason,
           metadata,
@@ -623,10 +661,58 @@ export class AdminSellersService {
         where: { id: seller.organizationId },
         data: { verificationStatus: VerificationStatus.PENDING },
       });
+
+      // Supersede accepted Surepass rows so submit blockers require a fresh verify.
+      if (resetIdentity) {
+        const gstin = typeof gstData.gstin === 'string' ? gstData.gstin : '';
+        const pan = typeof panData.pan === 'string' ? panData.pan : '';
+        if (gstin && isValidGstin(normalizeIdentifier(gstin))) {
+          const normalized = normalizeIdentifier(gstin);
+          await tx.kycVerification.create({
+            data: {
+              organizationId: seller.organizationId,
+              ownerType: EntityOwnerType.SELLER,
+              ownerId: id,
+              type: KycVerificationType.GST,
+              status: KycVerificationStatus.FAILED,
+              identifierHash: hashIdentifier('GST', normalized),
+              identifierMasked: maskGstin(normalized),
+              provider: 'admin',
+              failureCode: 'ADMIN_REVERIFY',
+              failureReason:
+                'Admin requested GST re-verification via Surepass.',
+              source: 'ADMIN',
+              requestedById: actorUserId,
+            },
+          });
+        }
+        if (pan && isValidPan(normalizeIdentifier(pan))) {
+          const normalized = normalizeIdentifier(pan);
+          await tx.kycVerification.create({
+            data: {
+              organizationId: seller.organizationId,
+              ownerType: EntityOwnerType.SELLER,
+              ownerId: id,
+              type: KycVerificationType.PAN,
+              status: KycVerificationStatus.FAILED,
+              identifierHash: hashIdentifier('PAN', normalized),
+              identifierMasked: maskPan(normalized),
+              provider: 'admin',
+              failureCode: 'ADMIN_REVERIFY',
+              failureReason:
+                'Admin requested PAN re-verification via Surepass.',
+              source: 'ADMIN',
+              requestedById: actorUserId,
+            },
+          });
+        }
+      }
     });
 
     await this.audit.log({
-      action: 'SELLER_CHANGES_REQUESTED',
+      action: resetIdentity
+        ? 'SELLER_IDENTITY_REVERIFICATION_REQUESTED'
+        : 'SELLER_CHANGES_REQUESTED',
       actorUserId,
       organizationId: seller.organizationId,
       entityType: EntityOwnerType.SELLER,
@@ -640,25 +726,32 @@ export class AdminSellersService {
         onboardingStatus: SellerOnboardingStatus.IN_PROGRESS,
         reason,
         documentIds,
+        resetIdentity,
       },
     });
 
     const docNames = changeRequest.slots
       .map((slot) => slotName(slot))
       .filter(Boolean);
+    const identityNote = resetIdentity
+      ? ' Re-verify GSTIN and PAN via Surepass before resubmitting.'
+      : '';
     await this.notifications.create({
       userId: seller.userId,
       organizationId: seller.organizationId,
-      title: 'Action required: update your seller verification',
+      title: resetIdentity
+        ? 'Action required: re-verify GST and PAN'
+        : 'Action required: update your seller verification',
       body: docNames.length
-        ? `Please re-upload ${docNames.join(', ')}. ${reason}`
-        : reason,
+        ? `Please re-upload ${docNames.join(', ')}. ${reason}${identityNote}`
+        : `${reason}${identityNote}`,
       entityType: EntityOwnerType.SELLER,
       entityId: id,
       metadata: {
         type: 'KYC_CHANGES_REQUESTED',
         slots: changeRequest.slots,
         documentIds,
+        resetIdentity,
       },
     });
 

@@ -622,11 +622,11 @@ export class AuthService {
   }
 
   /**
-   * Fixed demo OTP is development/test only. Production never accepts it,
-   * even if AUTH_DEV_FIXED_OTP was set in the environment by mistake.
+   * Fixed demo OTP (123456 for demo phone) during the development phase.
+   * Disabled when AUTH_STRICT_OTP=true (real SMS production lock).
    */
   private isFixedDevOtpEnabled(): boolean {
-    if (this.configService.get<string>('app.env') === 'production') {
+    if (this.configService.get<boolean>('security.authStrictOtp') === true) {
       return false;
     }
     return this.configService.get<boolean>('security.authDevFixedOtp') === true;

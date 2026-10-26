@@ -44,20 +44,40 @@ const SORTABLE = [
 /** Source.One columns are owned by the CSV import, not by manual edits. */
 const SOURCE_MANAGED_FIELDS = ['code', 'categoryId', 'subcategoryId'] as const;
 
+/** Expand common chemical aliases so TIO2 / TiO2 / titanium dioxide match (N-03). */
+export function expandGradeSearchTerms(q: string): string[] {
+  const base = q.trim();
+  if (!base) return [];
+  const lower = base.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  const terms = new Set<string>([base]);
+  if (/^tio[_-]?2$|^tio₂$|titanium\s*dioxide/i.test(lower.replace(/\s+/g, ''))) {
+    terms.add('TIO2');
+    terms.add('TiO2');
+    terms.add('titanium dioxide');
+  }
+  return [...terms];
+}
+
 /** Grade No., manufacturer, category, grade group, full name, code and labels. */
 export function gradeSearch(q: string): Prisma.GradeWhereInput[] {
-  const contains = { contains: q, mode: 'insensitive' as const };
-  return [
-    { gradeNo: contains },
-    { manufacturer: contains },
-    { gradeGroup: contains },
-    { fullGradeName: contains },
-    { code: contains },
-    { name: contains },
-    { displayName: contains },
-    { category: { code: contains } },
-    { category: { name: contains } },
-  ];
+  const clauses: Prisma.GradeWhereInput[] = [];
+  for (const term of expandGradeSearchTerms(q)) {
+    const contains = { contains: term, mode: 'insensitive' as const };
+    clauses.push(
+      { gradeNo: contains },
+      { manufacturer: contains },
+      { gradeGroup: contains },
+      { fullGradeName: contains },
+      { code: contains },
+      { name: contains },
+      { displayName: contains },
+      { description: contains },
+      { category: { code: contains } },
+      { category: { name: contains } },
+      { category: { displayName: contains } },
+    );
+  }
+  return clauses;
 }
 
 type Scope = 'admin' | 'customer' | 'seller';

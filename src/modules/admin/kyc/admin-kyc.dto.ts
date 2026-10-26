@@ -130,4 +130,12 @@ export class AdminKycRequestChangesDto {
   @ArrayUnique()
   @IsUUID('all', { each: true })
   documentIds?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Clear GST/PAN verification flags and reopen identity verify (Surepass). Required to request changes on an already-approved seller.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  resetIdentity?: boolean;
 }
