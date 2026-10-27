@@ -176,18 +176,19 @@ const clientOrigins = (
 
 /**
  * Whether the fixed demo OTP (123456 for the demo phone) is accepted.
+ * Development phase: ON until real SMS is locked with AUTH_STRICT_OTP=true.
  * - AUTH_STRICT_OTP=true always wins (never accepted).
- * - production: OFF unless AUTH_DEV_FIXED_OTP=true is set explicitly.
- * - other envs: ON unless AUTH_DEV_FIXED_OTP=false.
+ * - AUTH_DEV_FIXED_OTP=false is an explicit opt-out in any environment.
+ * - AUTH_DEV_FIXED_OTP=true is an explicit opt-in in any environment.
+ * - Unset: ON (development phase default, including NODE_ENV=production hosts
+ *   that have not yet flipped AUTH_STRICT_OTP for live SMS).
  */
 export const resolveFixedDevOtp = (
   env: Record<string, string | undefined>,
 ): boolean => {
   if (env.AUTH_STRICT_OTP === 'true') return false;
   const optIn = (env.AUTH_DEV_FIXED_OTP ?? '').trim().toLowerCase();
-  if (env.NODE_ENV === 'production') {
-    return optIn === 'true';
-  }
+  // Unset / true → ON for the development phase; only an explicit false opts out.
   return optIn !== 'false';
 };
 
@@ -295,8 +296,7 @@ export default (): AppConfig => {
       authDevExposeOtp: process.env.AUTH_DEV_EXPOSE_OTP === 'true',
       // Fixed demo OTP (123456 for +918240890242).
       // Development phase: ON until AUTH_STRICT_OTP=true (real SMS production lock).
-      // Production is fail-closed (L-09 / N-01): the fixed OTP is only accepted when
-      // the operator explicitly opts in with AUTH_DEV_FIXED_OTP=true.
+      // Opt out with AUTH_DEV_FIXED_OTP=false; opt in explicitly with =true.
       authStrictOtp: process.env.AUTH_STRICT_OTP === 'true',
       authDevFixedOtp: resolveFixedDevOtp(process.env),
       passwordResetExpiresInSeconds: Number(

@@ -103,20 +103,21 @@ export class DemoBootstrapService implements OnModuleInit {
   }
 
   /**
-   * Release blocker L-09 / N-01 / A-05: the demo accounts shipped with the
-   * well-known password `Test@12345`. When demo mode is off, rotate any demo
-   * account that still has that password to a random one so neither the fixed
-   * OTP nor the known password can be used against this environment.
+   * Demo accounts ship with the well-known password `Test@12345`.
+   * - Demo mode ON (development phase): restore that password so Metro / web
+   *   password fallbacks keep working alongside OTP 123456.
+   * - Demo mode OFF: rotate any account still on the known password so neither
+   *   the fixed OTP nor Test@12345 can be used against this environment.
    * Idempotent; never deletes data.
    */
   async lockDemoCredentialsIfNeeded(): Promise<number> {
     if (this.isDemoModeEnabled()) {
       if (process.env.NODE_ENV === 'production') {
         this.logger.warn(
-          'AUTH_DEV_FIXED_OTP=true: fixed demo OTP and demo credentials are ENABLED in production',
+          'Development-phase fixed demo OTP (123456) and demo credentials are ENABLED',
         );
       }
-      return 0;
+      return this.restoreDemoCredentialsIfNeeded();
     }
 
     const demoUsers = await this.prisma.user.findMany({
@@ -152,6 +153,38 @@ export class DemoBootstrapService implements OnModuleInit {
       );
     }
     return rotated;
+  }
+
+  /** Re-apply Test@12345 when development-phase demo mode is on. */
+  private async restoreDemoCredentialsIfNeeded(): Promise<number> {
+    const demoUsers = await this.prisma.user.findMany({
+      where: {
+        OR: [
+          { email: DEMO_CUSTOMER_EMAIL },
+          { email: DEMO_SELLER_EMAIL },
+          { phone: DEMO_PHONE_E164 },
+        ],
+      },
+      select: { id: true, email: true, passwordHash: true },
+    });
+
+    const passwordHash = await this.crypto.hashPassword(DEMO_PASSWORD);
+    let restored = 0;
+    for (const user of demoUsers) {
+      const usesKnownPassword = user.passwordHash
+        ? await this.crypto.comparePassword(DEMO_PASSWORD, user.passwordHash)
+        : false;
+      if (usesKnownPassword) continue;
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: { passwordHash },
+      });
+      restored += 1;
+      this.logger.warn(
+        `Restored development-phase demo password for ${user.email ?? user.id}`,
+      );
+    }
+    return restored;
   }
 
   isDemoUser(input: { phone?: string | null; email?: string | null }): boolean {

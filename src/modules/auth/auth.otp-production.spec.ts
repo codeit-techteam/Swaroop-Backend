@@ -93,18 +93,24 @@ describe('AuthService.isFixedDevOtpEnabled', () => {
 });
 
 /**
- * L-09 / N-01: production must not accept the fixed OTP unless the operator
- * explicitly opts in. Mirrors what `security.authDevFixedOtp` resolves to.
+ * Development phase: fixed OTP stays ON until AUTH_STRICT_OTP locks real SMS.
+ * Operators can still opt out with AUTH_DEV_FIXED_OTP=false.
  */
 describe('resolveFixedDevOtp (configuration)', () => {
-  it('is OFF in production when AUTH_DEV_FIXED_OTP is unset', async () => {
-    expect(resolveFixedDevOtp({ NODE_ENV: 'production' })).toBe(false);
+  it('is ON in production when AUTH_DEV_FIXED_OTP is unset (development phase)', async () => {
+    expect(resolveFixedDevOtp({ NODE_ENV: 'production' })).toBe(true);
+  });
+
+  it('honours an explicit AUTH_DEV_FIXED_OTP=false opt-out', async () => {
     expect(
       resolveFixedDevOtp({ NODE_ENV: 'production', AUTH_DEV_FIXED_OTP: 'false' }),
     ).toBe(false);
+    expect(
+      resolveFixedDevOtp({ NODE_ENV: 'development', AUTH_DEV_FIXED_OTP: 'false' }),
+    ).toBe(false);
   });
 
-  it('is ON in production only with an explicit AUTH_DEV_FIXED_OTP=true', async () => {
+  it('honours an explicit AUTH_DEV_FIXED_OTP=true opt-in', async () => {
     expect(
       resolveFixedDevOtp({ NODE_ENV: 'production', AUTH_DEV_FIXED_OTP: 'true' }),
     ).toBe(true);
@@ -122,9 +128,6 @@ describe('resolveFixedDevOtp (configuration)', () => {
 
   it('keeps the development-phase default outside production', async () => {
     expect(resolveFixedDevOtp({ NODE_ENV: 'development' })).toBe(true);
-    expect(
-      resolveFixedDevOtp({ NODE_ENV: 'development', AUTH_DEV_FIXED_OTP: 'false' }),
-    ).toBe(false);
   });
 });
 
@@ -185,15 +188,28 @@ describe('DemoBootstrapService.lockDemoCredentialsIfNeeded', () => {
     });
   });
 
-  it('does nothing while demo mode is on', async () => {
-    const { service, prisma, update } = await makeService(true, [
+  it('leaves accounts already on the demo password alone while demo mode is on', async () => {
+    const { service, update } = await makeService(true, [
       { id: 'u1', email: 'customer@test.local', passwordHash: 'hash:Test@12345' },
     ]);
 
-    const rotated = await service.lockDemoCredentialsIfNeeded();
+    const changed = await service.lockDemoCredentialsIfNeeded();
 
-    expect(rotated).toBe(0);
-    expect(prisma.user.findMany).not.toHaveBeenCalled();
+    expect(changed).toBe(0);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it('restores the demo password when demo mode is on and it was rotated', async () => {
+    const { service, update } = await makeService(true, [
+      { id: 'u1', email: 'customer@test.local', passwordHash: 'hash:already-rotated' },
+    ]);
+
+    const changed = await service.lockDemoCredentialsIfNeeded();
+
+    expect(changed).toBe(1);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'u1' },
+      data: { passwordHash: 'hash:Test@12345' },
+    });
   });
 });
