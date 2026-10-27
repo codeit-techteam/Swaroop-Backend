@@ -49,6 +49,7 @@ import {
 } from '../domain/import.errors.js';
 import { assertTransition } from '../domain/import-status.machine.js';
 import {
+  assessListingCompleteness,
   normalizeHsCode,
   validateListing,
 } from '../domain/import-validation.js';
@@ -61,7 +62,9 @@ import type {
 } from './dto/import-listing.dto.js';
 import {
   LISTING_INCLUDE,
+  listingValidationInput,
   mapListing,
+  withListingCompleteness,
   type ListingWithRelations,
 } from './import-listing.mapper.js';
 
@@ -304,6 +307,38 @@ export class ImportListingsService {
     return resolved;
   }
 
+  private async draftCompletenessCounts(
+    side: ImportSide,
+    orgId: string,
+    allowCustomGrade: boolean,
+    now: Date,
+  ) {
+    const drafts = await this.prisma.importListing.findMany({
+      where: {
+        side,
+        ownerOrgId: orgId,
+        status: ImportListingStatus.DRAFT,
+        deletedAt: null,
+      },
+      include: LISTING_INCLUDE,
+    });
+    let readyToPublish = 0;
+    let incomplete = 0;
+    for (const draft of drafts) {
+      const result = assessListingCompleteness(listingValidationInput(draft), {
+        now,
+        allowCustomGrade,
+      });
+      if (result.canPublish) readyToPublish += 1;
+      else incomplete += 1;
+    }
+    return {
+      total: drafts.length,
+      readyToPublish,
+      incomplete,
+    };
+  }
+
   private async loadOwned(actor: ImportActor, side: ImportSide, id: string) {
     const owner = this.owner(actor, side);
     const listing = await this.prisma.importListing.findFirst({
@@ -427,7 +462,11 @@ export class ImportListingsService {
         source: listing.source,
       },
     });
-    return mapListing(listing, 'owner');
+    const { allowCustomGrade } = await this.settings.get();
+    return withListingCompleteness(listing, mapListing(listing, 'owner'), {
+      allowCustomGrade,
+      now: new Date(),
+    });
   }
 
   async update(
@@ -544,7 +583,12 @@ export class ImportListingsService {
       );
       await this.matching.recomputeSafely(id);
     }
-    return mapListing(isDraft ? updated : await this.reload(id), 'owner');
+    const row = isDraft ? updated : await this.reload(id);
+    const { allowCustomGrade } = await this.settings.get();
+    return withListingCompleteness(row, mapListing(row, 'owner'), {
+      allowCustomGrade,
+      now: new Date(),
+    });
   }
 
   private diff(before: ListingWithRelations, after: ListingWithRelations) {
@@ -981,8 +1025,13 @@ export class ImportListingsService {
       shipmentType: query.shipmentType,
     };
     and.push(exact);
-    if (query.currencyCode)
-      and.push({ currencyCode: query.currencyCode.toUpperCase() });
+    if (query.currencyCode) {
+      const code = query.currencyCode.toUpperCase();
+      // Match denormalized snapshot OR related currency master (I-01).
+      and.push({
+        OR: [{ currencyCode: code }, { currency: { code } }],
+      });
+    }
 
     if (query.priceMin || query.priceMax || query.sortBy === 'price') {
       if (!query.currencyCode) {
@@ -1047,7 +1096,7 @@ export class ImportListingsService {
     const where: Prisma.ImportListingWhereInput = { AND: and };
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const sortBy = query.sortBy ?? 'createdAt';
-    const [rows, total] = await Promise.all([
+    const [rows, total, { allowCustomGrade }] = await Promise.all([
       this.prisma.importListing.findMany({
         where,
         include: LISTING_INCLUDE,
@@ -1056,11 +1105,16 @@ export class ImportListingsService {
         take,
       }),
       this.prisma.importListing.count({ where }),
+      this.settings.get(),
     ]);
+    const ownerView = scope === 'mine';
     return {
-      items: rows.map((row) =>
-        mapListing(row, scope === 'mine' ? 'owner' : 'market', { now }),
-      ),
+      items: rows.map((row) => {
+        const mapped = mapListing(row, ownerView ? 'owner' : 'market', { now });
+        return ownerView
+          ? withListingCompleteness(row, mapped, { allowCustomGrade, now })
+          : mapped;
+      }),
       meta: { ...paginationMeta(page, limit, total), scope },
     };
   }
@@ -1092,8 +1146,12 @@ export class ImportListingsService {
           },
         }),
       ]);
+      const { allowCustomGrade } = await this.settings.get();
       return {
-        ...mapListing(listing, 'owner'),
+        ...withListingCompleteness(listing, mapListing(listing, 'owner'), {
+          allowCustomGrade,
+          now: new Date(),
+        }),
         viewerRole: 'OWNER' as const,
         stats: {
           matches,
@@ -1161,6 +1219,8 @@ export class ImportListingsService {
   /** Dashboard counters for whichever sides the caller trades on. */
   async summary(user: AuthenticatedUser) {
     const actor = await this.actors.resolve(user);
+    const now = new Date();
+    const { allowCustomGrade } = await this.settings.get();
     const count = async (side: ImportSide, orgId: string) => {
       const groups = await this.prisma.importListing.groupBy({
         by: ['status'],
@@ -1173,38 +1233,52 @@ export class ImportListingsService {
       [party]: orgId,
     });
 
-    const result: Record<string, unknown> = { serverTime: new Date() };
+    const result: Record<string, unknown> = { serverTime: now };
     if (actor.buyer) {
       const org = actor.buyer.organizationId;
-      const [listings, openNegotiations, pendingDeals] = await Promise.all([
-        count(ImportSide.BUY, org),
-        this.prisma.importNegotiation.count({
-          where: { ...orgFilter(org, 'buyerOrgId'), status: 'OPEN' },
-        }),
-        this.prisma.importDeal.count({
-          where: {
-            ...orgFilter(org, 'buyerOrgId'),
-            status: 'PENDING_CONFIRMATION',
-          },
-        }),
-      ]);
-      result.buy = { listings, openNegotiations, pendingDeals };
+      const [listings, openNegotiations, pendingDeals, drafts] =
+        await Promise.all([
+          count(ImportSide.BUY, org),
+          this.prisma.importNegotiation.count({
+            where: { ...orgFilter(org, 'buyerOrgId'), status: 'OPEN' },
+          }),
+          this.prisma.importDeal.count({
+            where: {
+              ...orgFilter(org, 'buyerOrgId'),
+              status: 'PENDING_CONFIRMATION',
+            },
+          }),
+          this.draftCompletenessCounts(
+            ImportSide.BUY,
+            org,
+            allowCustomGrade,
+            now,
+          ),
+        ]);
+      result.buy = { listings, openNegotiations, pendingDeals, drafts };
     }
     if (actor.seller) {
       const org = actor.seller.organizationId;
-      const [listings, openNegotiations, pendingDeals] = await Promise.all([
-        count(ImportSide.SELL, org),
-        this.prisma.importNegotiation.count({
-          where: { ...orgFilter(org, 'sellerOrgId'), status: 'OPEN' },
-        }),
-        this.prisma.importDeal.count({
-          where: {
-            ...orgFilter(org, 'sellerOrgId'),
-            status: 'PENDING_CONFIRMATION',
-          },
-        }),
-      ]);
-      result.sell = { listings, openNegotiations, pendingDeals };
+      const [listings, openNegotiations, pendingDeals, drafts] =
+        await Promise.all([
+          count(ImportSide.SELL, org),
+          this.prisma.importNegotiation.count({
+            where: { ...orgFilter(org, 'sellerOrgId'), status: 'OPEN' },
+          }),
+          this.prisma.importDeal.count({
+            where: {
+              ...orgFilter(org, 'sellerOrgId'),
+              status: 'PENDING_CONFIRMATION',
+            },
+          }),
+          this.draftCompletenessCounts(
+            ImportSide.SELL,
+            org,
+            allowCustomGrade,
+            now,
+          ),
+        ]);
+      result.sell = { listings, openNegotiations, pendingDeals, drafts };
     }
     return result;
   }

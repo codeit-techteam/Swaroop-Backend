@@ -18,6 +18,11 @@ import {
   resolveCustomerKycSlot,
 } from '../../customers/kyc/customer-kyc.slots.js';
 import {
+  documentApprovedNotificationBody,
+  documentRejectedNotificationBody,
+  humanDocumentNotificationLabel,
+} from '../../documents/common/document-notification-copy.js';
+import {
   paginationMeta,
   skipTake,
 } from '../../master-data/common/pagination.js';
@@ -202,14 +207,22 @@ export class AdminDocumentsService {
     });
 
     if (existing.uploadedById) {
+      const label = humanDocumentNotificationLabel(existing);
       await this.notifications.create({
         userId: existing.uploadedById,
         organizationId: existing.organizationId ?? undefined,
         title: 'Document approved',
-        body: `Your document ${this.displayName(existing)} was verified.`,
+        body: documentApprovedNotificationBody(label),
         entityType: EntityOwnerType.DOCUMENT,
         entityId: id,
-        metadata: { status: DocumentStatus.VERIFIED },
+        metadata: {
+          type: 'DOCUMENT_APPROVED',
+          category: 'documents',
+          status: DocumentStatus.VERIFIED,
+          documentCategory: existing.category,
+          documentLabel: label,
+          slotLabel: label,
+        },
       });
     }
 
@@ -243,14 +256,23 @@ export class AdminDocumentsService {
     });
 
     if (existing.uploadedById) {
+      const label = humanDocumentNotificationLabel(existing);
       await this.notifications.create({
         userId: existing.uploadedById,
         organizationId: existing.organizationId ?? undefined,
         title: 'Document rejected',
-        body: `Your document ${this.displayName(existing)} was rejected: ${reason}. Please upload a replacement.`,
+        body: documentRejectedNotificationBody(label, reason),
         entityType: EntityOwnerType.DOCUMENT,
         entityId: id,
-        metadata: { status: DocumentStatus.REJECTED, reason },
+        metadata: {
+          type: 'DOCUMENT_REJECTED',
+          category: 'documents',
+          status: DocumentStatus.REJECTED,
+          reason,
+          documentCategory: existing.category,
+          documentLabel: label,
+          slotLabel: label,
+        },
       });
     }
 
@@ -378,7 +400,4 @@ export class AdminDocumentsService {
     }
   }
 
-  private displayName(doc: Document) {
-    return doc.originalFileName ?? doc.fileName ?? doc.documentNumber;
-  }
 }

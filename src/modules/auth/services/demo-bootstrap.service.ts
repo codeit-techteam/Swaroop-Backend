@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import {
   CmsBannerPlacement,
   CmsBannerPlatform,
@@ -55,6 +56,7 @@ export class DemoBootstrapService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly crypto: CryptoService,
+    private readonly configService: ConfigService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -63,6 +65,15 @@ export class DemoBootstrapService implements OnModuleInit {
     } catch (error) {
       this.logger.error(
         'Failed to ensure platform admin on startup',
+        error instanceof Error ? error.stack : error,
+      );
+    }
+
+    try {
+      await this.lockDemoCredentialsIfNeeded();
+    } catch (error) {
+      this.logger.error(
+        'Failed to lock demo credentials on startup',
         error instanceof Error ? error.stack : error,
       );
     }
@@ -78,6 +89,69 @@ export class DemoBootstrapService implements OnModuleInit {
         error instanceof Error ? error.stack : error,
       );
     }
+  }
+
+  /**
+   * Demo mode = the fixed demo OTP is accepted (`security.authDevFixedOtp`).
+   * Off by default in production — see `resolveFixedDevOtp`.
+   */
+  isDemoModeEnabled(): boolean {
+    if (this.configService.get<boolean>('security.authStrictOtp') === true) {
+      return false;
+    }
+    return this.configService.get<boolean>('security.authDevFixedOtp') === true;
+  }
+
+  /**
+   * Release blocker L-09 / N-01 / A-05: the demo accounts shipped with the
+   * well-known password `Test@12345`. When demo mode is off, rotate any demo
+   * account that still has that password to a random one so neither the fixed
+   * OTP nor the known password can be used against this environment.
+   * Idempotent; never deletes data.
+   */
+  async lockDemoCredentialsIfNeeded(): Promise<number> {
+    if (this.isDemoModeEnabled()) {
+      if (process.env.NODE_ENV === 'production') {
+        this.logger.warn(
+          'AUTH_DEV_FIXED_OTP=true: fixed demo OTP and demo credentials are ENABLED in production',
+        );
+      }
+      return 0;
+    }
+
+    const demoUsers = await this.prisma.user.findMany({
+      where: {
+        OR: [
+          { email: DEMO_CUSTOMER_EMAIL },
+          { email: DEMO_SELLER_EMAIL },
+          { phone: DEMO_PHONE_E164 },
+        ],
+      },
+      select: { id: true, email: true, passwordHash: true },
+    });
+
+    let rotated = 0;
+    for (const user of demoUsers) {
+      if (!user.passwordHash) continue;
+      const usesKnownPassword = await this.crypto.comparePassword(
+        DEMO_PASSWORD,
+        user.passwordHash,
+      );
+      if (!usesKnownPassword) continue;
+      await this.prisma.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash: await this.crypto.hashPassword(
+            this.crypto.generateSecureToken(24),
+          ),
+        },
+      });
+      rotated += 1;
+      this.logger.warn(
+        `Rotated well-known demo password for ${user.email ?? user.id} (demo mode off)`,
+      );
+    }
+    return rotated;
   }
 
   isDemoUser(input: { phone?: string | null; email?: string | null }): boolean {
@@ -252,7 +326,12 @@ export class DemoBootstrapService implements OnModuleInit {
       create: { code: RoleCode.SELLER, name: 'SELLER' },
     });
 
-    const passwordHash = await this.crypto.hashPassword(DEMO_PASSWORD);
+    // The well-known demo password is only (re)applied while demo mode is on.
+    // In production with demo mode off we never write a known credential.
+    const demoMode = this.isDemoModeEnabled();
+    const passwordHash = await this.crypto.hashPassword(
+      demoMode ? DEMO_PASSWORD : this.crypto.generateSecureToken(24),
+    );
     let sellerEmailUser = await this.prisma.user.findUnique({
       where: { email: DEMO_SELLER_EMAIL },
     });
@@ -260,7 +339,7 @@ export class DemoBootstrapService implements OnModuleInit {
       await this.prisma.user.update({
         where: { id: sellerEmailUser.id },
         data: {
-          passwordHash,
+          ...(demoMode ? { passwordHash } : {}),
           firstName: 'Karan',
           lastName: 'Veer',
           phone: '+918240890243',
@@ -859,6 +938,7 @@ export class DemoBootstrapService implements OnModuleInit {
         productCode: string;
         gradeMasterCode: string;
         materialType?: string;
+        subCategory?: string;
         description?: string;
         pricePerMt: number;
         unit: string;
@@ -940,7 +1020,20 @@ export class DemoBootstrapService implements OnModuleInit {
       const grade = gradeByCode.get(
         String(item.gradeMasterCode || '').toUpperCase(),
       );
+      // B-05: white/UV masterbatch rows are held for Admin grade mapping (empty
+      // gradeMasterCode). Do not invent MASTERBATCH_WHITE or force BLACK.
       if (!grade) continue;
+
+      const technicalSpecs = {
+        ...(item.technicalSpecs ?? {}),
+        sourceId: item.sourceId,
+        applications: item.applications,
+        materialType: item.materialType,
+        subCategory: item.subCategory,
+        warehouseLabel: item.warehouseLabel,
+        parentCategoryId:
+          (item as { parentCategoryId?: string }).parentCategoryId ?? undefined,
+      };
 
       const product = await this.prisma.product.upsert({
         where: {
@@ -954,13 +1047,7 @@ export class DemoBootstrapService implements OnModuleInit {
           gradeId: grade.id,
           brand: 'PRIVATE',
           description: item.description,
-          technicalSpecs: {
-            ...(item.technicalSpecs ?? {}),
-            sourceId: item.sourceId,
-            applications: item.applications,
-            materialType: item.materialType,
-            warehouseLabel: item.warehouseLabel,
-          },
+          technicalSpecs,
           mfi: item.technicalSpecs?.mfi ?? null,
           density: item.technicalSpecs?.density ?? null,
           packaging: '25kg bags',
@@ -979,13 +1066,7 @@ export class DemoBootstrapService implements OnModuleInit {
           name: item.name,
           brand: 'PRIVATE',
           description: item.description,
-          technicalSpecs: {
-            ...(item.technicalSpecs ?? {}),
-            sourceId: item.sourceId,
-            applications: item.applications,
-            materialType: item.materialType,
-            warehouseLabel: item.warehouseLabel,
-          },
+          technicalSpecs,
           mfi: item.technicalSpecs?.mfi ?? null,
           density: item.technicalSpecs?.density ?? null,
           packaging: '25kg bags',

@@ -63,10 +63,11 @@ export const envSchema = z
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
     AUTH_DEV_EXPOSE_OTP: booleanFromString.optional().default(false),
     /**
-     * Legacy flag (kept for existing env files). Demo OTP is controlled by AUTH_STRICT_OTP:
-     * fixed 123456 stays on until AUTH_STRICT_OTP=true.
+     * Fixed demo OTP (123456 for the demo phone). Outside production it defaults ON
+     * until AUTH_STRICT_OTP=true. In production it is OFF unless this is explicitly
+     * `true` (see `resolveFixedDevOtp` in configuration.ts) — release blocker L-09 / N-01.
      */
-    AUTH_DEV_FIXED_OTP: booleanFromString.optional().default(true),
+    AUTH_DEV_FIXED_OTP: booleanFromString.optional(),
     /**
      * When true, fixed demo OTP is forbidden (real SMS production lock).
      */

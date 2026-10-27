@@ -484,3 +484,89 @@ export function estimateEta(input: {
     basis: 'ESTIMATED_FROM_TRANSIT_DAYS',
   };
 }
+
+/** User-facing labels for publish-required fields (I-02 draft completeness). */
+export const IMPORT_FIELD_LABELS: Record<string, string> = {
+  categoryId: 'Product / material',
+  gradeId: 'Grade',
+  customGradeName: 'Custom grade',
+  brandId: 'Brand / manufacturer',
+  originCountryId: 'Country of origin',
+  quantity: 'Quantity',
+  containerSize: 'Container size',
+  containerCount: 'Number of containers',
+  price: 'Price',
+  currencyId: 'Currency',
+  priceUnit: 'Price unit',
+  priceType: 'Price type',
+  incotermId: 'Incoterm',
+  priceBasisLocation: 'Price basis location',
+  priceBasisPortId: 'Price basis port',
+  paymentTermId: 'Payment term',
+  gstTreatment: 'GST treatment',
+  polId: 'Port of loading',
+  podId: 'Port of discharge',
+  esd: 'Earliest shipment date',
+  lsd: 'Latest shipment date',
+  transitMaxDays: 'Transit days',
+  validFrom: 'Valid from',
+  validUntil: 'Offer validity',
+  moq: 'MOQ',
+  maximumQuantity: 'Maximum quantity',
+  readyStockType: 'Ready stock / shipment type',
+  acceptableQuantityMin: 'Minimum acceptable quantity',
+  acceptableQuantityMax: 'Maximum acceptable quantity',
+  requiredDeliveryDate: 'Required delivery date',
+  hsCode: 'HS code',
+  casNumber: 'CAS number',
+};
+
+export type ListingCompleteness = {
+  isComplete: boolean;
+  canPublish: boolean;
+  missingFields: string[];
+  missingFieldLabels: string[];
+  validationErrors: ImportFieldError[];
+};
+
+function labelForField(field: string, side: ImportSide): string {
+  if (field === 'price') {
+    return side === ImportSide.BUY ? 'Target price' : 'Offer price';
+  }
+  return (
+    IMPORT_FIELD_LABELS[field] ??
+    field
+      .replace(/Id$/, '')
+      .replace(/([A-Z])/g, ' $1')
+      .replace(/^./, (c) => c.toUpperCase())
+      .trim()
+  );
+}
+
+/**
+ * Authoritative publish-readiness check for drafts. Uses the same rules as
+ * `validateListing(..., { mode: 'publish' })` so Home / list / publish agree.
+ */
+export function assessListingCompleteness(
+  input: ListingValidationInput,
+  ctx: Omit<ValidationContext, 'mode'>,
+): ListingCompleteness {
+  const validationErrors = validateListing(input, { ...ctx, mode: 'publish' });
+  const seen = new Set<string>();
+  const missingFields: string[] = [];
+  const missingFieldLabels: string[] = [];
+  for (const error of validationErrors) {
+    if (seen.has(error.field)) continue;
+    seen.add(error.field);
+    missingFields.push(error.field);
+    missingFieldLabels.push(labelForField(error.field, input.side));
+  }
+  const isComplete = validationErrors.length === 0;
+  return {
+    isComplete,
+    canPublish: isComplete,
+    missingFields,
+    missingFieldLabels,
+    validationErrors,
+  };
+}

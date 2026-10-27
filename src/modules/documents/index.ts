@@ -25,3 +25,9 @@ export {
   customerSafeFileName,
   isProductDocumentCategory,
 } from './common/product-document.helpers.js';
+export {
+  documentApprovedNotificationBody,
+  documentRejectedNotificationBody,
+  humanDocumentNotificationLabel,
+  looksLikeRawUploadName,
+} from './common/document-notification-copy.js';

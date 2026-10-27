@@ -6,7 +6,12 @@ import {
 } from '../../../generated/prisma/client.js';
 import { decimalString } from '../domain/import-decimal.js';
 import { allowedTransitions } from '../domain/import-status.machine.js';
-import { estimateEta } from '../domain/import-validation.js';
+import {
+  assessListingCompleteness,
+  estimateEta,
+  type ListingCompleteness,
+  type ListingValidationInput,
+} from '../domain/import-validation.js';
 import type { ListingSnapshot } from '../common/import-master.service.js';
 
 const named = { select: { id: true, code: true, name: true } } as const;
@@ -265,3 +270,67 @@ export function mapListing(
 }
 
 export type MappedListing = ReturnType<typeof mapListing>;
+
+/** Persist → validation input used by draft completeness and publish checks. */
+export function listingValidationInput(
+  listing: ListingWithRelations,
+): ListingValidationInput {
+  return {
+    side: listing.side,
+    categoryId: listing.categoryId,
+    gradeId: listing.gradeId,
+    customGradeName: listing.customGradeName,
+    brandId: listing.brandId,
+    originCountryId: listing.originCountryId,
+    quantity: listing.quantity,
+    quantityUnit: listing.quantityUnit,
+    hsCode: listing.hsCode,
+    casNumber: listing.casNumber,
+    price: listing.price,
+    priceUnit: listing.priceUnit,
+    priceType: listing.priceType,
+    incotermId: listing.incotermId,
+    priceBasisPortId: listing.priceBasisPortId,
+    priceBasisLocation: listing.priceBasisLocation,
+    paymentTermId: listing.paymentTermId,
+    gstTreatment: listing.gstTreatment,
+    polId: listing.polId,
+    podId: listing.podId,
+    esd: listing.esd,
+    lsd: listing.lsd,
+    transitMinDays: listing.transitMinDays,
+    transitMaxDays: listing.transitMaxDays,
+    shipmentType: listing.shipmentType,
+    containerSize: listing.containerSize,
+    containerCount: listing.containerCount,
+    acceptableQuantityMin: listing.acceptableQuantityMin,
+    acceptableQuantityMax: listing.acceptableQuantityMax,
+    requiredDeliveryDate: listing.requiredDeliveryDate,
+    moq: listing.moq,
+    maximumQuantity: listing.maximumQuantity,
+    readyStockType: listing.readyStockType,
+    validFrom: listing.validFrom,
+    validUntil: listing.validUntil,
+    currencyCode: listing.currencyCode ?? listing.currency?.code ?? null,
+    paymentTermCurrencyCodes: listing.paymentTerm
+      ? listing.paymentTerm.currencyCodes
+      : null,
+  };
+}
+
+export function listingCompleteness(
+  listing: ListingWithRelations,
+  ctx: { now: Date; allowCustomGrade: boolean },
+): ListingCompleteness | undefined {
+  if (listing.status !== ImportListingStatus.DRAFT) return undefined;
+  return assessListingCompleteness(listingValidationInput(listing), ctx);
+}
+
+export function withListingCompleteness(
+  listing: ListingWithRelations,
+  mapped: MappedListing,
+  ctx: { now: Date; allowCustomGrade: boolean },
+) {
+  const completeness = listingCompleteness(listing, ctx);
+  return completeness ? { ...mapped, completeness } : mapped;
+}

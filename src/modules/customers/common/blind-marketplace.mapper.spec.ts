@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
   assertMarketplaceOffer,
+  dedupeBlindProducts,
   MarketplaceException,
   resolveOfferUnitPrice,
   toBlindOffer,
@@ -64,6 +65,86 @@ describe('blind marketplace mapper', () => {
     expect(payload.mfi).toBe('0.36');
     expect(payload.grade?.fullGradeName).toBe('HDPE FILM F46003 - RIL');
     expect(payload.grade?.category?.parentGroup).toBe('POLYMERS');
+  });
+
+  it('B-06: collapses commercially identical listings but keeps distinct offers', () => {
+    const twinA = {
+      id: 'prod-a',
+      code: 'CMP-ABS-FR',
+      grade: { id: 'grade-abs-fr', code: 'COMPOUND_ABS_FR' },
+      technicalSpecs: {
+        origin: 'Northern India Region',
+        warehouseLabel: 'Panipat Hub',
+      },
+      listing: {
+        price: 148000,
+        moq: 8,
+        leadTime: '5–7 Days',
+        quantityAvailable: 90,
+      },
+    };
+    const twinB = {
+      ...twinA,
+      id: 'prod-b',
+      listing: { ...twinA.listing, quantityAvailable: 40 },
+    };
+    const cheaper = {
+      ...twinA,
+      id: 'prod-c',
+      listing: { ...twinA.listing, price: 145000, quantityAvailable: 50 },
+    };
+    const deduped = dedupeBlindProducts([twinA, twinB, cheaper]);
+    expect(deduped.map((p) => p.id).sort()).toEqual(['prod-a', 'prod-c']);
+  });
+
+  it('B-05: prefers white TiO2 product name over generic MASTERBATCH_BLACK grade label', () => {
+    const payload = toBlindProduct({
+      id: 'prod-mb-white',
+      code: 'MB-WH-50',
+      name: 'White Masterbatch TiO2 50%',
+      brand: 'PRIVATE',
+      manufacturer: null,
+      description:
+        'Titanium dioxide white masterbatch for packaging films and injection parts.',
+      technicalSpecs: {
+        materialType: 'Masterbatch',
+        subCategory: 'White',
+      },
+      mfi: null,
+      density: null,
+      packaging: '25kg bags',
+      unit: 'MT',
+      countryOfOrigin: 'IN',
+      supplyOrigin: 'domestic',
+      status: 'ACTIVE',
+      grade: {
+        id: 'grade-mb-black',
+        code: 'MASTERBATCH_BLACK',
+        name: 'Masterbatch',
+        displayName: 'Masterbatch',
+        category: {
+          id: 'cat-mb',
+          code: 'MASTERBATCH',
+          name: 'Masterbatch',
+          parentGroup: 'MASTERBATCH',
+        },
+      },
+      offers: [
+        {
+          id: 'offer-mb',
+          quantity: 240,
+          moq: 5,
+          unit: 'MT',
+          basePrice: 128000,
+          currency: 'INR',
+          deliveryTerms: '3–5 Days',
+          organizationId: 'org-seller-secret',
+        },
+      ],
+    });
+    expect(payload.name).toBe('White Masterbatch TiO2 50%');
+    expect(payload.name).not.toContain('MASTERBATCH_BLACK');
+    expect(payload.grade?.code).toBe('MASTERBATCH_BLACK');
   });
 
   it('never exposes seller identity on products', () => {

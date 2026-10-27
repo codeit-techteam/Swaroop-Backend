@@ -5,6 +5,7 @@ export {
   MarketplaceException,
   toBlindProduct,
   toBlindOffer,
+  dedupeBlindProducts,
   toCustomerFacingPr,
   resolveOfferUnitPrice,
   assertMarketplaceOffer,

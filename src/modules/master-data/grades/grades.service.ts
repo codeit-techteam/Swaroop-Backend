@@ -13,6 +13,7 @@ import {
   resolveSearch,
   skipTake,
 } from '../common/pagination.js';
+import { formatCategoryDisplayName } from '../../grades/common/category-label.js';
 import { assertFound, handlePrismaUnique } from '../common/prisma-helpers.js';
 import type {
   CreateGradeDto,
@@ -541,7 +542,7 @@ export class GradesService {
           id: c.id,
           code: c.code,
           name: c.name,
-          displayName: c.displayName ?? c.name,
+          displayName: formatCategoryDisplayName(c.displayName, c.name, c.code),
           gradeCount: counts.get(c.id) ?? 0,
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
@@ -689,7 +690,11 @@ export class GradesService {
         id: grade.category.id,
         code: grade.category.code,
         name: grade.category.name,
-        displayName: grade.category.displayName ?? grade.category.name,
+        displayName: formatCategoryDisplayName(
+          grade.category.displayName,
+          grade.category.name,
+          grade.category.code,
+        ),
       },
       subcategory: grade.subcategory
         ? {

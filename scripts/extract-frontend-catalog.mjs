@@ -73,9 +73,28 @@ function mapGradeMaster(sku) {
   if (material.includes('meg') || material.includes('glycol')) return 'GLYCOL';
   if (material.includes('dop') || material.includes('dotp') || material.includes('plasticizer'))
     return 'PLASTICIZER';
-  if (material.includes('stabilizer')) return 'STABILIZER';
+  if (material.includes('stabilizer') && !material.includes('masterbatch'))
+    return 'STABILIZER';
   if (material.includes('base oil') || sku.categoryId === 'base-oils') return 'BASE_OIL';
-  if (material.includes('masterbatch')) return 'MASTERBATCH_BLACK';
+  // B-05: only black MB maps to MASTERBATCH_BLACK. White / UV / colour MBs have no
+  // authoritative Grade Master row — leave unmapped for Admin review (do not invent).
+  if (material.includes('masterbatch')) {
+    const hay = `${sub} ${sku.name ?? ''} ${sku.description ?? ''} ${sku.id ?? ''} ${sku.gradeCode ?? ''}`.toLowerCase();
+    if (
+      hay.includes('white') ||
+      hay.includes('tio2') ||
+      hay.includes('tio₂') ||
+      hay.includes('titanium') ||
+      hay.includes('mb-wh') ||
+      hay.includes('uv')
+    ) {
+      return '';
+    }
+    if (hay.includes('black') || hay.includes('carbon black') || hay.includes('mb-bk')) {
+      return 'MASTERBATCH_BLACK';
+    }
+    return '';
+  }
   if (material.includes('compound') && material.includes('abs')) return 'COMPOUND_ABS_FR';
   if (material.includes('compound')) return 'COMPOUND_PP_TALC';
   if (material.includes('pe wax')) return 'PE_WAX';
@@ -124,12 +143,20 @@ const src = readFileSync(SOURCE, 'utf8');
 const literals = extractObjectLiterals(src, 'blindGrade');
 const products = literals.map((literal) => {
   const sku = parseTsObject(literal);
+  const gradeMasterCode = mapGradeMaster(sku);
+  const needsReview = !String(gradeMasterCode || '').trim();
+  const reviewReason = needsReview
+    ? materialReviewReason(sku)
+    : undefined;
   return {
     sourceId: sku.id,
     name: sku.name,
     grade: sku.grade,
     productCode: sku.gradeCode,
-    gradeMasterCode: mapGradeMaster(sku),
+    gradeMasterCode,
+    ...(needsReview
+      ? { reviewRequired: true, reviewReason }
+      : {}),
     parentCategoryId: sku.categoryId,
     materialType: sku.materialType,
     subCategory: sku.subCategory,
@@ -154,6 +181,21 @@ const products = literals.map((literal) => {
     technicalSpecs: sku.technicalSpecs ?? {},
   };
 });
+
+function materialReviewReason(sku) {
+  const material = String(sku.materialType ?? '').toLowerCase();
+  const sub = String(sku.subCategory ?? '').toLowerCase();
+  if (material.includes('masterbatch')) {
+    if (sub.includes('white') || /tio2|titanium/i.test(`${sku.name} ${sku.description}`)) {
+      return 'Was incorrectly mapped to MASTERBATCH_BLACK. No authoritative MASTERBATCH_WHITE / white-MB grade exists in Grade Master — hold for Admin review; do not invent a mapping.';
+    }
+    if (sub.includes('uv') || /uv/i.test(`${sku.name} ${sku.description}`)) {
+      return 'Was incorrectly mapped to MASTERBATCH_BLACK. No authoritative UV-masterbatch grade exists in Grade Master — hold for Admin review; do not invent a mapping.';
+    }
+    return 'No authoritative masterbatch grade mapping in Grade Master — hold for Admin review; do not invent a mapping.';
+  }
+  return 'Held for Admin review — no authoritative gradeMasterCode (not inventing a mapping)';
+}
 
 const outPath = join(__dirname, '../prisma/seed-data/catalog-products.json');
 writeFileSync(

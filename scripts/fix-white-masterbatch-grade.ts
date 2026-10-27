@@ -1,21 +1,40 @@
 /**
  * Safe, idempotent data correction for B-05 / N-03:
- * White Masterbatch TiO2 products incorrectly linked to MASTERBATCH_BLACK.
+ * White Masterbatch TiO2 products incorrectly tagged via MASTERBATCH_BLACK.
  *
- * Does NOT invent a MASTERBATCH_WHITE grade. Detaches the wrong black mapping
- * and clears enum-like materialType tags so customer cards show the product
- * name / description instead of MASTERBATCH_BLACK.
+ * Product.gradeId is required, so this does NOT invent MASTERBATCH_WHITE and
+ * does NOT null the grade FK. It corrects technicalSpecs so customer cards
+ * show "White Masterbatch" / product name instead of the raw MASTERBATCH_BLACK code.
  *
  * Usage (against a reachable DATABASE_URL — never run blindly on prod):
  *   npx tsx scripts/fix-white-masterbatch-grade.ts --dry-run
  *   npx tsx scripts/fix-white-masterbatch-grade.ts --apply
  */
+import 'dotenv/config';
+import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '../src/generated/prisma/client.js';
 
-const prisma = new PrismaClient();
 const APPLY = process.argv.includes('--apply');
 
+function createPrisma() {
+  const adapter = new PrismaPg({
+    connectionString:
+      process.env.DATABASE_URL ??
+      'postgresql://postgres:postgres@localhost:5433/swaroop?schema=public',
+  });
+  return new PrismaClient({ adapter });
+}
+
 async function main() {
+  const prisma = createPrisma();
+  try {
+    await run(prisma);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+async function run(prisma: PrismaClient) {
   const black = await prisma.grade.findFirst({
     where: {
       OR: [{ code: 'MASTERBATCH_BLACK' }, { name: 'MASTERBATCH_BLACK' }],
@@ -32,29 +51,39 @@ async function main() {
   const candidates = await prisma.product.findMany({
     where: {
       deletedAt: null,
-      gradeId: black.id,
       OR: [
-        { name: { contains: 'White', mode: 'insensitive' } },
-        { name: { contains: 'TiO2', mode: 'insensitive' } },
-        { name: { contains: 'TIO2', mode: 'insensitive' } },
-        { description: { contains: 'titanium dioxide', mode: 'insensitive' } },
-        { description: { contains: 'white masterbatch', mode: 'insensitive' } },
-        { sku: { contains: 'MB-WH', mode: 'insensitive' } },
-        { productCode: { contains: 'MB-WH', mode: 'insensitive' } },
+        { gradeId: black.id },
+        {
+          technicalSpecs: {
+            path: ['materialType'],
+            string_contains: 'MASTERBATCH_BLACK',
+          },
+        },
+      ],
+      AND: [
+        {
+          OR: [
+            { name: { contains: 'White', mode: 'insensitive' } },
+            { name: { contains: 'TiO2', mode: 'insensitive' } },
+            { name: { contains: 'TIO2', mode: 'insensitive' } },
+            { description: { contains: 'titanium dioxide', mode: 'insensitive' } },
+            { description: { contains: 'white masterbatch', mode: 'insensitive' } },
+            { code: { contains: 'MB-WH', mode: 'insensitive' } },
+          ],
+        },
       ],
     },
     select: {
       id: true,
       name: true,
-      sku: true,
-      productCode: true,
+      code: true,
       gradeId: true,
       technicalSpecs: true,
     },
   });
 
   console.log(
-    `Found ${candidates.length} white/TiO2 product(s) wrongly on ${black.code} (${black.id})`,
+    `Found ${candidates.length} white/TiO2 product(s) to correct (grade ${black.code})`,
   );
 
   for (const product of candidates) {
@@ -62,18 +91,38 @@ async function main() {
       product.technicalSpecs && typeof product.technicalSpecs === 'object'
         ? { ...(product.technicalSpecs as Record<string, unknown>) }
         : {};
-    if (typeof specs.materialType === 'string' && /MASTERBATCH_BLACK/i.test(specs.materialType)) {
+
+    let changed = false;
+    if (
+      typeof specs.materialType === 'string' &&
+      (/MASTERBATCH_BLACK/i.test(specs.materialType) || !specs.materialType.trim())
+    ) {
       specs.materialType = 'Masterbatch';
-      specs.subCategory = specs.subCategory || 'White';
+      changed = true;
+    } else if (!specs.materialType) {
+      specs.materialType = 'Masterbatch';
+      changed = true;
     }
-    console.log(` - ${product.id} | ${product.name} | ${product.productCode || product.sku}`);
-    if (APPLY) {
+    if (
+      !specs.subCategory ||
+      (typeof specs.subCategory === 'string' &&
+        /MASTERBATCH_BLACK|black/i.test(specs.subCategory))
+    ) {
+      specs.subCategory = 'White';
+      changed = true;
+    }
+    if (!specs.parentCategoryId) {
+      specs.parentCategoryId = 'additives';
+      changed = true;
+    }
+
+    console.log(
+      ` - ${product.id} | ${product.name} | ${product.code}${changed ? ' → specs fixed' : ' (specs already ok)'}`,
+    );
+    if (APPLY && changed) {
       await prisma.product.update({
         where: { id: product.id },
-        data: {
-          gradeId: null,
-          technicalSpecs: specs,
-        },
+        data: { technicalSpecs: specs },
       });
     }
   }
@@ -81,11 +130,7 @@ async function main() {
   console.log(APPLY ? 'Applied.' : 'Dry run only. Re-run with --apply to persist.');
 }
 
-main()
-  .catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

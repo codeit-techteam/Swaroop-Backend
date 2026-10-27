@@ -15,6 +15,7 @@ import {
   canTransition,
 } from './import-status.machine.js';
 import {
+  assessListingCompleteness,
   estimateEta,
   isValidCasNumber,
   validateListing,
@@ -335,7 +336,97 @@ describe('import listing validation', () => {
       codes(validateListing(custom, { ...publish, allowCustomGrade: false })),
     ).toContain('customGradeName:INVALID_MASTER_REFERENCE');
   });
+});
 
+describe('import draft completeness (I-02)', () => {
+  const ctx = { now: NOW, allowCustomGrade: true };
+
+  it('marks a draft missing price and route as incomplete with both fields', () => {
+    const result = assessListingCompleteness(
+      buyInput({
+        price: null,
+        polId: null,
+        podId: null,
+      }),
+      ctx,
+    );
+    expect(result.isComplete).toBe(false);
+    expect(result.canPublish).toBe(false);
+    expect(result.missingFields).toEqual(
+      expect.arrayContaining(['price', 'polId', 'podId']),
+    );
+    expect(result.missingFieldLabels).toEqual(
+      expect.arrayContaining([
+        'Target price',
+        'Port of loading',
+        'Port of discharge',
+      ]),
+    );
+  });
+
+  it('marks a draft with price but no route as incomplete for route only', () => {
+    const result = assessListingCompleteness(
+      buyInput({ polId: null, podId: null }),
+      ctx,
+    );
+    expect(result.canPublish).toBe(false);
+    expect(result.missingFields).toEqual(
+      expect.arrayContaining(['polId', 'podId']),
+    );
+    expect(result.missingFields).not.toContain('price');
+  });
+
+  it('marks a fully valid draft as eligible to publish', () => {
+    const result = assessListingCompleteness(buyInput(), ctx);
+    expect(result).toMatchObject({
+      isComplete: true,
+      canPublish: true,
+      missingFields: [],
+      missingFieldLabels: [],
+      validationErrors: [],
+    });
+  });
+
+  it('treats invalid price as incomplete', () => {
+    const result = assessListingCompleteness(buyInput({ price: D(0) }), ctx);
+    expect(result.canPublish).toBe(false);
+    expect(result.missingFields).toContain('price');
+  });
+
+  it('treats invalid POL/POD (missing) as incomplete', () => {
+    const result = assessListingCompleteness(
+      buyInput({ polId: null, podId: null }),
+      ctx,
+    );
+    expect(result.canPublish).toBe(false);
+    expect(result.missingFields).toEqual(
+      expect.arrayContaining(['polId', 'podId']),
+    );
+  });
+
+  it('allows optional quality fields to remain empty', () => {
+    // specification / documents are optional on publish in current rules
+    const result = assessListingCompleteness(buyInput(), ctx);
+    expect(result.canPublish).toBe(true);
+  });
+
+  it('keeps incomplete seller offers as non-publishable drafts', () => {
+    const result = assessListingCompleteness(
+      sellInput({ moq: null, readyStockType: null, validUntil: null }),
+      ctx,
+    );
+    expect(result.canPublish).toBe(false);
+    expect(result.missingFields).toEqual(
+      expect.arrayContaining(['moq', 'readyStockType', 'validUntil']),
+    );
+  });
+
+  it('allows a complete seller offer to publish after validation', () => {
+    expect(assessListingCompleteness(sellInput(), ctx).canPublish).toBe(true);
+  });
+});
+
+describe('import validation helpers', () => {
   it('validates CAS numbers with the check digit', () => {
     expect(isValidCasNumber('9002-86-2')).toBe(true);
     expect(isValidCasNumber('9002-86-3')).toBe(false);

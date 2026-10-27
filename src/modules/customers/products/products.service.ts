@@ -13,6 +13,7 @@ import {
 } from '../../master-data/common/pagination.js';
 import { ProductDocumentsQueryService } from '../../documents/services/product-documents-query.service.js';
 import {
+  dedupeBlindProducts,
   toBlindOffer,
   toBlindProduct,
 } from '../common/blind-marketplace.mapper.js';
@@ -98,8 +99,10 @@ export class ProductsService {
       }),
     ]);
 
+    // B-06: drop commercially identical cards (same grade/price/MOQ/origin/ETA).
+    const itemsBlind = dedupeBlindProducts(items.map((p) => toBlindProduct(p)));
     return {
-      items: items.map((p) => toBlindProduct(p)),
+      items: itemsBlind,
       meta: paginationMeta(page, limit, total),
     };
   }

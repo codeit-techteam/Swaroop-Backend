@@ -41,6 +41,9 @@ import {
 /** Business window for "expiring soon" KPI (hours). */
 const EXPIRING_SOON_HOURS = 48;
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const PENDING_PR_STATUSES: PurchaseRequestStatus[] = [
   PurchaseRequestStatus.SOURCING,
   PurchaseRequestStatus.NEGOTIATION,
@@ -48,6 +51,8 @@ const PENDING_PR_STATUSES: PurchaseRequestStatus[] = [
   PurchaseRequestStatus.SUBMITTED,
   PurchaseRequestStatus.UNDER_REVIEW,
 ];
+
+const isUuid = (value: string): boolean => UUID_RE.test(value);
 
 const offerInclude = {
   product: { select: { id: true, code: true, name: true, gradeId: true } },
@@ -89,9 +94,22 @@ export class OffersService {
     return this.sellerContext.requireSeller(userId);
   }
 
-  private async assertOwned(ctx: SellerContext, id: string) {
+  /**
+   * Resolve an owned offer by UUID **or** public reference number.
+   * Clients must never need to guess which identifier the list UI displayed.
+   */
+  private async assertOwned(ctx: SellerContext, idOrRef: string) {
+    const key = idOrRef.trim();
+    if (!key) {
+      throw new BadRequestException('Offer id is required');
+    }
+
     const offer = await this.prisma.offer.findFirst({
-      where: { id, organizationId: ctx.organizationId, deletedAt: null },
+      where: {
+        organizationId: ctx.organizationId,
+        deletedAt: null,
+        ...(isUuid(key) ? { id: key } : { referenceNumber: key }),
+      },
       include: offerInclude,
     });
     if (!offer) throw new NotFoundException('Offer not found');
@@ -601,10 +619,11 @@ export class OffersService {
       dto.quantity != null &&
       Number(dto.quantity) !== Number(existing.quantity);
 
+    const offerId = existing.id;
     const offer = await this.prisma.$transaction(async (tx) => {
       if (dto.version != null) {
         const locked = await tx.offer.findFirst({
-          where: { id, version: dto.version, deletedAt: null },
+          where: { id: offerId, version: dto.version, deletedAt: null },
         });
         if (!locked) {
           throw new ConflictException(
@@ -614,11 +633,11 @@ export class OffersService {
       }
 
       if (dto.priceTiers) {
-        await tx.offerPriceTier.deleteMany({ where: { offerId: id } });
+        await tx.offerPriceTier.deleteMany({ where: { offerId } });
         if (dto.priceTiers.length) {
           await tx.offerPriceTier.createMany({
             data: dto.priceTiers.map((t) => ({
-              offerId: id,
+              offerId,
               minQty: t.minQty,
               maxQty: t.maxQty,
               price: t.price,
@@ -632,7 +651,7 @@ export class OffersService {
       }
 
       return tx.offer.update({
-        where: { id },
+        where: { id: offerId },
         data: {
           productId,
           gradeId,
@@ -672,7 +691,7 @@ export class OffersService {
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.OFFER,
-      entityId: id,
+      entityId: offerId,
       previousData: {
         status: existing.status,
         basePrice: existing.basePrice.toString(),
@@ -699,8 +718,13 @@ export class OffersService {
       );
     }
 
+    // Idempotent: already live.
+    if (offer.status === OfferStatus.ACTIVE) {
+      return offer;
+    }
+
     if (offer.status === OfferStatus.PAUSED) {
-      return this.resume(userId, id);
+      return this.resume(userId, offer.id);
     }
 
     if (
@@ -720,7 +744,7 @@ export class OffersService {
       let current = offer;
       if (current.status === OfferStatus.DRAFT) {
         current = await tx.offer.update({
-          where: { id },
+          where: { id: offer.id },
           data: {
             status: OfferStatus.PENDING_REVIEW,
             // Ensure marketplace window is anchored to server time on publish.
@@ -736,7 +760,7 @@ export class OffersService {
         );
       }
       return tx.offer.update({
-        where: { id },
+        where: { id: offer.id },
         data: {
           status: OfferStatus.ACTIVE,
           validFrom: current.validFrom ?? new Date(),
@@ -751,7 +775,7 @@ export class OffersService {
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.OFFER,
-      entityId: id,
+      entityId: offer.id,
       previousData: { status: offer.status },
       newData: { status: updated.status },
     });
@@ -765,17 +789,23 @@ export class OffersService {
     if (ctx.status !== SellerStatus.APPROVED) {
       throw new BadRequestException('Only APPROVED sellers can resume offers');
     }
+    // Idempotent: already live.
+    if (offer.status === OfferStatus.ACTIVE) {
+      return offer;
+    }
     if (offer.status !== OfferStatus.PAUSED) {
       throw new BadRequestException(
-        `Cannot resume offer in status ${offer.status}`,
+        `Cannot resume offer in status ${offer.status}. Only paused offers can be resumed.`,
       );
     }
     if (offer.validUntil && offer.validUntil < new Date()) {
-      throw new BadRequestException('Cannot resume an expired offer');
+      throw new BadRequestException(
+        'Cannot resume an expired offer. Duplicate it and publish a new offer instead.',
+      );
     }
 
     const updated = await this.prisma.offer.update({
-      where: { id },
+      where: { id: offer.id },
       data: { status: OfferStatus.ACTIVE, version: { increment: 1 } },
       include: offerInclude,
     });
@@ -785,7 +815,7 @@ export class OffersService {
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.OFFER,
-      entityId: id,
+      entityId: offer.id,
       previousData: { status: offer.status },
       newData: { status: updated.status },
       metadata: { via: 'resume' },
@@ -797,16 +827,20 @@ export class OffersService {
   async pause(userId: string, id: string) {
     const ctx = await this.ctx(userId);
     const offer = await this.assertOwned(ctx, id);
+    // Idempotent: already paused.
+    if (offer.status === OfferStatus.PAUSED) {
+      return offer;
+    }
     if (
       offer.status !== OfferStatus.ACTIVE &&
       offer.status !== OfferStatus.PENDING_REVIEW
     ) {
       throw new BadRequestException(
-        `Cannot pause offer in status ${offer.status}`,
+        `Cannot pause offer in status ${offer.status}. Only active or pending-review offers can be paused.`,
       );
     }
     const updated = await this.prisma.offer.update({
-      where: { id },
+      where: { id: offer.id },
       data: { status: OfferStatus.PAUSED, version: { increment: 1 } },
       include: offerInclude,
     });
@@ -816,7 +850,7 @@ export class OffersService {
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.OFFER,
-      entityId: id,
+      entityId: offer.id,
       previousData: { status: offer.status },
       newData: { status: updated.status },
     });
@@ -827,8 +861,14 @@ export class OffersService {
   async expire(userId: string, id: string) {
     const ctx = await this.ctx(userId);
     const offer = await this.assertOwned(ctx, id);
+    if (offer.status === OfferStatus.EXPIRED) {
+      return offer;
+    }
+    if (offer.status === OfferStatus.CLOSED) {
+      throw new BadRequestException('Cannot expire a deleted offer');
+    }
     const updated = await this.prisma.offer.update({
-      where: { id },
+      where: { id: offer.id },
       data: { status: OfferStatus.EXPIRED, version: { increment: 1 } },
       include: offerInclude,
     });
@@ -838,7 +878,7 @@ export class OffersService {
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.OFFER,
-      entityId: id,
+      entityId: offer.id,
       previousData: { status: offer.status },
       newData: { status: updated.status },
     });
@@ -849,16 +889,19 @@ export class OffersService {
   async cancel(userId: string, id: string) {
     const ctx = await this.ctx(userId);
     const offer = await this.assertOwned(ctx, id);
-    if (
-      offer.status === OfferStatus.CLOSED ||
-      offer.status === OfferStatus.EXPIRED
-    ) {
+    if (offer.status === OfferStatus.CLOSED) {
       throw new BadRequestException(
-        `Cannot cancel offer in status ${offer.status}`,
+        'Offer is already deleted. Refresh your offers list.',
       );
     }
+    if (offer.status === OfferStatus.EXPIRED) {
+      throw new BadRequestException(
+        'Expired offers cannot be deleted. They remain available for audit history.',
+      );
+    }
+    // Soft-delete only — linked PRs/orders/quotes keep their historical snapshots.
     const updated = await this.prisma.offer.update({
-      where: { id },
+      where: { id: offer.id },
       data: {
         status: OfferStatus.CLOSED,
         deletedAt: new Date(),
@@ -872,7 +915,7 @@ export class OffersService {
       actorUserId: userId,
       organizationId: ctx.organizationId,
       entityType: EntityOwnerType.OFFER,
-      entityId: id,
+      entityId: offer.id,
       previousData: { status: offer.status },
       newData: { status: updated.status },
     });

@@ -61,9 +61,18 @@ type GradeLabelSource = {
   manufacturer?: string | null;
 };
 
+/** True for internal Grade Master codes like MASTERBATCH_BLACK / COMPOUND_ABS_FR. */
+export function isInternalGradeCode(value?: string | null): boolean {
+  if (!value) return false;
+  return /^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$/.test(value.trim());
+}
+
 /**
  * Best verified listing title from Grade Master — never invents values.
- * Prefer fullGradeName → displayName → "group + gradeNo" → product name.
+ * Prefer fullGradeName → specific product name → displayName → "group + gradeNo".
+ *
+ * Product name wins over a shorter/generic grade label so white TiO2 masterbatch
+ * (B-05) is not retitled "Masterbatch" just because it was linked to a black-MB grade.
  */
 export function listingDisplayName(
   productName: string,
@@ -71,17 +80,26 @@ export function listingDisplayName(
 ): string {
   const full = grade?.fullGradeName?.trim();
   if (full) return full;
-  const display = grade?.displayName?.trim();
-  if (display) return display;
+
+  const product = productName?.trim() || '';
+  const display = grade?.displayName?.trim() || '';
+  // Prefer the commercial product title when it carries more detail than the grade label
+  // (e.g. "White Masterbatch TiO2 50%" vs generic "Masterbatch").
+  if (product && (!display || product.length > display.length)) {
+    return product;
+  }
+  if (display && !isInternalGradeCode(display)) return display;
+
   const composed = [grade?.gradeGroup, grade?.gradeNo]
     .map((p) => p?.trim())
-    .filter(Boolean)
+    .filter((p): p is string => Boolean(p) && !isInternalGradeCode(p))
     .join(' ')
     .trim();
   if (composed) return composed;
-  const gradeName = grade?.name?.trim();
-  if (gradeName) return gradeName;
-  return productName;
+
+  const gradeName = grade?.name?.trim() || '';
+  if (gradeName && !isInternalGradeCode(gradeName)) return gradeName;
+  return product || display || gradeName;
 }
 
 export function listingManufacturer(
@@ -95,6 +113,69 @@ export function listingManufacturer(
     productBrand?.trim() ||
     null
   );
+}
+
+type BlindDedupeProduct = {
+  id: string;
+  code?: string;
+  grade?: { id?: string; code?: string } | null;
+  technicalSpecs?: unknown;
+  listing?: {
+    price?: unknown;
+    moq?: unknown;
+    leadTime?: string | null;
+    quantityAvailable?: unknown;
+  } | null;
+};
+
+/**
+ * B-06: collapse indistinguishable marketplace cards.
+ * Keeps distinct commercial offers (different price / MOQ / origin / ETA / warehouse).
+ * When two listings are commercially identical (common with multi-seller demo seeds),
+ * keep the one with more available stock.
+ */
+export function dedupeBlindProducts<T extends BlindDedupeProduct>(
+  products: T[],
+): T[] {
+  const byId = new Map<string, T>();
+  for (const product of products) {
+    if (!byId.has(product.id)) byId.set(product.id, product);
+  }
+  const unique = [...byId.values()];
+
+  const fingerprint = (product: T): string => {
+    const specs =
+      product.technicalSpecs && typeof product.technicalSpecs === 'object'
+        ? (product.technicalSpecs as Record<string, unknown>)
+        : {};
+    const origin = String(specs.origin ?? '').trim().toLowerCase();
+    const warehouse = String(specs.warehouseLabel ?? '').trim().toLowerCase();
+    const gradeKey =
+      product.grade?.id || product.grade?.code || product.code || product.id;
+    const price = Number(product.listing?.price ?? 0);
+    const moq = Number(product.listing?.moq ?? 0);
+    const eta = String(product.listing?.leadTime ?? specs.eta ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '');
+    return [gradeKey, price, moq, origin, warehouse, eta].join('::');
+  };
+
+  const bestByFingerprint = new Map<string, T>();
+  for (const product of unique) {
+    const key = fingerprint(product);
+    const previous = bestByFingerprint.get(key);
+    const stock = Number(product.listing?.quantityAvailable ?? 0);
+    const previousStock = Number(previous?.listing?.quantityAvailable ?? 0);
+    if (!previous || stock > previousStock) {
+      bestByFingerprint.set(key, product);
+    }
+  }
+
+  const keep = new Set(
+    [...bestByFingerprint.values()].map((product) => product.id),
+  );
+  return unique.filter((product) => keep.has(product.id));
 }
 
 function inactiveTierIds(metadata: unknown): Set<string> {

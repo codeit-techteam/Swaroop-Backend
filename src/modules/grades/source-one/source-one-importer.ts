@@ -6,6 +6,7 @@ import {
   Prisma,
   type PrismaClient,
 } from '../../../generated/prisma/client.js';
+import { formatCategoryDisplayName } from '../common/category-label.js';
 import {
   displayNameOf,
   type PlannedGrade,
@@ -155,7 +156,7 @@ async function ensureCategories(tx: Tx, plan: SourceOnePlan) {
       data: missing.map((c) => ({
         code: c.code,
         name: c.name,
-        displayName: c.name,
+        displayName: formatCategoryDisplayName(c.name, c.name, c.code),
         parentGroup: c.parentGroup,
         status: MasterStatus.ACTIVE,
       })),

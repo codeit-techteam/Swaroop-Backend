@@ -10,6 +10,7 @@ import {
   skipTake,
 } from '../../master-data/common/pagination.js';
 import {
+  dedupeBlindProducts,
   toBlindOffer,
   toBlindProduct,
 } from '../common/blind-marketplace.mapper.js';
@@ -190,7 +191,7 @@ export class DashboardService {
     ]);
 
     return {
-      products: products.map((p) => toBlindProduct(p)),
+      products: dedupeBlindProducts(products.map((p) => toBlindProduct(p))),
       grades: grades.map((g) => ({
         id: g.id,
         code: g.code,

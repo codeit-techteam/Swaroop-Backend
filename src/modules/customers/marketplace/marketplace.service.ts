@@ -13,10 +13,12 @@ import {
   skipTake,
 } from '../../master-data/common/pagination.js';
 import {
+  dedupeBlindProducts,
   toBlindOffer,
   toBlindProduct,
 } from '../common/blind-marketplace.mapper.js';
 import { CustomerContextService } from '../common/customer-context.service.js';
+import { formatCategoryDisplayName } from '../../grades/common/category-label.js';
 import { gradeSearch } from '../../master-data/grades/grades.service.js';
 import type {
   MarketplaceGradeQueryDto,
@@ -120,7 +122,11 @@ function toCustomerGrade(
           id: g.category.id,
           code: g.category.code,
           name: g.category.name,
-          displayName: g.category.displayName ?? g.category.name,
+          displayName: formatCategoryDisplayName(
+            g.category.displayName,
+            g.category.name,
+            g.category.code,
+          ),
           parentGroup: g.category.parentGroup,
         }
       : null,
@@ -295,13 +301,15 @@ export class MarketplaceService {
         id: c.id,
         code: c.code,
         name: c.name,
-        displayName: c.displayName ?? c.name,
+        displayName: formatCategoryDisplayName(c.displayName, c.name, c.code),
         parentGroup: c.parentGroup,
         sortOrder: c.sortOrder,
         gradeCount: c._count.grades,
       })),
       popularGrades: popularGrades.map((g) => toCustomerGrade(g)),
-      featuredProducts: featuredProducts.map((p) => toBlindProduct(p)),
+      featuredProducts: dedupeBlindProducts(
+        featuredProducts.map((p) => toBlindProduct(p)),
+      ),
       activeOffers: activeOffers.map((o) => toBlindOffer(o)),
       summary: {
         grades: gradeCount,
@@ -338,7 +346,7 @@ export class MarketplaceService {
       id: c.id,
       code: c.code,
       name: c.name,
-      displayName: c.displayName ?? c.name,
+      displayName: formatCategoryDisplayName(c.displayName, c.name, c.code),
       parentGroup: c.parentGroup,
       sortOrder: c.sortOrder,
       gradeCount: c._count.grades,
@@ -444,7 +452,7 @@ export class MarketplaceService {
     ]);
 
     return {
-      items: items.map((p) => toBlindProduct(p)),
+      items: dedupeBlindProducts(items.map((p) => toBlindProduct(p))),
       meta: paginationMeta(page, limit, total),
     };
   }

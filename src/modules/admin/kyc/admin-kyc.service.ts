@@ -748,10 +748,14 @@ export class AdminKycService {
       userId: customer.userId,
       organizationId: customer.organizationId,
       title: 'KYC approved',
-      body: 'Your business KYC has been verified. You now have full access to PetroTrade.',
+      body: 'Your business KYC has been verified. You now have full access to PolyStoreX.',
       entityType: EntityOwnerType.CUSTOMER,
       entityId: id,
-      metadata: { type: 'KYC_APPROVED' },
+      metadata: {
+        type: 'KYC_APPROVED',
+        category: 'documents',
+        route: '/(customer)/profile/tax-documents',
+      },
     });
 
     return this.detail(entityType, id);
@@ -817,7 +821,11 @@ export class AdminKycService {
       body: `${dto.reason} Update your documents and resubmit.`,
       entityType: EntityOwnerType.CUSTOMER,
       entityId: id,
-      metadata: { type: 'KYC_REJECTED' },
+      metadata: {
+        type: 'KYC_REJECTED',
+        category: 'documents',
+        route: '/(customer)/profile/tax-documents',
+      },
     });
 
     return this.detail(entityType, id);
@@ -937,6 +945,8 @@ export class AdminKycService {
       entityId: id,
       metadata: {
         type: 'KYC_CHANGES_REQUESTED',
+        category: 'documents',
+        route: '/(customer)/profile/tax-documents',
         slots: changeRequest.slots,
         documentIds,
       },

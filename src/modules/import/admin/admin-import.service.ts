@@ -41,6 +41,7 @@ import {
 import {
   LISTING_INCLUDE,
   mapListing,
+  withListingCompleteness,
 } from '../listings/import-listing.mapper.js';
 import { ImportMatchingService } from '../matching/import-matching.service.js';
 import { DocumentsCoreService } from '../../documents/services/documents-core.service.js';
@@ -404,9 +405,13 @@ export class AdminImportService {
       this.prisma.importListing.count({ where }),
     ]);
     const now = new Date();
+    const { allowCustomGrade } = await this.settings.get();
     return {
       items: rows.map((r) => ({
-        ...mapListing(r, 'admin', { now }),
+        ...withListingCompleteness(r, mapListing(r, 'admin', { now }), {
+          allowCustomGrade,
+          now,
+        }),
         ownerOrg: {
           id: r.ownerOrg.id,
           name: r.ownerOrg.legalName ?? r.ownerOrg.name,
@@ -495,8 +500,14 @@ export class AdminImportService {
       ...deals.map((d) => d.id),
     ]);
 
+    const { allowCustomGrade } = await this.settings.get();
+    const mapped = withListingCompleteness(
+      listing,
+      mapListing(listing, 'admin'),
+      { allowCustomGrade, now: new Date() },
+    );
     return {
-      ...mapListing(listing, 'admin'),
+      ...mapped,
       ownerOrg: listing.ownerOrg,
       createdBy: listing.createdBy,
       snapshot: listing.snapshot,

@@ -175,6 +175,23 @@ const clientOrigins = (
 };
 
 /**
+ * Whether the fixed demo OTP (123456 for the demo phone) is accepted.
+ * - AUTH_STRICT_OTP=true always wins (never accepted).
+ * - production: OFF unless AUTH_DEV_FIXED_OTP=true is set explicitly.
+ * - other envs: ON unless AUTH_DEV_FIXED_OTP=false.
+ */
+export const resolveFixedDevOtp = (
+  env: Record<string, string | undefined>,
+): boolean => {
+  if (env.AUTH_STRICT_OTP === 'true') return false;
+  const optIn = (env.AUTH_DEV_FIXED_OTP ?? '').trim().toLowerCase();
+  if (env.NODE_ENV === 'production') {
+    return optIn === 'true';
+  }
+  return optIn !== 'false';
+};
+
+/**
  * Central configuration factory used by Nest ConfigModule.
  * Prefer ConfigService.get('...') over process.env in application code.
  */
@@ -278,8 +295,10 @@ export default (): AppConfig => {
       authDevExposeOtp: process.env.AUTH_DEV_EXPOSE_OTP === 'true',
       // Fixed demo OTP (123456 for +918240890242).
       // Development phase: ON until AUTH_STRICT_OTP=true (real SMS production lock).
+      // Production is fail-closed (L-09 / N-01): the fixed OTP is only accepted when
+      // the operator explicitly opts in with AUTH_DEV_FIXED_OTP=true.
       authStrictOtp: process.env.AUTH_STRICT_OTP === 'true',
-      authDevFixedOtp: process.env.AUTH_STRICT_OTP !== 'true',
+      authDevFixedOtp: resolveFixedDevOtp(process.env),
       passwordResetExpiresInSeconds: Number(
         process.env.PASSWORD_RESET_EXPIRES_IN_SECONDS ?? 1800,
       ),
@@ -346,25 +365,59 @@ export default (): AppConfig => {
     },
     legal: (() => {
       const trim = (v: string | undefined) => (v ?? '').trim().replace(/\/+$/, '');
+      // Live marketing site on Vercel. petrotrade.in is still a GoDaddy park/lander
+      // and swaroop-website.vercel.app 404s — use the deployed host until custom DNS is live.
+      const LIVE_WEBSITE_URL = 'https://swaroop-website-mocha.vercel.app';
+      const BROKEN_WEBSITE_HOSTS = new Set([
+        'petrotrade.in',
+        'www.petrotrade.in',
+        'swaroop-website.vercel.app',
+      ]);
+      const resolveWebsiteOrigin = (raw: string): string => {
+        const value = trim(raw);
+        if (!value) return '';
+        try {
+          const parsed = new URL(value);
+          if (BROKEN_WEBSITE_HOSTS.has(parsed.hostname.toLowerCase())) {
+            return LIVE_WEBSITE_URL;
+          }
+          return value;
+        } catch {
+          return value;
+        }
+      };
       const websiteUrl =
-        trim(process.env.PUBLIC_WEBSITE_URL) ||
+        resolveWebsiteOrigin(process.env.PUBLIC_WEBSITE_URL ?? '') ||
         // First concrete origin from WEBSITE_ORIGINS (skip wildcard preview hosts).
-        // Default to the live petrotrade.in site — swaroop-website.vercel.app returns 404.
-        (
-          process.env.WEBSITE_ORIGINS ??
-          'https://petrotrade.in'
-        )
-          .split(',')
-          .map((o) => o.trim())
-          .find((o) => o.startsWith('http') && !o.includes('*')) ||
-        '';
+        resolveWebsiteOrigin(
+          (
+            process.env.WEBSITE_ORIGINS ?? LIVE_WEBSITE_URL
+          )
+            .split(',')
+            .map((o) => o.trim())
+            .find((o) => o.startsWith('http') && !o.includes('*')) || '',
+        ) ||
+        LIVE_WEBSITE_URL;
       const join = (path: string) =>
         websiteUrl ? `${websiteUrl}${path.startsWith('/') ? path : `/${path}`}` : '';
+      const resolvePublicPath = (override: string | undefined, path: string) => {
+        const configured = trim(override);
+        if (!configured) return join(path);
+        try {
+          const parsed = new URL(configured);
+          if (BROKEN_WEBSITE_HOSTS.has(parsed.hostname.toLowerCase())) {
+            return join(parsed.pathname || path);
+          }
+          return configured;
+        } catch {
+          return configured;
+        }
+      };
       return {
         websiteUrl,
-        termsUrl: trim(process.env.PUBLIC_TERMS_URL) || join('/terms'),
-        privacyUrl: trim(process.env.PUBLIC_PRIVACY_URL) || join('/privacy'),
-        supportUrl: trim(process.env.PUBLIC_SUPPORT_URL) || join('/contact'),
+        termsUrl: resolvePublicPath(process.env.PUBLIC_TERMS_URL, '/terms'),
+        privacyUrl: resolvePublicPath(process.env.PUBLIC_PRIVACY_URL, '/privacy'),
+        supportUrl: resolvePublicPath(process.env.PUBLIC_SUPPORT_URL, '/contact'),
         // Never invent an email — only expose when explicitly configured.
         supportEmail: trim(process.env.PUBLIC_SUPPORT_EMAIL),
       };

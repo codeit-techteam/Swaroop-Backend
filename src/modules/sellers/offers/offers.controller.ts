@@ -6,7 +6,6 @@ import {
   HttpCode,
   HttpStatus,
   Param,
-  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -98,7 +97,7 @@ export class OffersController {
   @ApiOperation({ summary: 'Get offer' })
   async findOne(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.findOne(user.id, id),
@@ -110,7 +109,7 @@ export class OffersController {
   @ApiOperation({ summary: 'Offer audit history' })
   async history(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.history(user.id, id),
@@ -122,7 +121,7 @@ export class OffersController {
   @ApiOperation({ summary: 'Purchase requests linked to this offer' })
   async purchaseRequests(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.purchaseRequestsForOffer(user.id, id),
@@ -136,7 +135,7 @@ export class OffersController {
   })
   async update(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
     @Body() dto: UpdateOfferDto,
   ) {
     return successResponse(
@@ -153,7 +152,7 @@ export class OffersController {
   })
   async activate(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.activate(user.id, id),
@@ -166,7 +165,7 @@ export class OffersController {
   @ApiOperation({ summary: 'Resume paused offer → ACTIVE' })
   async resume(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.resume(user.id, id),
@@ -179,7 +178,7 @@ export class OffersController {
   @ApiOperation({ summary: 'Pause offer' })
   async pause(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.pause(user.id, id),
@@ -192,7 +191,7 @@ export class OffersController {
   @ApiOperation({ summary: 'Cancel offer → CLOSED (soft delete)' })
   async cancel(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.cancel(user.id, id),
@@ -205,7 +204,7 @@ export class OffersController {
   @ApiOperation({ summary: 'Expire offer' })
   async expire(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.expire(user.id, id),
@@ -218,7 +217,7 @@ export class OffersController {
   @ApiOperation({ summary: 'Soft delete / cancel offer' })
   async remove(
     @CurrentUser() user: AuthenticatedUser,
-    @Param('id', ParseUUIDPipe) id: string,
+    @Param('id') id: string,
   ) {
     return successResponse(
       await this.offersService.softDelete(user.id, id),
