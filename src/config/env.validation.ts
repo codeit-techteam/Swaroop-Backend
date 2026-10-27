@@ -63,13 +63,14 @@ export const envSchema = z
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
     AUTH_DEV_EXPOSE_OTP: booleanFromString.optional().default(false),
     /**
-     * Fixed demo OTP (123456 for the demo phone). Defaults ON during the
-     * development phase until AUTH_STRICT_OTP=true. Set to false to opt out
-     * without enabling the real-SMS lock (see `resolveFixedDevOtp`).
+     * Informational / legacy flag. Development-phase fixed OTP is controlled
+     * by AUTH_STRICT_OTP only (see `resolveFixedDevOtp`).
      */
     AUTH_DEV_FIXED_OTP: booleanFromString.optional(),
     /**
      * When true, fixed demo OTP is forbidden (real SMS production lock).
+     * Until this is true, demo phone +918240890242 accepts OTP 123456 on every
+     * panel (mobile, customer, seller, website).
      */
     AUTH_STRICT_OTP: booleanFromString.optional().default(false),
     PASSWORD_RESET_EXPIRES_IN_SECONDS: z.coerce

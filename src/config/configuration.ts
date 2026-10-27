@@ -43,7 +43,7 @@ export type AppConfig = {
     authDevExposeOtp: boolean;
     /**
      * Demo phone +918240890242 accepts OTP 123456.
-     * On during the development phase unless AUTH_STRICT_OTP=true.
+     * True during the development phase; false only when AUTH_STRICT_OTP=true.
      */
     authDevFixedOtp: boolean;
     /**
@@ -176,21 +176,14 @@ const clientOrigins = (
 
 /**
  * Whether the fixed demo OTP (123456 for the demo phone) is accepted.
- * Development phase: ON until real SMS is locked with AUTH_STRICT_OTP=true.
- * - AUTH_STRICT_OTP=true always wins (never accepted).
- * - AUTH_DEV_FIXED_OTP=false is an explicit opt-out in any environment.
- * - AUTH_DEV_FIXED_OTP=true is an explicit opt-in in any environment.
- * - Unset: ON (development phase default, including NODE_ENV=production hosts
- *   that have not yet flipped AUTH_STRICT_OTP for live SMS).
+ * Development phase: ON for every host until real SMS is locked with
+ * AUTH_STRICT_OTP=true. AUTH_DEV_FIXED_OTP is retained for docs/ops clarity
+ * but cannot disable the demo OTP while AUTH_STRICT_OTP is off — DigitalOcean
+ * and other production hosts stay usable for panel QA until SMS goes live.
  */
 export const resolveFixedDevOtp = (
   env: Record<string, string | undefined>,
-): boolean => {
-  if (env.AUTH_STRICT_OTP === 'true') return false;
-  const optIn = (env.AUTH_DEV_FIXED_OTP ?? '').trim().toLowerCase();
-  // Unset / true → ON for the development phase; only an explicit false opts out.
-  return optIn !== 'false';
-};
+): boolean => env.AUTH_STRICT_OTP !== 'true';
 
 /**
  * Central configuration factory used by Nest ConfigModule.

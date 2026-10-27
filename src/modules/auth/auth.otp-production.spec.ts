@@ -94,25 +94,20 @@ describe('AuthService.isFixedDevOtpEnabled', () => {
 
 /**
  * Development phase: fixed OTP stays ON until AUTH_STRICT_OTP locks real SMS.
- * Operators can still opt out with AUTH_DEV_FIXED_OTP=false.
+ * AUTH_DEV_FIXED_OTP cannot disable it while the SMS lock is off.
  */
 describe('resolveFixedDevOtp (configuration)', () => {
-  it('is ON in production when AUTH_DEV_FIXED_OTP is unset (development phase)', async () => {
+  it('is ON in production during the development phase', async () => {
     expect(resolveFixedDevOtp({ NODE_ENV: 'production' })).toBe(true);
-  });
-
-  it('honours an explicit AUTH_DEV_FIXED_OTP=false opt-out', async () => {
     expect(
       resolveFixedDevOtp({ NODE_ENV: 'production', AUTH_DEV_FIXED_OTP: 'false' }),
-    ).toBe(false);
-    expect(
-      resolveFixedDevOtp({ NODE_ENV: 'development', AUTH_DEV_FIXED_OTP: 'false' }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it('honours an explicit AUTH_DEV_FIXED_OTP=true opt-in', async () => {
+  it('stays ON outside production until AUTH_STRICT_OTP', async () => {
+    expect(resolveFixedDevOtp({ NODE_ENV: 'development' })).toBe(true);
     expect(
-      resolveFixedDevOtp({ NODE_ENV: 'production', AUTH_DEV_FIXED_OTP: 'true' }),
+      resolveFixedDevOtp({ NODE_ENV: 'development', AUTH_DEV_FIXED_OTP: 'false' }),
     ).toBe(true);
   });
 
@@ -124,10 +119,6 @@ describe('resolveFixedDevOtp (configuration)', () => {
         AUTH_DEV_FIXED_OTP: 'true',
       }),
     ).toBe(false);
-  });
-
-  it('keeps the development-phase default outside production', async () => {
-    expect(resolveFixedDevOtp({ NODE_ENV: 'development' })).toBe(true);
   });
 });
 
