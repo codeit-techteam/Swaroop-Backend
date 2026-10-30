@@ -93,18 +93,18 @@ describe('AuthService.isFixedDevOtpEnabled', () => {
 });
 
 /**
- * Development phase: fixed OTP stays ON until AUTH_STRICT_OTP locks real SMS.
- * AUTH_DEV_FIXED_OTP cannot disable it while the SMS lock is off.
+ * Fixed OTP stays ON until AUTH_STRICT_OTP or an active MSG91 provider locks it.
+ * AUTH_DEV_FIXED_OTP cannot re-enable the bypass once either lock applies.
  */
 describe('resolveFixedDevOtp (configuration)', () => {
-  it('is ON in production during the development phase', async () => {
+  it('is ON without SMS lock or MSG91 credentials', async () => {
     expect(resolveFixedDevOtp({ NODE_ENV: 'production' })).toBe(true);
     expect(
       resolveFixedDevOtp({ NODE_ENV: 'production', AUTH_DEV_FIXED_OTP: 'false' }),
     ).toBe(true);
   });
 
-  it('stays ON outside production until AUTH_STRICT_OTP', async () => {
+  it('stays ON outside production until AUTH_STRICT_OTP or MSG91', async () => {
     expect(resolveFixedDevOtp({ NODE_ENV: 'development' })).toBe(true);
     expect(
       resolveFixedDevOtp({ NODE_ENV: 'development', AUTH_DEV_FIXED_OTP: 'false' }),
@@ -119,6 +119,63 @@ describe('resolveFixedDevOtp (configuration)', () => {
         AUTH_DEV_FIXED_OTP: 'true',
       }),
     ).toBe(false);
+  });
+
+  it('disables fixed OTP when MSG91 provider credentials are present', async () => {
+    expect(
+      resolveFixedDevOtp({
+        NODE_ENV: 'production',
+        OTP_PROVIDER: 'msg91',
+        MSG91_AUTH_KEY: 'live-key',
+        AUTH_DEV_FIXED_OTP: 'true',
+      }),
+    ).toBe(false);
+  });
+
+  it('keeps fixed OTP when OTP_PROVIDER=msg91 but auth key is empty', async () => {
+    expect(
+      resolveFixedDevOtp({
+        NODE_ENV: 'development',
+        OTP_PROVIDER: 'msg91',
+        MSG91_AUTH_KEY: '',
+      }),
+    ).toBe(true);
+  });
+});
+
+describe('MSG91 production env validation', () => {
+  const msg91Env = {
+    DATABASE_URL: 'postgresql://user:pass@localhost:5432/swaroop',
+    JWT_ACCESS_SECRET: 'production-access-secret-min-32-characters!!',
+    JWT_REFRESH_SECRET: 'production-refresh-secret-min-32-characters!',
+    CORS_ORIGINS: 'https://app.swaroop.example',
+  };
+
+  it('requires MSG91 credentials when OTP_PROVIDER=msg91', () => {
+    expect(() =>
+      validateEnv({
+        ...msg91Env,
+        NODE_ENV: 'development',
+        OTP_PROVIDER: 'msg91',
+        MSG91_AUTH_KEY: '',
+        MSG91_OTP_TEMPLATE_ID: '',
+      }),
+    ).toThrow(/MSG91_AUTH_KEY|MSG91_OTP_TEMPLATE_ID/);
+  });
+
+  it('accepts MSG91 configuration with template id', () => {
+    const env = validateEnv({
+      ...msg91Env,
+      NODE_ENV: 'production',
+      AUTH_STRICT_OTP: 'true',
+      AUTH_DEV_EXPOSE_OTP: 'false',
+      OTP_PROVIDER: 'msg91',
+      MSG91_AUTH_KEY: 'production-msg91-auth-key',
+      MSG91_OTP_TEMPLATE_ID: '6ae081288c342f46e203bb12',
+      MSG91_HEADER: 'VELPLY',
+    });
+    expect(env.OTP_PROVIDER).toBe('msg91');
+    expect(env.MSG91_OTP_TEMPLATE_ID).toBe('6ae081288c342f46e203bb12');
   });
 });
 

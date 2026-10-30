@@ -7,6 +7,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import {
   assertMarketplaceOffer,
+  buildFulfilmentInfo,
   dedupeBlindProducts,
   MarketplaceException,
   resolveOfferUnitPrice,
@@ -190,6 +191,81 @@ describe('blind marketplace mapper', () => {
     expect(json).not.toContain('sellerName');
     expect(payload.listing?.price).toBe(137.45);
     expect(payload.listing?.moq).toBe(20);
+    expect(payload.listing?.leadTime).toBe('2-3 Days');
+    expect(payload.listing?.fulfilment?.deliveryEstimate?.label).toBe('2-3 Days');
+  });
+
+  it('calculates delivery estimate from warehouse when offer has no timing terms', () => {
+    const payload = toBlindProduct({
+      id: 'prod-no-eta',
+      code: 'ABS-EXT-3000D',
+      name: 'ABS EXTRUSION 3000D',
+      brand: null,
+      description: null,
+      technicalSpecs: { origin: 'India', warehouseLabel: 'Bhiwandi' },
+      mfi: null,
+      density: null,
+      packaging: '25kg bags',
+      unit: 'MT',
+      countryOfOrigin: 'India',
+      supplyOrigin: 'domestic',
+      status: 'ACTIVE',
+      offers: [
+        {
+          id: 'offer-no-eta',
+          quantity: 57,
+          moq: 10,
+          unit: 'MT',
+          basePrice: 10,
+          currency: 'INR',
+          deliveryTerms: null,
+          warehouse: { name: 'Bhiwandi Hub', city: 'Bhiwandi', state: 'Maharashtra' },
+          metadata: { dispatchWindow: '24 Hours' },
+        },
+      ],
+    });
+
+    expect(payload.listing?.leadTime).toBe('2–3 Business Days');
+    expect(payload.listing?.fulfilment?.deliveryEstimate).toEqual({
+      label: '2–3 Business Days',
+      source: 'CALCULATED',
+    });
+    expect(payload.listing?.fulfilment?.dispatchWindow?.label).toBe('24 Hours');
+    expect(payload.listing?.fulfilment?.warehouse?.label).toBe('Bhiwandi');
+    expect(payload.listing?.fulfilment?.destinationAware).toBe(false);
+  });
+
+  it('buildFulfilmentInfo calculates defaults when seller timing is missing', () => {
+    const info = buildFulfilmentInfo({
+      technicalSpecs: { origin: 'India' },
+      countryOfOrigin: 'India',
+      supplyOrigin: 'domestic',
+      offer: { deliveryTerms: '  ', metadata: {}, warehouse: null },
+    });
+    expect(info.deliveryEstimate).toEqual({
+      label: '4–6 Business Days',
+      source: 'CALCULATED',
+    });
+    expect(info.dispatchWindow).toEqual({
+      label: '24 Hours',
+      source: 'PLATFORM_DEFAULT',
+    });
+  });
+
+  it('ignores Incoterm deliveryTerms and calculates a transit ETA instead', () => {
+    const info = buildFulfilmentInfo({
+      technicalSpecs: {},
+      countryOfOrigin: 'India',
+      offer: {
+        deliveryTerms: 'Ex-works Mumbai',
+        metadata: {},
+        warehouse: { name: 'Andheri Hub', city: 'Mumbai', state: 'Maharashtra' },
+      },
+    });
+    expect(info.deliveryEstimate).toEqual({
+      label: '2–3 Business Days',
+      source: 'CALCULATED',
+    });
   });
 
   it('never exposes seller identity on offers', () => {
@@ -312,6 +388,43 @@ describe('blind marketplace mapper', () => {
     expect(payload.listing?.priceTiers).toEqual([
       { minQty: 10, maxQty: null, price: 88000, currency: 'INR' },
     ]);
+    expect(payload.listing?.productCredit).toEqual({
+      supported: true,
+      tenureDays: [15, 30],
+    });
+  });
+
+  it('opts a listing out of platform credit from offer payment terms', () => {
+    const payload = toBlindProduct({
+      id: 'prod-3',
+      code: 'PP-NO-CREDIT',
+      name: 'PP Cash Only',
+      brand: 'PRIVATE',
+      description: null,
+      technicalSpecs: null,
+      mfi: null,
+      density: null,
+      packaging: '25kg bags',
+      unit: 'MT',
+      countryOfOrigin: 'IN',
+      supplyOrigin: 'domestic',
+      status: 'ACTIVE',
+      offers: [
+        {
+          id: 'offer-3',
+          quantity: 100,
+          moq: 10,
+          unit: 'MT',
+          basePrice: 91000,
+          currency: 'INR',
+          paymentTerms: { platformCredit: false },
+        },
+      ],
+    });
+    expect(payload.listing?.productCredit).toEqual({
+      supported: false,
+      tenureDays: [],
+    });
   });
 
   describe('assertMarketplaceOffer grade gate', () => {

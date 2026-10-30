@@ -2,6 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { PaymentMethod, Prisma } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
+import {
+  applyProductCreditGate,
+  buildCreditPaymentOptions,
+  buildStandardPaymentOptions,
+  DEFAULT_PRODUCT_CREDIT,
+  DEFAULT_STANDARD_METHODS,
+  productAllowsCreditTenure,
+  resolveCreditAccess,
+  resolveProductCredit,
+  type PaymentEligibilityView,
+  type ProductCreditConfig,
+} from '../../payments/common/payment-eligibility.js';
 import { CreditEligibilityService } from '../../payments/services/credit-eligibility.service.js';
 import { toAddressBookDto } from '../../organizations/addresses/address-book.mapper.js';
 import { CartService, mapCustomerPaymentMethod } from '../cart/cart.service.js';
@@ -107,76 +119,120 @@ export class CheckoutService {
     return rows.map(toAddressBookDto);
   }
 
-  async paymentOptions(userId: string, amount?: number) {
+  /**
+   * Backend-authoritative payment eligibility for the signed-in customer.
+   *
+   * Only *selectable* methods are returned in `options`. Credit access is
+   * described by an explicit `credit.state` (NOT_APPLIED, APPLICATION_PENDING,
+   * APPROVED, LIMIT_EXCEEDED, SUSPENDED, ...) so both customer clients render
+   * the same thing without inferring it from disabled rows.
+   */
+  async paymentOptions(
+    userId: string,
+    amount?: number,
+    listing?: { productId?: string; offerId?: string },
+  ): Promise<PaymentEligibilityView> {
     const ctx = await this.ctx(userId);
-    const credit = await this.creditEligibility.inspect(
-      this.prisma,
-      ctx.organizationId,
-      amount ?? 0,
+    const [account, latestApplication, productCredit] = await Promise.all([
+      this.prisma.customerCreditProfile.findUnique({
+        where: { customerProfileId: ctx.customerProfileId },
+      }),
+      this.prisma.creditApplication.findFirst({
+        where: { customerProfileId: ctx.customerProfileId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.resolveListingCredit(listing),
+    ]);
+
+    const credit = applyProductCreditGate(
+      resolveCreditAccess({
+        account,
+        latestApplication,
+        amount: amount ?? 0,
+      }),
+      productCredit,
     );
+
+    const standard = buildStandardPaymentOptions({
+      advanceDiscountBps: DEFAULT_COMMERCE_PRICING.advanceDiscountBps,
+      enabledMethods: DEFAULT_STANDARD_METHODS,
+    });
 
     return {
       source: 'PETROTRADE',
-      credit: {
-        eligible: credit.eligible,
-        reason: credit.reason,
-        approvedLimit: credit.approvedLimit,
-        availableLimit: credit.availableLimit,
-        tenureOptions: credit.tenureOptions,
-      },
+      currency: account?.currency ?? 'INR',
+      amount: amount != null && amount > 0 ? moneyString(amount) : null,
       options: [
-        {
-          paymentOption: PaymentMethod.ADVANCE,
-          title: PAYMENT_LABELS.ADVANCE,
-          description:
-            'Pay against the Proforma Invoice to lock the quoted price.',
-          benefitLabel:
-            DEFAULT_COMMERCE_PRICING.advanceDiscountBps > 0
-              ? `${(DEFAULT_COMMERCE_PRICING.advanceDiscountBps / 100).toFixed(0)}% Platform Discount Eligible`
-              : 'Preferred pricing',
-          eligible: true,
-          discountBps: DEFAULT_COMMERCE_PRICING.advanceDiscountBps,
-        },
-        {
-          paymentOption: PaymentMethod.ON_LOADING,
-          title: PAYMENT_LABELS.ON_LOADING,
-          description: 'Pay after loading confirmation.',
-          benefitLabel: 'Standard terms',
-          eligible: true,
-          discountBps: 0,
-        },
-        {
-          paymentOption: PaymentMethod.ON_DELIVERY,
-          title: PAYMENT_LABELS.ON_DELIVERY,
-          description: 'Pay after delivery confirmation.',
-          benefitLabel: 'Standard terms',
-          eligible: true,
-          discountBps: 0,
-        },
-        {
-          paymentOption: PaymentMethod.CREDIT_15,
-          title: PAYMENT_LABELS.CREDIT_15,
-          description:
-            'PetroTrade managed working-capital credit. Seller does not extend credit.',
-          benefitLabel: credit.eligible
-            ? 'Approved limit available'
-            : 'Approval required',
-          eligible: credit.eligible,
-          discountBps: 0,
-        },
-        {
-          paymentOption: PaymentMethod.CREDIT_30,
-          title: PAYMENT_LABELS.CREDIT_30,
-          description:
-            'PetroTrade managed working-capital credit. Seller does not extend credit.',
-          benefitLabel: credit.eligible
-            ? 'Approved limit available'
-            : 'Approval required',
-          eligible: credit.eligible,
-          discountBps: 0,
-        },
+        ...standard,
+        ...buildCreditPaymentOptions(credit, productCredit),
       ],
+      productCredit,
+      credit,
     };
+  }
+
+  private async resolveListingCredit(listing?: {
+    productId?: string;
+    offerId?: string;
+  }): Promise<ProductCreditConfig> {
+    if (!listing?.offerId && !listing?.productId) {
+      return DEFAULT_PRODUCT_CREDIT;
+    }
+    const offer = listing.offerId
+      ? await this.prisma.offer.findFirst({
+          where: { id: listing.offerId, deletedAt: null },
+          select: {
+            paymentTerms: true,
+            metadata: true,
+            product: { select: { technicalSpecs: true } },
+          },
+        })
+      : await this.prisma.offer.findFirst({
+          where: {
+            deletedAt: null,
+            status: 'ACTIVE',
+            OR: [
+              { productId: listing.productId },
+              { product: { code: listing.productId, deletedAt: null } },
+            ],
+          },
+          orderBy: { basePrice: 'asc' },
+          select: {
+            paymentTerms: true,
+            metadata: true,
+            product: { select: { technicalSpecs: true } },
+          },
+        });
+    if (!offer) {
+      return DEFAULT_PRODUCT_CREDIT;
+    }
+    return resolveProductCredit({
+      paymentTerms: offer.paymentTerms,
+      metadata: offer.metadata,
+      technicalSpecs: offer.product?.technicalSpecs,
+    });
+  }
+
+  private assertOfferSupportsCredit(
+    offer: {
+      paymentTerms?: unknown;
+      metadata?: unknown;
+      product?: { technicalSpecs?: unknown } | null;
+    },
+    paymentMethod: PaymentMethod,
+  ) {
+    const productCredit = resolveProductCredit({
+      paymentTerms: offer.paymentTerms,
+      metadata: offer.metadata,
+      technicalSpecs: offer.product?.technicalSpecs,
+    });
+    if (!productAllowsCreditTenure(productCredit, paymentMethod)) {
+      throw new CheckoutException(
+        'CREDIT_NOT_ELIGIBLE',
+        'This grade does not support PetroTrade credit payment terms. Choose another payment method.',
+        { reason: 'PRODUCT_CREDIT_UNAVAILABLE', productCredit },
+      );
+    }
   }
 
   async quote(userId: string, dto: CreateCheckoutQuoteDto) {
@@ -211,17 +267,36 @@ export class CheckoutService {
     });
 
     if (isPlatformCredit(paymentMethod)) {
+      this.assertOfferSupportsCredit(match.offer, paymentMethod);
       const eligibility = await this.creditEligibility.inspect(
         this.prisma,
         ctx.organizationId,
         amounts.totalAmount,
+        paymentMethod,
       );
       if (!eligibility.eligible) {
-        throw new CheckoutException(
+        const code =
           eligibility.reason === 'CREDIT_LIMIT_EXCEEDED'
             ? 'CREDIT_LIMIT_EXCEEDED'
-            : 'CREDIT_NOT_ELIGIBLE',
-          'PetroTrade credit is not available for this purchase',
+            : 'CREDIT_NOT_ELIGIBLE';
+        throw new CheckoutException(
+          code,
+          code === 'CREDIT_LIMIT_EXCEEDED'
+            ? `This order exceeds your available credit of INR ${eligibility.availableLimit}. Reduce the quantity or choose another payment method.`
+            : eligibility.reason === 'CREDIT_TENURE_UNAVAILABLE'
+              ? 'The selected credit tenure is not within your approved credit terms.'
+              : eligibility.reason === 'CREDIT_SUSPENDED'
+                ? 'Your business credit account is currently suspended. Choose another payment method.'
+                : eligibility.reason === 'CREDIT_EXPIRED'
+                  ? 'Your approved credit terms have expired. Choose another payment method.'
+                  : eligibility.reason === 'CREDIT_BLOCKED'
+                    ? 'Your business credit account is on hold. Choose another payment method.'
+                    : 'PetroTrade credit is not available for this purchase. Choose another payment method.',
+          {
+            reason: eligibility.reason,
+            availableLimit: eligibility.availableLimit,
+            tenureOptions: eligibility.tenureOptions,
+          },
         );
       }
     }
@@ -442,10 +517,12 @@ export class CheckoutService {
     }
 
     if (isPlatformCredit(quote.paymentMethod)) {
+      this.assertOfferSupportsCredit(match.offer, quote.paymentMethod);
       await this.creditEligibility.assertEligible(
         db,
         ctx.organizationId,
         amounts.totalAmount,
+        quote.paymentMethod,
       );
     }
 

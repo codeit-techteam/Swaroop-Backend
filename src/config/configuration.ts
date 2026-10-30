@@ -43,7 +43,8 @@ export type AppConfig = {
     authDevExposeOtp: boolean;
     /**
      * Demo phone +918240890242 accepts OTP 123456.
-     * True during the development phase; false only when AUTH_STRICT_OTP=true.
+     * True during the development phase; false when AUTH_STRICT_OTP=true
+     * or when MSG91 OTP provider credentials are configured.
      */
     authDevFixedOtp: boolean;
     /**
@@ -52,6 +53,21 @@ export type AppConfig = {
     authStrictOtp: boolean;
     passwordResetExpiresInSeconds: number;
     bcryptSaltRounds: number;
+  };
+  otp: {
+    provider: 'msg91' | 'local' | 'none';
+    environment: 'production' | 'development';
+    /** When true (production + MSG91 selected), refuse phone OTP without credentials. */
+    requireProviderInProduction: boolean;
+    msg91: {
+      authKey: string;
+      templateId: string;
+      senderId: string;
+      header: string;
+      dltEntityId: string;
+      dltTemplateId: string;
+      timeoutMs: number;
+    };
   };
   storage: {
     provider: 'none' | 'r2';
@@ -176,14 +192,21 @@ const clientOrigins = (
 
 /**
  * Whether the fixed demo OTP (123456 for the demo phone) is accepted.
- * Development phase: ON for every host until real SMS is locked with
- * AUTH_STRICT_OTP=true. AUTH_DEV_FIXED_OTP is retained for docs/ops clarity
- * but cannot disable the demo OTP while AUTH_STRICT_OTP is off — DigitalOcean
- * and other production hosts stay usable for panel QA until SMS goes live.
+ * Disabled when:
+ * - AUTH_STRICT_OTP=true (explicit production SMS lock), OR
+ * - OTP_PROVIDER=msg91 with MSG91_AUTH_KEY configured (real provider active)
+ *
+ * AUTH_DEV_FIXED_OTP alone cannot re-enable the bypass once either lock applies.
  */
 export const resolveFixedDevOtp = (
   env: Record<string, string | undefined>,
-): boolean => env.AUTH_STRICT_OTP !== 'true';
+): boolean => {
+  if (env.AUTH_STRICT_OTP === 'true') return false;
+  const provider = (env.OTP_PROVIDER ?? '').trim().toLowerCase();
+  const authKey = (env.MSG91_AUTH_KEY ?? '').trim();
+  if (provider === 'msg91' && authKey.length > 0) return false;
+  return true;
+};
 
 /**
  * Central configuration factory used by Nest ConfigModule.
@@ -287,9 +310,6 @@ export default (): AppConfig => {
         process.env.OTP_RESEND_COOLDOWN_SECONDS ?? 60,
       ),
       authDevExposeOtp: process.env.AUTH_DEV_EXPOSE_OTP === 'true',
-      // Fixed demo OTP (123456 for +918240890242).
-      // Development phase: ON until AUTH_STRICT_OTP=true (real SMS production lock).
-      // Opt out with AUTH_DEV_FIXED_OTP=false; opt in explicitly with =true.
       authStrictOtp: process.env.AUTH_STRICT_OTP === 'true',
       authDevFixedOtp: resolveFixedDevOtp(process.env),
       passwordResetExpiresInSeconds: Number(
@@ -297,6 +317,41 @@ export default (): AppConfig => {
       ),
       bcryptSaltRounds: Number(process.env.BCRYPT_SALT_ROUNDS ?? 12),
     },
+    otp: (() => {
+      const providerRaw = (process.env.OTP_PROVIDER ?? 'local')
+        .trim()
+        .toLowerCase();
+      const provider: 'msg91' | 'local' | 'none' =
+        providerRaw === 'msg91'
+          ? 'msg91'
+          : providerRaw === 'none'
+            ? 'none'
+            : 'local';
+      const otpEnvRaw = (process.env.OTP_ENVIRONMENT ?? process.env.NODE_ENV ?? '')
+        .trim()
+        .toLowerCase();
+      const otpEnvironment: 'production' | 'development' =
+        otpEnvRaw === 'production' ? 'production' : 'development';
+      return {
+        provider,
+        environment: otpEnvironment,
+        requireProviderInProduction:
+          process.env.NODE_ENV === 'production' && provider === 'msg91',
+        msg91: {
+          authKey: (process.env.MSG91_AUTH_KEY ?? '').trim(),
+          templateId: (
+            process.env.MSG91_OTP_TEMPLATE_ID ??
+            process.env.MSG91_TEMPLATE_ID ??
+            ''
+          ).trim(),
+          senderId: (process.env.MSG91_SENDER_ID ?? '').trim(),
+          header: (process.env.MSG91_HEADER ?? 'VELPLY').trim(),
+          dltEntityId: (process.env.MSG91_DLT_ENTITY_ID ?? '').trim(),
+          dltTemplateId: (process.env.MSG91_DLT_TEMPLATE_ID ?? '').trim(),
+          timeoutMs: Number(process.env.MSG91_TIMEOUT_MS ?? 15_000),
+        },
+      };
+    })(),
     storage: {
       provider: storageProvider,
       accountId,

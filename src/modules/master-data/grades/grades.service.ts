@@ -47,11 +47,17 @@ const SOURCE_MANAGED_FIELDS = ['code', 'categoryId', 'subcategoryId'] as const;
 
 /** Expand common chemical aliases so TIO2 / TiO2 / titanium dioxide match (N-03). */
 export function expandGradeSearchTerms(q: string): string[] {
-  const base = q.trim();
+  // Collapse whitespace; keep punctuation in codes (e.g. F4811, MB-WH-50).
+  const base = q.trim().replace(/\s+/g, ' ');
   if (!base) return [];
-  const lower = base.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  const lower = base
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '');
   const terms = new Set<string>([base]);
-  if (/^tio[_-]?2$|^tio₂$|titanium\s*dioxide/i.test(lower.replace(/\s+/g, ''))) {
+  if (
+    /^tio[_-]?2$|^tio₂$|titanium\s*dioxide/i.test(lower.replace(/\s+/g, ''))
+  ) {
     terms.add('TIO2');
     terms.add('TiO2');
     terms.add('titanium dioxide');

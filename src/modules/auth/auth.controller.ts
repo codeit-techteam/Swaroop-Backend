@@ -42,7 +42,10 @@ export class AuthController {
   @Post('otp/send')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Send authentication OTP to phone or email' })
-  @ApiOkResponse({ description: 'OTP sent (dev may include devOtp)' })
+  @ApiOkResponse({
+    description:
+      'OTP sent. Production MSG91 responses never include the OTP. Non-production may include devOtp only when AUTH_DEV_EXPOSE_OTP=true.',
+  })
   async sendOtp(@Body() dto: SendOtpDto) {
     const data = await this.authService.sendOtp(dto);
     return successResponse(data, data.message);

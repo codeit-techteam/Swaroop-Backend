@@ -373,6 +373,10 @@ export async function runCatalogImport(prisma: PrismaClient) {
         deliveryTerms: item.eta ?? null,
         visibility: 'MARKETPLACE',
         deletedAt: null,
+        metadata: {
+          gstPercent: 18,
+          dispatchWindow: '24 Hours',
+        },
       },
       create: {
         referenceNumber: offerReference(item.productCode),
@@ -390,6 +394,10 @@ export async function runCatalogImport(prisma: PrismaClient) {
         visibility: 'MARKETPLACE',
         deliveryTerms: item.eta ?? null,
         createdById: sellerUser.id,
+        metadata: {
+          gstPercent: 18,
+          dispatchWindow: '24 Hours',
+        },
       },
     });
     if (existingOffer) report.listings.updated += 1;

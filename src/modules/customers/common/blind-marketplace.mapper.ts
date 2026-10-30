@@ -7,7 +7,23 @@ import {
   type Offer,
   type OfferPriceTier,
 } from '../../../generated/prisma/client.js';
+import { resolveProductCredit } from '../../payments/common/payment-eligibility.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
+import {
+  resolveDeliveryEstimate,
+  resolveDispatchWindow,
+  type DeliveryEstimateSource,
+  type DispatchWindowSource,
+} from './delivery-timing.js';
+
+export {
+  DEFAULT_DISPATCH_WINDOW,
+  estimateDeliveryTerms,
+  estimateLeadTime,
+  isDeliveryTimingLabel,
+  resolveDeliveryEstimate,
+  resolveDispatchWindow,
+} from './delivery-timing.js';
 
 export class MarketplaceException extends BadRequestException {
   constructor(code: string, message?: string) {
@@ -20,36 +36,112 @@ export function anonymousSupplierRef(organizationId: string): string {
   return `SUP-${hash.slice(0, 8).toUpperCase()}`;
 }
 
-/** Blind-safe ETA when offer.deliveryTerms is missing. */
-export function estimateLeadTime(locationHint?: string | null): string {
-  const hint = (locationHint ?? '').toLowerCase();
-  if (
-    hint.includes('mumbai') ||
-    hint.includes('pune') ||
-    hint.includes('nashik') ||
-    hint.includes('gujarat') ||
-    hint.includes('ahmedabad')
-  ) {
-    return '2–3 Business Days';
-  }
-  if (
-    hint.includes('chennai') ||
-    hint.includes('kolkata') ||
-    hint.includes('howrah') ||
-    hint.includes('delhi') ||
-    hint.includes('hyderabad') ||
-    hint.includes('bangalore') ||
-    hint.includes('bengaluru')
-  ) {
-    return '3–5 Business Days';
-  }
-  return '4–6 Business Days';
-}
-
 function warehouseHintFromSpecs(technicalSpecs: unknown): string | null {
   if (!technicalSpecs || typeof technicalSpecs !== 'object') return null;
   const label = (technicalSpecs as Record<string, unknown>).warehouseLabel;
   return typeof label === 'string' ? label : null;
+}
+
+function specString(specs: unknown, ...keys: string[]): string | null {
+  if (!specs || typeof specs !== 'object' || Array.isArray(specs)) return null;
+  const record = specs as Record<string, unknown>;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return null;
+}
+
+export type FulfilmentInfo = {
+  /** Where the material ships from (blind-safe: city/state only). */
+  warehouse: {
+    label: string;
+    city: string | null;
+    state: string | null;
+  } | null;
+  origin: string | null;
+  /** Dispatch window from offer metadata, or platform default (24 Hours). */
+  dispatchWindow: { label: string; source: DispatchWindowSource } | null;
+  /**
+   * Transit estimate: seller timing terms when present, otherwise calculated
+   * from warehouse / origin geography so panels never show "unavailable"
+   * for an active listing.
+   */
+  deliveryEstimate: {
+    label: string;
+    source: DeliveryEstimateSource;
+  } | null;
+  /** Destination-specific estimates need a pincode/serviceability config. */
+  destinationAware: boolean;
+  hsnCode: string | null;
+};
+
+/**
+ * Builds the compact delivery & fulfilment summary for a listing.
+ * Dispatch + delivery estimates are always resolved (seller terms preferred,
+ * otherwise calculated from warehouse geography / platform defaults) so
+ * Customer App, Customer Web, Seller, and Admin stay in sync.
+ */
+export function buildFulfilmentInfo(input: {
+  technicalSpecs: unknown;
+  countryOfOrigin: string | null;
+  supplyOrigin?: string | null;
+  grade?: { hsnCode?: string | null } | null;
+  offer?: {
+    deliveryTerms?: string | null;
+    metadata?: unknown;
+    warehouse?: {
+      name?: string | null;
+      city?: string | null;
+      state?: string | null;
+    } | null;
+  } | null;
+}): FulfilmentInfo {
+  const offer = input.offer;
+  const warehouseLabel =
+    offer?.warehouse?.city?.trim() ||
+    offer?.warehouse?.name?.trim() ||
+    warehouseHintFromSpecs(input.technicalSpecs);
+  const origin =
+    input.supplyOrigin?.trim() ||
+    input.countryOfOrigin?.trim() ||
+    specString(input.technicalSpecs, 'origin');
+  const dispatch = resolveDispatchWindow(
+    specString(
+      offer?.metadata,
+      'dispatchWindow',
+      'dispatchLeadTime',
+      'dispatchTime',
+    ),
+  );
+  const locationHint =
+    offer?.warehouse?.city?.trim() ||
+    offer?.warehouse?.name?.trim() ||
+    warehouseLabel ||
+    origin;
+  const deliveryEstimate = resolveDeliveryEstimate({
+    deliveryTerms: offer?.deliveryTerms,
+    locationHint,
+  });
+  return {
+    warehouse: warehouseLabel
+      ? {
+          label: warehouseLabel,
+          city: offer?.warehouse?.city ?? null,
+          state: offer?.warehouse?.state ?? null,
+        }
+      : null,
+    origin,
+    dispatchWindow: dispatch,
+    deliveryEstimate,
+    destinationAware: false,
+    hsnCode:
+      input.grade?.hsnCode?.trim() ||
+      specString(input.technicalSpecs, 'hsnCode', 'hsn', 'HSN'),
+  };
 }
 
 type GradeLabelSource = {
@@ -148,8 +240,12 @@ export function dedupeBlindProducts<T extends BlindDedupeProduct>(
       product.technicalSpecs && typeof product.technicalSpecs === 'object'
         ? (product.technicalSpecs as Record<string, unknown>)
         : {};
-    const origin = String(specs.origin ?? '').trim().toLowerCase();
-    const warehouse = String(specs.warehouseLabel ?? '').trim().toLowerCase();
+    const origin = String(specs.origin ?? '')
+      .trim()
+      .toLowerCase();
+    const warehouse = String(specs.warehouseLabel ?? '')
+      .trim()
+      .toLowerCase();
     const gradeKey =
       product.grade?.id || product.grade?.code || product.code || product.id;
     const price = Number(product.listing?.price ?? 0);
@@ -229,6 +325,7 @@ export function toBlindProduct(product: {
     gradeNo?: string | null;
     gradeGroup?: string | null;
     manufacturer?: string | null;
+    hsnCode?: string | null;
     category?: {
       id: string;
       code: string;
@@ -250,8 +347,14 @@ export function toBlindProduct(product: {
     basePrice?: unknown;
     currency?: string;
     deliveryTerms?: string | null;
+    paymentTerms?: unknown;
     organizationId?: string;
     metadata?: unknown;
+    warehouse?: {
+      name?: string | null;
+      city?: string | null;
+      state?: string | null;
+    } | null;
     priceTiers?: Array<{
       id?: string;
       minQty: unknown;
@@ -263,13 +366,19 @@ export function toBlindProduct(product: {
   }>;
 }) {
   const offer = product.offers?.[0];
-  const warehouseHint = warehouseHintFromSpecs(product.technicalSpecs);
   const tiers = commercialPriceTiers(offer?.priceTiers, offer?.metadata);
   const manufacturer = listingManufacturer(
     product.manufacturer,
     product.brand,
     product.grade,
   );
+  const fulfilment = buildFulfilmentInfo({
+    technicalSpecs: product.technicalSpecs,
+    countryOfOrigin: product.countryOfOrigin,
+    supplyOrigin: product.supplyOrigin,
+    grade: product.grade,
+    offer,
+  });
   return {
     id: product.id,
     code: product.code,
@@ -313,9 +422,13 @@ export function toBlindProduct(product: {
           unit: offer.unit ?? product.unit,
           moq: offer.moq,
           quantityAvailable: offer.quantity,
-          leadTime:
-            offer.deliveryTerms?.trim() ||
-            estimateLeadTime(warehouseHint ?? product.countryOfOrigin),
+          leadTime: fulfilment.deliveryEstimate?.label ?? null,
+          fulfilment,
+          productCredit: resolveProductCredit({
+            paymentTerms: offer.paymentTerms,
+            metadata: offer.metadata,
+            technicalSpecs: product.technicalSpecs,
+          }),
           priceTiers: tiers.map((t) => ({
             minQty: t.minQty,
             maxQty: t.maxQty,
@@ -354,6 +467,7 @@ export function toBlindOffer(offer: {
     unit: string;
     manufacturer?: string | null;
     brand?: string | null;
+    technicalSpecs?: unknown;
   } | null;
   grade?: {
     id: string;
@@ -400,6 +514,11 @@ export function toBlindOffer(offer: {
     currency: offer.currency,
     pricingBasis: offer.pricingBasis,
     paymentTerms: offer.paymentTerms,
+    productCredit: resolveProductCredit({
+      paymentTerms: offer.paymentTerms,
+      metadata: offer.metadata,
+      technicalSpecs: offer.product?.technicalSpecs,
+    }),
     deliveryTerms: offer.deliveryTerms,
     validFrom: offer.validFrom,
     validUntil: offer.validUntil,

@@ -29,6 +29,7 @@ export const quoteOfferInclude = {
       status: true,
       deletedAt: true,
       gradeId: true,
+      technicalSpecs: true,
     },
   },
   grade: {

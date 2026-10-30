@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { listingDisplayName } from '../../customers/common/blind-marketplace.mapper.js';
 import {
+  DEFAULT_DISPATCH_WINDOW,
+  estimateDeliveryTerms,
+} from '../../customers/common/delivery-timing.js';
+import {
   CurrencyCode,
   EntityOwnerType,
   GradeStatus,
@@ -443,14 +447,13 @@ export class ProductsService {
             basePrice: dto.sellingPrice,
             currency: CurrencyCode.INR,
             pricingBasis: 'EXW',
-            deliveryTerms: estimateDeliveryTerms(
-              warehouse.city ?? warehouse.name,
-            ),
+            deliveryTerms: resolveListingDeliveryTerms(dto, warehouse),
             status: offerStatus,
             visibility: 'MARKETPLACE',
             createdById: userId,
             metadata: {
               gstPercent: resolveListingGstPercent(dto),
+              dispatchWindow: resolveListingDispatchWindow(dto),
             } as Prisma.InputJsonValue,
             priceTiers: dto.priceTiers?.length
               ? {
@@ -986,6 +989,7 @@ export class ProductsService {
       // Replacing tiers resets soft-deactivated tier ids from pricing API.
       delete offerMeta.inactivePriceTier;
       offerMeta.gstPercent = gstPercent;
+      offerMeta.dispatchWindow = resolveListingDispatchWindow(dto);
 
       if (offer) {
         await tx.offerPriceTier.deleteMany({ where: { offerId: offer.id } });
@@ -998,9 +1002,7 @@ export class ProductsService {
             moq: dto.moq,
             unit,
             basePrice: nextBase,
-            deliveryTerms: estimateDeliveryTerms(
-              warehouse.city ?? warehouse.name,
-            ),
+            deliveryTerms: resolveListingDeliveryTerms(dto, warehouse),
             visibility: 'MARKETPLACE',
             ...(publish ? { status: OfferStatus.ACTIVE } : {}),
             metadata: offerMeta as Prisma.InputJsonValue,
@@ -1046,9 +1048,7 @@ export class ProductsService {
             basePrice: nextBase,
             currency: CurrencyCode.INR,
             pricingBasis: 'EXW',
-            deliveryTerms: estimateDeliveryTerms(
-              warehouse.city ?? warehouse.name,
-            ),
+            deliveryTerms: resolveListingDeliveryTerms(dto, warehouse),
             status: publish ? OfferStatus.ACTIVE : OfferStatus.DRAFT,
             visibility: 'MARKETPLACE',
             createdById: userId,
@@ -1174,30 +1174,23 @@ export class ProductsService {
   }
 }
 
-/** Blind-marketplace safe ETA label from warehouse geography. */
-export function estimateDeliveryTerms(locationHint?: string | null): string {
-  const hint = (locationHint ?? '').toLowerCase();
-  if (
-    hint.includes('mumbai') ||
-    hint.includes('pune') ||
-    hint.includes('nashik') ||
-    hint.includes('gujarat') ||
-    hint.includes('ahmedabad')
-  ) {
-    return '2–3 Business Days';
-  }
-  if (
-    hint.includes('chennai') ||
-    hint.includes('kolkata') ||
-    hint.includes('howrah') ||
-    hint.includes('delhi') ||
-    hint.includes('hyderabad') ||
-    hint.includes('bangalore') ||
-    hint.includes('bengaluru')
-  ) {
-    return '3–5 Business Days';
-  }
-  return '4–6 Business Days';
+export { estimateDeliveryTerms };
+
+function resolveListingDeliveryTerms(
+  dto: CreateMarketplaceListingDto,
+  warehouse: { city?: string | null; name?: string | null },
+): string {
+  const fromDto = dto.deliveryTerms?.trim();
+  if (fromDto) return fromDto;
+  return estimateDeliveryTerms(warehouse.city ?? warehouse.name);
+}
+
+function resolveListingDispatchWindow(
+  dto: CreateMarketplaceListingDto,
+): string {
+  const fromDto = dto.dispatchWindow?.trim();
+  if (fromDto) return fromDto;
+  return DEFAULT_DISPATCH_WINDOW;
 }
 
 function resolveListingGstPercent(dto: CreateMarketplaceListingDto): number {

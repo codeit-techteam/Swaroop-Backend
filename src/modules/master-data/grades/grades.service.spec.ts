@@ -3,7 +3,11 @@ import { plainToInstance } from 'class-transformer';
 import type { PrismaService } from '../../../database/prisma.service.js';
 import type { AdminAuditService } from '../../admin/common/admin-audit.service.js';
 import { GradeQueryDto } from './grades.dto.js';
-import { GradesService } from './grades.service.js';
+import {
+  GradesService,
+  expandGradeSearchTerms,
+  gradeSearch,
+} from './grades.service.js';
 
 const before = {
   id: 'g1',
@@ -207,5 +211,33 @@ describe('GradeQueryDto', () => {
     expect(dto.customerVisible).toBe(false);
     expect(dto.sellerVisible).toBe(true);
     expect(dto.inTodaysDelhiPriceList).toBe(false);
+  });
+});
+
+describe('gradeSearch', () => {
+  it('normalizes whitespace and keeps punctuation in codes', () => {
+    expect(expandGradeSearchTerms('  F4811  ')).toEqual(['F4811']);
+    expect(expandGradeSearchTerms('HDPE   HM')).toEqual(['HDPE HM']);
+  });
+
+  it('expands TiO2 aliases for chemical synonym matching', () => {
+    const terms = expandGradeSearchTerms('tio');
+    // "tio" alone is not a full TiO2 alias — only exact-ish forms expand.
+    expect(terms).toEqual(['tio']);
+    expect(expandGradeSearchTerms('TiO2')).toEqual(
+      expect.arrayContaining(['TiO2', 'TIO2', 'titanium dioxide']),
+    );
+  });
+
+  it('includes gradeNo so partial codes like 4811 match F4811', () => {
+    const clauses = gradeSearch('4811');
+    expect(clauses).toEqual(
+      expect.arrayContaining([
+        { gradeNo: { contains: '4811', mode: 'insensitive' } },
+        { manufacturer: { contains: '4811', mode: 'insensitive' } },
+        { fullGradeName: { contains: '4811', mode: 'insensitive' } },
+        { code: { contains: '4811', mode: 'insensitive' } },
+      ]),
+    );
   });
 });

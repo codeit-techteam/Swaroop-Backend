@@ -79,6 +79,9 @@ export class AuthService {
     const maxAttempts =
       this.configService.get<number>('security.otpMaxAttempts') ?? 5;
     const otpLength = this.configService.get<number>('security.otpLength') ?? 6;
+    const useMsg91 =
+      identifierType === OtpIdentifierType.PHONE &&
+      this.otpDelivery.isMsg91PhoneProvider();
 
     const recent = await this.prisma.otpVerification.findFirst({
       where: {
@@ -91,10 +94,17 @@ export class AuthService {
     });
 
     if (recent) {
+      const retryAfterSeconds = Math.max(
+        1,
+        Math.ceil(
+          (recent.createdAt.getTime() + cooldown * 1000 - Date.now()) / 1000,
+        ),
+      );
       throw new AuthException(
         AuthErrorCode.AUTH_OTP_RATE_LIMITED,
         'Please wait before requesting another OTP',
         HttpStatus.TOO_MANY_REQUESTS,
+        { retryAfterSeconds },
       );
     }
 
@@ -108,16 +118,66 @@ export class AuthService {
       data: { consumedAt: new Date() },
     });
 
-    const useFixedDevOtp =
-      this.isFixedDevOtpEnabled() &&
-      identifierType === OtpIdentifierType.PHONE &&
-      identifier === DEMO_PHONE_E164;
-
-    const otp = useFixedDevOtp ? DEMO_OTP : this.crypto.generateOtp(otpLength);
-    const otpHash = this.crypto.hashOtp(otp);
     const user = await this.findUserByIdentifier(identifier, identifierType);
 
-    await this.prisma.otpVerification.create({
+    let otpHash: string;
+    let localOtp: string | undefined;
+
+    if (useMsg91) {
+      let delivery;
+      try {
+        delivery = await this.otpDelivery.send({
+          identifier,
+          identifierType,
+          purpose,
+        });
+      } catch (error) {
+        this.logger.error(
+          `OTP provider send failed for phone_suffix=${identifier.slice(-4)}`,
+          error instanceof Error ? error.message : error,
+        );
+        throw new AuthException(
+          AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
+          'Unable to send OTP right now. Please try again shortly.',
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      otpHash = this.otpDelivery.encodeMsg91Challenge(
+        delivery.providerRequestId ?? `unknown-${Date.now()}`,
+      );
+    } else {
+      const useFixedDevOtp =
+        this.isFixedDevOtpEnabled() &&
+        identifierType === OtpIdentifierType.PHONE &&
+        identifier === DEMO_PHONE_E164;
+
+      localOtp = useFixedDevOtp
+        ? DEMO_OTP
+        : this.crypto.generateOtp(otpLength);
+      otpHash = this.crypto.hashOtp(localOtp);
+
+      try {
+        await this.otpDelivery.send({
+          identifier,
+          identifierType,
+          purpose,
+          otp: localOtp,
+        });
+      } catch (error) {
+        this.logger.error(
+          `OTP delivery failed for ${identifierType}`,
+          error instanceof Error ? error.message : error,
+        );
+        throw new AuthException(
+          AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
+          'Unable to send OTP right now. Please try again shortly.',
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+    }
+
+    const challenge = await this.prisma.otpVerification.create({
       data: {
         userId: user?.id,
         identifier,
@@ -129,28 +189,34 @@ export class AuthService {
       },
     });
 
-    await this.otpDelivery.send({
-      identifier,
-      identifierType,
-      purpose,
-      otp,
-    });
-
     const expose =
       this.configService.get<boolean>('security.authDevExposeOtp') === true &&
-      this.configService.get<string>('app.env') !== 'production';
+      this.configService.get<string>('app.env') !== 'production' &&
+      !useMsg91 &&
+      Boolean(localOtp);
+
+    this.logger.log({
+      event: 'auth.otp.sent',
+      identifierType,
+      purpose,
+      challengeId: challenge.id,
+      provider: useMsg91 ? 'msg91' : 'local',
+    });
 
     return {
       message: 'OTP sent successfully',
-      ...(expose ? { devOtp: otp } : {}),
+      challengeId: challenge.id,
+      expiresInSeconds: expiresIn,
+      resendCooldownSeconds: cooldown,
+      ...(expose ? { devOtp: localOtp } : {}),
     };
   }
 
   async verifyOtp(dto: VerifyOtpDto, meta: RequestMeta = {}) {
     const { identifier, identifierType } = this.resolveIdentifier(dto);
 
-    // Dev/demo shortcut: Karan Veer (+918240890242) + OTP 123456 always works
-    // even if send was skipped or rate-limited — used by Seller/Customer local UIs.
+    // Dev/demo shortcut only when fixed OTP mode is explicitly enabled
+    // (disabled whenever AUTH_STRICT_OTP=true or MSG91 provider is active).
     if (
       this.isFixedDevOtpEnabled() &&
       identifierType === OtpIdentifierType.PHONE &&
@@ -202,17 +268,57 @@ export class AuthService {
       );
     }
 
-    const matches = record.otpHash === this.crypto.hashOtp(dto.otp);
-    if (!matches) {
-      await this.prisma.otpVerification.update({
-        where: { id: record.id },
-        data: { attempts: { increment: 1 } },
-      });
-      throw new AuthException(
-        AuthErrorCode.AUTH_INVALID_OTP,
-        'Invalid OTP',
-        HttpStatus.BAD_REQUEST,
-      );
+    const isMsg91Challenge = this.otpDelivery.isMsg91Challenge(record.otpHash);
+
+    if (isMsg91Challenge) {
+      let providerResult;
+      try {
+        providerResult = await this.otpDelivery.verifyPhoneWithProvider(
+          identifier,
+          dto.otp,
+        );
+      } catch (error) {
+        this.logger.error(
+          `OTP provider verify failed phone_suffix=${identifier.slice(-4)}`,
+          error instanceof Error ? error.message : error,
+        );
+        throw new AuthException(
+          AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
+          'Unable to verify OTP right now. Please try again shortly.',
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      if (!providerResult.verified) {
+        await this.prisma.otpVerification.update({
+          where: { id: record.id },
+          data: { attempts: { increment: 1 } },
+        });
+
+        const expired =
+          /expir/i.test(providerResult.message) ||
+          /timeout/i.test(providerResult.message);
+        throw new AuthException(
+          expired
+            ? AuthErrorCode.AUTH_OTP_EXPIRED
+            : AuthErrorCode.AUTH_INVALID_OTP,
+          expired ? 'OTP has expired' : 'Invalid OTP',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
+    } else {
+      const matches = record.otpHash === this.crypto.hashOtp(dto.otp);
+      if (!matches) {
+        await this.prisma.otpVerification.update({
+          where: { id: record.id },
+          data: { attempts: { increment: 1 } },
+        });
+        throw new AuthException(
+          AuthErrorCode.AUTH_INVALID_OTP,
+          'Invalid OTP',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
     }
 
     const result = await this.prisma.$transaction(async (tx: DbClient) => {
@@ -225,6 +331,14 @@ export class AuthService {
       });
 
       return this.completeOtpLogin(tx, identifier, identifierType, dto, meta);
+    });
+
+    this.logger.log({
+      event: 'auth.otp.verified',
+      identifierType,
+      purpose: dto.purpose,
+      userId: result.user.id,
+      provider: isMsg91Challenge ? 'msg91' : 'local',
     });
 
     await this.bootstrapDemoIfNeeded(result.user.id);
@@ -715,6 +829,8 @@ export class AuthService {
         ? await this.crypto.hashPassword('Test@12345')
         : undefined;
 
+      const signupFirstName = dto.firstName?.trim() || null;
+
       user = await tx.user.create({
         data: {
           phone: identifierType === OtpIdentifierType.PHONE ? identifier : null,
@@ -723,7 +839,7 @@ export class AuthService {
             : identifierType === OtpIdentifierType.EMAIL
               ? identifier
               : null,
-          firstName: isDemoPhone ? 'Karan' : null,
+          firstName: isDemoPhone ? 'Karan' : signupFirstName,
           lastName: isDemoPhone ? 'Veer' : null,
           passwordHash,
           status: UserStatus.ACTIVE,
@@ -786,7 +902,7 @@ export class AuthService {
   } {
     if (dto.phone) {
       return {
-        identifier: dto.phone.trim(),
+        identifier: this.normalizePhoneE164(dto.phone),
         identifierType: OtpIdentifierType.PHONE,
       };
     }
@@ -799,6 +915,32 @@ export class AuthService {
     throw new AuthException(
       AuthErrorCode.AUTH_IDENTIFIER_REQUIRED,
       'phone or email is required',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  /**
+   * Normalize Indian mobiles to E.164 (+91XXXXXXXXXX).
+   * Accepts +91…, 91…, or bare 10-digit numbers.
+   */
+  private normalizePhoneE164(raw: string): string {
+    const trimmed = raw.trim();
+    if (/^\+[1-9]\d{7,14}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const digits = trimmed.replace(/\D/g, '');
+    if (digits.length === 10 && /^[6-9]/.test(digits)) {
+      return `+91${digits}`;
+    }
+    if (digits.length === 12 && digits.startsWith('91')) {
+      return `+${digits}`;
+    }
+    if (digits.length >= 8 && digits.length <= 15) {
+      return `+${digits}`;
+    }
+    throw new AuthException(
+      AuthErrorCode.AUTH_IDENTIFIER_REQUIRED,
+      'phone must be a valid mobile number',
       HttpStatus.BAD_REQUEST,
     );
   }

@@ -136,4 +136,19 @@ describe('MarketplaceService grade browsing', () => {
         .hasOffers,
     ).toBe(true);
   });
+
+  it('does not require live offers for default catalogue search', async () => {
+    const { service, prisma } = setup();
+    await service.listGrades('u1', { search: '4811' });
+
+    const [args] = prisma.grade.findMany.mock.calls[0] as unknown as [
+      { where: Record<string, unknown> },
+    ];
+    expect(args.where).not.toHaveProperty('offers');
+    expect(args.where.OR).toEqual(
+      expect.arrayContaining([
+        { gradeNo: { contains: '4811', mode: 'insensitive' } },
+      ]),
+    );
+  });
 });

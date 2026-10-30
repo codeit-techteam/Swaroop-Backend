@@ -145,6 +145,7 @@ const productInclude = {
       gradeNo: true,
       gradeGroup: true,
       manufacturer: true,
+      hsnCode: true,
       category: {
         select: { id: true, code: true, name: true, parentGroup: true },
       },
@@ -172,7 +173,11 @@ const productInclude = {
       basePrice: true,
       currency: true,
       deliveryTerms: true,
+      paymentTerms: true,
       metadata: true,
+      warehouse: {
+        select: { id: true, name: true, city: true, state: true, country: true },
+      },
       priceTiers: {
         orderBy: { minQty: 'asc' as const },
         select: {
@@ -198,6 +203,7 @@ const offerInclude = {
       unit: true,
       manufacturer: true,
       brand: true,
+      technicalSpecs: true,
     },
   },
   grade: {

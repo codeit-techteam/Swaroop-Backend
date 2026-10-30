@@ -46,6 +46,10 @@ import {
   AddressBookService,
   type AddressSnapshot,
 } from '../../organizations/index.js';
+import {
+  productAllowsCreditTenure,
+  resolveProductCredit,
+} from '../../payments/common/payment-eligibility.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import type {
   CreatePurchaseRequestDto,
@@ -341,6 +345,7 @@ export class PurchaseRequestsService {
         item: (typeof selected)[number];
         unitPrice: Prisma.Decimal | number;
         organizationId: string;
+        productCredit: ReturnType<typeof resolveProductCredit>;
       }> = [];
 
       for (const item of selected) {
@@ -357,6 +362,7 @@ export class PurchaseRequestsService {
                 unit: true,
                 status: true,
                 deletedAt: true,
+                technicalSpecs: true,
               },
             },
             priceTiers: true,
@@ -371,6 +377,11 @@ export class PurchaseRequestsService {
           item,
           unitPrice,
           organizationId: offer.organizationId,
+          productCredit: resolveProductCredit({
+            paymentTerms: offer.paymentTerms,
+            metadata: offer.metadata,
+            technicalSpecs: offer.product?.technicalSpecs,
+          }),
         });
       }
 
@@ -393,11 +404,22 @@ export class PurchaseRequestsService {
         );
 
         let creditSnapshot: Record<string, unknown> | null = null;
-        if (isPlatformCredit(paymentMethod)) {
+        if (paymentMethod && isPlatformCredit(paymentMethod)) {
+          const blocked = rows.find(
+            (row) =>
+              !productAllowsCreditTenure(row.productCredit, paymentMethod),
+          );
+          if (blocked) {
+            throw new MarketplaceException(
+              'CREDIT_NOT_ELIGIBLE',
+              'This grade does not support PetroTrade credit payment terms. Choose another payment method.',
+            );
+          }
           const eligibility = await this.creditEligibility.assertEligible(
             tx,
             ctx.organizationId,
             targetPrice,
+            paymentMethod,
           );
           creditSnapshot = {
             source: 'PETROTRADE',
@@ -550,6 +572,7 @@ export class PurchaseRequestsService {
           tx,
           ctx.organizationId,
           amounts.totalAmount,
+          quote.paymentMethod,
         );
         creditSnapshot = {
           source: 'PETROTRADE',

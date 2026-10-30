@@ -1157,7 +1157,10 @@ export class DemoBootstrapService implements OnModuleInit {
           deliveryTerms: item.eta ?? null,
           visibility: 'MARKETPLACE',
           deletedAt: null,
-          metadata: { gstPercent: 18 } as Prisma.InputJsonValue,
+          metadata: {
+            gstPercent: 18,
+            dispatchWindow: '24 Hours',
+          } as Prisma.InputJsonValue,
         },
         create: {
           referenceNumber: offerRef,
@@ -1175,7 +1178,10 @@ export class DemoBootstrapService implements OnModuleInit {
           visibility: 'MARKETPLACE',
           deliveryTerms: item.eta ?? null,
           createdById: userId,
-          metadata: { gstPercent: 18 } as Prisma.InputJsonValue,
+          metadata: {
+            gstPercent: 18,
+            dispatchWindow: '24 Hours',
+          } as Prisma.InputJsonValue,
         },
       });
 

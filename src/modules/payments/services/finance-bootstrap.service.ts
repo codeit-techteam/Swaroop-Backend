@@ -61,6 +61,7 @@ export class FinanceBootstrapService {
         tx,
         purchaseOrder.customerOrgId,
         snapshot.totalValue,
+        snapshot.paymentMethod,
       );
     }
 

@@ -45,12 +45,15 @@ export class CheckoutController {
   async paymentOptions(
     @CurrentUser() user: AuthenticatedUser,
     @Query('amount') amount?: string,
+    @Query('productId') productId?: string,
+    @Query('offerId') offerId?: string,
   ) {
     const parsed = amount != null && amount !== '' ? Number(amount) : undefined;
     return successResponse(
       await this.checkout.paymentOptions(
         user.id,
         Number.isFinite(parsed) ? parsed : undefined,
+        { productId, offerId },
       ),
       'Payment options retrieved',
     );

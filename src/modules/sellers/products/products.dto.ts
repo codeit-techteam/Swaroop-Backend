@@ -281,4 +281,24 @@ export class CreateMarketplaceListingDto extends CreateProductDto {
   @IsOptional()
   @IsBoolean()
   publishToMarketplace?: boolean;
+
+  @ApiPropertyOptional({
+    example: '2–3 Business Days',
+    description:
+      'Customer-facing delivery ETA. When omitted, calculated from warehouse geography.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  deliveryTerms?: string;
+
+  @ApiPropertyOptional({
+    example: '24 Hours',
+    description:
+      'Dispatch window shown on product details. Defaults to 24 Hours.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  dispatchWindow?: string;
 }

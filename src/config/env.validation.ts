@@ -61,16 +61,29 @@ export const envSchema = z
     OTP_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(300),
     OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
+    OTP_PROVIDER: z.enum(['msg91', 'local', 'none']).optional().default('local'),
+    OTP_ENVIRONMENT: z
+      .enum(['production', 'development'])
+      .optional()
+      .or(z.literal(''))
+      .default(''),
+    MSG91_AUTH_KEY: z.string().optional().default(''),
+    MSG91_OTP_TEMPLATE_ID: z.string().optional().default(''),
+    MSG91_TEMPLATE_ID: z.string().optional().default(''),
+    MSG91_SENDER_ID: z.string().optional().default(''),
+    MSG91_HEADER: z.string().optional().default('VELPLY'),
+    MSG91_DLT_ENTITY_ID: z.string().optional().default(''),
+    MSG91_DLT_TEMPLATE_ID: z.string().optional().default(''),
+    MSG91_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
     AUTH_DEV_EXPOSE_OTP: booleanFromString.optional().default(false),
     /**
-     * Informational / legacy flag. Development-phase fixed OTP is controlled
-     * by AUTH_STRICT_OTP only (see `resolveFixedDevOtp`).
+     * Informational / legacy flag. Fixed OTP is disabled by AUTH_STRICT_OTP
+     * or an active MSG91 provider (see `resolveFixedDevOtp`).
      */
     AUTH_DEV_FIXED_OTP: booleanFromString.optional(),
     /**
      * When true, fixed demo OTP is forbidden (real SMS production lock).
-     * Until this is true, demo phone +918240890242 accepts OTP 123456 on every
-     * panel (mobile, customer, seller, website).
+     * Also disabled automatically when OTP_PROVIDER=msg91 with MSG91_AUTH_KEY.
      */
     AUTH_STRICT_OTP: booleanFromString.optional().default(false),
     PASSWORD_RESET_EXPIRES_IN_SECONDS: z.coerce
@@ -216,6 +229,37 @@ export const envSchema = z
             'SUREPASS_ENVIRONMENT does not match SUREPASS_API_BASE_URL (sandbox host vs production host)',
         });
       }
+    }
+
+    if (data.OTP_PROVIDER === 'msg91') {
+      const templateId = (
+        data.MSG91_OTP_TEMPLATE_ID ||
+        data.MSG91_TEMPLATE_ID ||
+        ''
+      ).trim();
+      if (!(data.MSG91_AUTH_KEY ?? '').trim()) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MSG91_AUTH_KEY'],
+          message: 'MSG91_AUTH_KEY is required when OTP_PROVIDER=msg91',
+        });
+      }
+      if (!templateId) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MSG91_OTP_TEMPLATE_ID'],
+          message:
+            'MSG91_OTP_TEMPLATE_ID is required when OTP_PROVIDER=msg91',
+        });
+      }
+    }
+
+    if (data.AUTH_STRICT_OTP && data.AUTH_DEV_EXPOSE_OTP) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AUTH_DEV_EXPOSE_OTP'],
+        message: 'AUTH_DEV_EXPOSE_OTP must be false when AUTH_STRICT_OTP is on',
+      });
     }
 
     if (data.NODE_ENV === 'production') {

@@ -45,6 +45,7 @@ import { StorageService } from '../../../storage/storage.service.js';
 import { CustomerAuditService } from '../common/customer-audit.service.js';
 import { CustomerContextService } from '../common/customer-context.service.js';
 import { CreditEligibilityService } from '../../payments/services/credit-eligibility.service.js';
+import { resolveCreditAccess } from '../../payments/common/payment-eligibility.js';
 import type {
   CustomerCreditApplyDto,
   CustomerCreditDocumentReplaceDto,
@@ -166,19 +167,36 @@ export class CustomerCreditService {
     };
   }
 
-  async getEligibility(userId: string) {
+  async getEligibility(userId: string, amount?: number) {
     const ctx = await this.context.requireCustomer(userId);
-    const inspected = await this.creditEligibility.inspect(
-      this.prisma,
-      ctx.organizationId,
-      0,
-    );
+    const [account, latestApplication, inspected] = await Promise.all([
+      this.prisma.customerCreditProfile.findUnique({
+        where: { customerProfileId: ctx.customerProfileId },
+      }),
+      this.prisma.creditApplication.findFirst({
+        where: { customerProfileId: ctx.customerProfileId },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.creditEligibility.inspect(
+        this.prisma,
+        ctx.organizationId,
+        amount ?? 0,
+      ),
+    ]);
+
+    const credit = resolveCreditAccess({
+      account,
+      latestApplication,
+      amount: amount ?? 0,
+    });
+
     return {
-      eligible: inspected.eligible,
+      source: 'PETROTRADE' as const,
+      eligible: credit.eligible,
       approvedLimit: inspected.approvedLimit,
       availableLimit: inspected.availableLimit,
-      tenureOptions: inspected.tenureOptions,
-      source: 'PETROTRADE',
+      tenureOptions: credit.tenureOptions.map((tenure) => tenure.tenureDays),
+      credit,
     };
   }
 

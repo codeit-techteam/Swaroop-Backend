@@ -50,7 +50,7 @@ export class VerifyOtpDto {
   @IsEmail()
   email?: string;
 
-  @ApiProperty({ example: '123456' })
+  @ApiProperty({ example: '482913' })
   @IsString()
   @MinLength(4)
   @MaxLength(8)
@@ -67,6 +67,33 @@ export class VerifyOtpDto {
   @IsOptional()
   @IsString()
   roleHint?: string;
+
+  @ApiPropertyOptional({
+    description: 'Contact full name collected at SIGNUP (stored on new users only)',
+    example: 'Karan Veer',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  firstName?: string;
+
+  @ApiPropertyOptional({
+    description: 'Legal company name collected at SIGNUP (client seeds onboarding after OTP)',
+    example: 'Acme Polymers Pvt Ltd',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  companyName?: string;
+
+  @ApiPropertyOptional({
+    description: 'GSTIN collected at SIGNUP (client seeds onboarding after OTP)',
+    example: '22AAAAA0000A1Z5',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  gstin?: string;
 }
 
 export class LoginDto {
