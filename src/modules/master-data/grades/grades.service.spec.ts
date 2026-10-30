@@ -220,12 +220,29 @@ describe('gradeSearch', () => {
     expect(expandGradeSearchTerms('HDPE   HM')).toEqual(['HDPE HM']);
   });
 
-  it('expands TiO2 aliases for chemical synonym matching', () => {
-    const terms = expandGradeSearchTerms('tio');
-    // "tio" alone is not a full TiO2 alias — only exact-ish forms expand.
-    expect(terms).toEqual(['tio']);
+  it('expands TiO / TIO2 aliases and never keeps bare "tio" contains', () => {
+    // Bare "tio" must expand — contains:"tio" matches STYROLUTION / SOLUTION.
+    expect(expandGradeSearchTerms('tio')).toEqual(
+      expect.arrayContaining(['TIO2', 'TiO2', 'titanium dioxide']),
+    );
+    expect(expandGradeSearchTerms('tio')).not.toContain('tio');
     expect(expandGradeSearchTerms('TiO2')).toEqual(
       expect.arrayContaining(['TiO2', 'TIO2', 'titanium dioxide']),
+    );
+
+    const clauses = gradeSearch('tio');
+    expect(clauses).toEqual(
+      expect.arrayContaining([
+        { gradeNo: { startsWith: 'TIO', mode: 'insensitive' } },
+        { displayName: { startsWith: 'TIO', mode: 'insensitive' } },
+        { gradeNo: { contains: 'TIO2', mode: 'insensitive' } },
+        { description: { contains: 'titanium dioxide', mode: 'insensitive' } },
+      ]),
+    );
+    expect(clauses).not.toEqual(
+      expect.arrayContaining([
+        { manufacturer: { contains: 'tio', mode: 'insensitive' } },
+      ]),
     );
   });
 

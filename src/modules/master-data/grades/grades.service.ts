@@ -45,29 +45,57 @@ const SORTABLE = [
 /** Source.One columns are owned by the CSV import, not by manual edits. */
 const SOURCE_MANAGED_FIELDS = ['code', 'categoryId', 'subcategoryId'] as const;
 
-/** Expand common chemical aliases so TIO2 / TiO2 / titanium dioxide match (N-03). */
+/** Compact form for chemical alias detection (e.g. "TiO₂" → "tio2", "tio" → "tio"). */
+function compactGradeSearchKey(q: string): string {
+  return q
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '');
+}
+
+/**
+ * Expand common chemical aliases so TIO / TIO2 / TiO₂ / titanium dioxide match (N-03).
+ * Bare "tio" must NOT stay as a contains term — it matches STYROLUTION, SOLUTION, etc.
+ */
 export function expandGradeSearchTerms(q: string): string[] {
   // Collapse whitespace; keep punctuation in codes (e.g. F4811, MB-WH-50).
   const base = q.trim().replace(/\s+/g, ' ');
   if (!base) return [];
-  const lower = base
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '');
-  const terms = new Set<string>([base]);
-  if (
-    /^tio[_-]?2$|^tio₂$|titanium\s*dioxide/i.test(lower.replace(/\s+/g, ''))
-  ) {
-    terms.add('TIO2');
-    terms.add('TiO2');
-    terms.add('titanium dioxide');
+  const compact = compactGradeSearchKey(base);
+
+  // TiO family: return unambiguous chemical terms only (never bare "tio").
+  if (/^tio2?$|^tio₂$|titaniumdioxide/.test(compact)) {
+    return ['TIO2', 'TiO2', 'titanium dioxide', 'TiO₂'];
   }
-  return [...terms];
+
+  return [base];
+}
+
+/** True when the query is a short TiO chemical prefix (not a normal grade code). */
+export function isTioChemicalQuery(q: string): boolean {
+  return /^tio2?$|^tio₂$|titaniumdioxide/.test(compactGradeSearchKey(q.trim()));
 }
 
 /** Grade No., manufacturer, category, grade group, full name, code and labels. */
 export function gradeSearch(q: string): Prisma.GradeWhereInput[] {
   const clauses: Prisma.GradeWhereInput[] = [];
+  const trimmed = q.trim();
+
+  // Prefix match on identity fields so "TIO Grade" / TIO* codes still hit without
+  // manufacturer contains:"tio" false positives (INEOS STYROLUTION).
+  if (isTioChemicalQuery(trimmed)) {
+    const prefix = { startsWith: 'TIO', mode: 'insensitive' as const };
+    clauses.push(
+      { gradeNo: prefix },
+      { code: prefix },
+      { name: prefix },
+      { displayName: prefix },
+      { fullGradeName: prefix },
+      { gradeGroup: prefix },
+    );
+  }
+
   for (const term of expandGradeSearchTerms(q)) {
     const contains = { contains: term, mode: 'insensitive' as const };
     clauses.push(
