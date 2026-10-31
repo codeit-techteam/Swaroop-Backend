@@ -4,6 +4,7 @@ import {
   CreditStatus,
   CreditTransactionStatus,
   CreditTransactionType,
+  CurrencyCode,
   PaymentScheduleStatus,
   Prisma,
 } from '../../../generated/prisma/client.js';
@@ -163,7 +164,7 @@ export class CreditLedgerService {
       customerProfileId: string;
       type: CreditTransactionType;
       amount: Prisma.Decimal | number | string;
-      currency?: 'INR' | 'USD' | 'EUR' | 'AED';
+      currency?: CurrencyCode;
       referenceType?: string;
       referenceId?: string;
       purchaseOrderId?: string;

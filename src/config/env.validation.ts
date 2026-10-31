@@ -61,6 +61,7 @@ export const envSchema = z
     OTP_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(300),
     OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
+    OTP_MAX_SENDS_PER_HOUR: z.coerce.number().int().min(1).max(30).default(5),
     OTP_PROVIDER: z.enum(['msg91', 'local', 'none']).optional().default('local'),
     OTP_ENVIRONMENT: z
       .enum(['production', 'development'])
@@ -77,8 +78,9 @@ export const envSchema = z
     MSG91_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
     AUTH_DEV_EXPOSE_OTP: booleanFromString.optional().default(false),
     /**
-     * Informational / legacy flag. Fixed OTP is disabled by AUTH_STRICT_OTP
-     * or an active MSG91 provider (see `resolveFixedDevOtp`).
+     * Opt-in development bypass (fixed OTP for the demo phone). Ignored in
+     * production/staging, with AUTH_STRICT_OTP, or with an active MSG91
+     * provider (see `resolveFixedDevOtp`). Defaults to OFF.
      */
     AUTH_DEV_FIXED_OTP: booleanFromString.optional(),
     /**
@@ -86,6 +88,12 @@ export const envSchema = z
      * Also disabled automatically when OTP_PROVIDER=msg91 with MSG91_AUTH_KEY.
      */
     AUTH_STRICT_OTP: booleanFromString.optional().default(false),
+    /**
+     * When true (default, preserves current behaviour) any *.vercel.app /
+     * *.ondigitalocean.* origin is accepted in production. Set to false once
+     * every client origin is listed in CORS_ORIGINS for a strict allow-list.
+     */
+    CORS_ALLOW_PLATFORM_HOSTS: booleanFromString.optional().default(true),
     PASSWORD_RESET_EXPIRES_IN_SECONDS: z.coerce
       .number()
       .int()

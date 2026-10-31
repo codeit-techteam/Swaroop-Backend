@@ -17,6 +17,7 @@ import { AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
 import { CustomersModule } from './modules/customers/index.js';
 import { DocumentsModule } from './modules/documents/index.js';
+import { GradeRequestsModule } from './modules/grade-requests/index.js';
 import { GradesModule } from './modules/grades/index.js';
 import { ImportModule } from './modules/import/index.js';
 import { InventoryModule } from './modules/inventory/index.js';
@@ -127,6 +128,7 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
     AdminModule,
     AnalyticsModule,
     GradesModule,
+    GradeRequestsModule,
     MasterDataModule,
     ProductsModule,
     InventoryModule,

@@ -5,6 +5,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   Min,
   MinLength,
@@ -32,6 +33,15 @@ export class CreateCategoryDto {
   @IsOptional()
   @IsString()
   @MaxLength(120)
+  @Matches(/^[^_]*$/, {
+    message: 'displayName is customer-facing and must not contain underscores',
+  })
+  @Matches(
+    /^(?![0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$)/i,
+    {
+      message: 'displayName must be a readable name, not an ID',
+    },
+  )
   displayName?: string;
 
   @ApiPropertyOptional()

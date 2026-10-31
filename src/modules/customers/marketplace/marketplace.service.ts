@@ -19,7 +19,12 @@ import {
 } from '../common/blind-marketplace.mapper.js';
 import { CustomerContextService } from '../common/customer-context.service.js';
 import { formatCategoryDisplayName } from '../../grades/common/category-label.js';
-import { gradeSearch } from '../../master-data/grades/grades.service.js';
+import {
+  GRADE_SEARCH_CANDIDATE_CAP,
+  buildGradeSearchWhere,
+  parseGradeSearch,
+  rankGradeCandidates,
+} from '../../master-data/grades/grade-search.js';
 import type {
   MarketplaceGradeQueryDto,
   MarketplaceHomeQueryDto,
@@ -130,7 +135,9 @@ function toCustomerGrade(
           parentGroup: g.category.parentGroup,
         }
       : null,
-    ...(liveOfferCount !== undefined ? { liveOfferCount } : {}),
+    ...(liveOfferCount !== undefined
+      ? { liveOfferCount, hasLiveOffers: liveOfferCount > 0 }
+      : {}),
   };
 }
 
@@ -176,7 +183,13 @@ const productInclude = {
       paymentTerms: true,
       metadata: true,
       warehouse: {
-        select: { id: true, name: true, city: true, state: true, country: true },
+        select: {
+          id: true,
+          name: true,
+          city: true,
+          state: true,
+          country: true,
+        },
       },
       priceTiers: {
         orderBy: { minQty: 'asc' as const },
@@ -240,7 +253,10 @@ export class MarketplaceService {
     return this.customerContext.getOrCreateCustomer(userId);
   }
 
-  async home(userId: string | null | undefined, query: MarketplaceHomeQueryDto) {
+  async home(
+    userId: string | null | undefined,
+    query: MarketplaceHomeQueryDto,
+  ) {
     await this.ctx(userId);
     const now = new Date();
     const featuredLimit = query.featuredLimit ?? 8;
@@ -359,10 +375,14 @@ export class MarketplaceService {
     }));
   }
 
-  async listGrades(userId: string | null | undefined, query: MarketplaceGradeQueryDto) {
+  async listGrades(
+    userId: string | null | undefined,
+    query: MarketplaceGradeQueryDto,
+  ) {
     await this.ctx(userId);
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const search = resolveSearch(query);
+    const searchWhere = buildGradeSearchWhere(search);
     const now = new Date();
     const where: Prisma.GradeWhereInput = {
       ...customerGradeWhere,
@@ -389,8 +409,17 @@ export class MarketplaceService {
       ...(query.hasOffers
         ? { offers: { some: activeMarketplaceOfferWhere(now) } }
         : {}),
-      ...(search ? { OR: gradeSearch(search) } : {}),
+      ...(searchWhere ? { AND: [searchWhere] } : {}),
     };
+
+    if (searchWhere && search) {
+      return this.searchGradesRanked(
+        where,
+        search,
+        { page, limit, skip, take },
+        now,
+      );
+    }
 
     const [total, items] = await this.prisma.$transaction([
       this.prisma.grade.count({ where }),
@@ -410,6 +439,74 @@ export class MarketplaceService {
     return {
       items: items.map((g) => toCustomerGrade(g, offerCounts.get(g.id) ?? 0)),
       meta: paginationMeta(page, limit, total),
+    };
+  }
+
+  /**
+   * Relevance-ranked search. Matching happens in SQL (tokenised + aliases); ranking
+   * is applied to the matched candidates, then the requested page is hydrated.
+   * Catalogue grades without live offers are still returned (liveOfferCount: 0) —
+   * only `hasOffers=true` narrows to grades with a live offer.
+   */
+  private async searchGradesRanked(
+    where: Prisma.GradeWhereInput,
+    search: string,
+    paging: { page: number; limit: number; skip: number; take: number },
+    now: Date,
+  ) {
+    const candidates = await this.prisma.grade.findMany({
+      where,
+      select: {
+        id: true,
+        code: true,
+        gradeNo: true,
+        name: true,
+        displayName: true,
+        fullGradeName: true,
+        manufacturer: true,
+        gradeGroup: true,
+        description: true,
+        sortOrder: true,
+        category: { select: { code: true, name: true, displayName: true } },
+        gradeApplications: {
+          select: {
+            application: { select: { name: true, displayName: true } },
+          },
+        },
+      },
+      take: GRADE_SEARCH_CANDIDATE_CAP,
+    });
+    const ranked = rankGradeCandidates(candidates, search);
+    const total =
+      candidates.length >= GRADE_SEARCH_CANDIDATE_CAP
+        ? await this.prisma.grade.count({ where })
+        : ranked.length;
+
+    const pageIds = ranked
+      .slice(paging.skip, paging.skip + paging.take)
+      .map((c) => c.id);
+    const rows = pageIds.length
+      ? await this.prisma.grade.findMany({
+          where: { id: { in: pageIds }, ...customerGradeWhere },
+          select: gradeSelect,
+        })
+      : [];
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const ordered = pageIds
+      .map((id) => byId.get(id))
+      .filter((g): g is NonNullable<typeof g> => Boolean(g));
+    const offerCounts = await this.liveOfferCounts(
+      ordered.map((g) => g.id),
+      now,
+    );
+
+    return {
+      items: ordered.map((g) => toCustomerGrade(g, offerCounts.get(g.id) ?? 0)),
+      meta: {
+        ...paginationMeta(paging.page, paging.limit, total),
+        // Echoed so clients can discard responses for an outdated query.
+        query: parseGradeSearch(search)?.query ?? search,
+      },
     };
   }
 

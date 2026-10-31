@@ -44,6 +44,10 @@ async function bootstrap(): Promise<void> {
       return true;
     }
     // Allow DigitalOcean App Platform + Vercel preview/live hosts without listing every slug.
+    // Disable with CORS_ALLOW_PLATFORM_HOSTS=false once every origin is in CORS_ORIGINS.
+    if (!appConfig.corsAllowPlatformHosts) {
+      return false;
+    }
     try {
       const { hostname } = new URL(origin);
       return (
@@ -55,6 +59,12 @@ async function bootstrap(): Promise<void> {
       return false;
     }
   };
+
+  if (appConfig.env === 'production' && appConfig.corsAllowPlatformHosts) {
+    logger.warn(
+      'CORS_ALLOW_PLATFORM_HOSTS is on: any *.vercel.app / *.ondigitalocean.* origin is allowed. List exact client origins in CORS_ORIGINS and set CORS_ALLOW_PLATFORM_HOSTS=false for launch.',
+    );
+  }
 
   app.enableCors({
     origin:

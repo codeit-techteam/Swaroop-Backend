@@ -28,6 +28,7 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "catalog:extract": "node scripts/extract-frontend-catalog.mjs",
     "catalog:import": "tsx scripts/import-catalog.ts",
+    "catalog:labels-audit": "tsx scripts/report-category-labels.ts",
     "catalog:sync-remote": "node scripts/sync-catalog-to-remote-api.mjs",
     "import:seed-master": "tsx scripts/seed-import-master-data.ts",
     "import:grades": "tsx scripts/import-grades.ts",

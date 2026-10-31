@@ -71,17 +71,18 @@ describe('MarketplaceService grade browsing', () => {
       manufacturer: { equals: 'ril', mode: 'insensitive' },
       offers: { some: expect.any(Object) },
     });
-    const searched = (args.where.OR as Record<string, unknown>[]).flatMap(
-      (clause) => Object.keys(clause),
+    // search is tokenised: AND[ OR(fields...) ] and covers every identity column
+    expect(JSON.stringify(args.where.AND)).toEqual(
+      expect.stringContaining('"gradeNo":{"contains":"HF0963"'),
     );
-    expect(searched).toEqual(
-      expect.arrayContaining([
-        'gradeNo',
-        'manufacturer',
-        'gradeGroup',
-        'fullGradeName',
-      ]),
-    );
+    for (const field of [
+      'manufacturer',
+      'gradeGroup',
+      'fullGradeName',
+      'code',
+    ]) {
+      expect(JSON.stringify(args.where.AND)).toContain(`"${field}":`);
+    }
   });
 
   it('returns live offer counts without reference prices or seller identity', async () => {
@@ -145,10 +146,98 @@ describe('MarketplaceService grade browsing', () => {
       { where: Record<string, unknown> },
     ];
     expect(args.where).not.toHaveProperty('offers');
-    expect(args.where.OR).toEqual(
-      expect.arrayContaining([
-        { gradeNo: { contains: '4811', mode: 'insensitive' } },
-      ]),
+    expect(JSON.stringify(args.where.AND)).toContain(
+      '"gradeNo":{"contains":"4811","mode":"insensitive"}',
     );
+  });
+
+  it('ranks matches best-first, paginates the ranked list and echoes the query', async () => {
+    const mk = (id: string, over: Record<string, unknown>) => ({
+      ...grade,
+      id,
+      ...over,
+    });
+    const candidates = [
+      mk('desc', {
+        code: 'Z3',
+        name: 'Z3',
+        gradeNo: null,
+        manufacturer: null,
+        gradeGroup: null,
+        fullGradeName: null,
+        displayName: 'Z3',
+        description: 'like F4811',
+        category: null,
+        gradeApplications: [],
+      }),
+      mk('exact', {
+        code: 'F4811',
+        name: 'F4811',
+        gradeNo: 'F4811',
+        displayName: 'F4811',
+        fullGradeName: 'F4811',
+        category: null,
+        gradeApplications: [],
+      }),
+      mk('prefix', {
+        code: 'F4811X',
+        name: 'F4811X',
+        gradeNo: 'F4811X',
+        displayName: 'F4811X',
+        fullGradeName: 'F4811X',
+        category: null,
+        gradeApplications: [],
+      }),
+    ];
+    const { service, prisma } = setup();
+    prisma.grade.findMany
+      .mockResolvedValueOnce(candidates as never) // candidate query
+      .mockImplementationOnce((async (a: { where: { id: { in: string[] } } }) =>
+        candidates.filter((c) => a.where.id.in.includes(c.id))) as never);
+    prisma.grade.count.mockResolvedValue(3);
+    prisma.offer.groupBy.mockResolvedValue([]);
+
+    const page1 = await service.listGrades('u1', {
+      search: ' F4811 ',
+      page: 1,
+      limit: 2,
+    } as never);
+    expect(page1.items.map((i) => i.id)).toEqual(['exact', 'prefix']);
+    expect(page1.meta).toMatchObject({ total: 3, page: 1, query: 'F4811' });
+
+    prisma.grade.findMany
+      .mockResolvedValueOnce(candidates as never)
+      .mockImplementationOnce((async (a: { where: { id: { in: string[] } } }) =>
+        candidates.filter((c) => a.where.id.in.includes(c.id))) as never);
+    const page2 = await service.listGrades('u1', {
+      search: 'F4811',
+      page: 2,
+      limit: 2,
+    } as never);
+    expect(page2.items.map((i) => i.id)).toEqual(['desc']);
+  });
+
+  it('keeps catalogue grades with no live offers discoverable ("No live offers")', async () => {
+    const { service, prisma } = setup();
+    prisma.offer.groupBy.mockResolvedValue([]);
+    const { items } = await service.listGrades('u1', {
+      search: 'F46003',
+    } as never);
+    expect(items[0]).toMatchObject({ liveOfferCount: 0, hasLiveOffers: false });
+  });
+
+  it('never hydrates unpublished/hidden grades (visibility filter re-applied)', async () => {
+    const { service, prisma } = setup();
+    await service.listGrades('u1', { search: 'F46003' } as never);
+    const calls = prisma.grade.findMany.mock.calls as unknown as [
+      { where: Record<string, unknown> },
+    ][];
+    for (const [args] of calls) {
+      expect(args.where).toMatchObject({
+        deletedAt: null,
+        status: 'ACTIVE',
+        customerVisible: true,
+      });
+    }
   });
 });

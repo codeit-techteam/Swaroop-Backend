@@ -18,6 +18,9 @@ import { AddressType } from '../../../generated/prisma/client.js';
 
 export const INDIAN_PINCODE_REGEX = /^[1-9][0-9]{5}$/;
 
+/** City / state names: must contain letters; digits and markup characters are rejected. */
+export const PLACE_NAME_REGEX = /^(?=.*\p{L})[\p{L}\p{M}\s.'’&(),/-]+$/u;
+
 export const ADDRESS_SOURCES = [
   'AUTOCOMPLETE',
   'GPS',
@@ -60,14 +63,20 @@ export class CreateAddressBookEntryDto {
 
   @ApiProperty({ example: 'Mumbai' })
   @IsString()
-  @MinLength(1)
+  @MinLength(2)
   @MaxLength(120)
+  @Matches(PLACE_NAME_REGEX, {
+    message: 'city must be a valid place name (letters only)',
+  })
   city!: string;
 
   @ApiProperty({ example: 'Maharashtra' })
   @IsString()
-  @MinLength(1)
+  @MinLength(2)
   @MaxLength(120)
+  @Matches(PLACE_NAME_REGEX, {
+    message: 'state must be a valid place name (letters only)',
+  })
   state!: string;
 
   @ApiPropertyOptional({ default: 'IN' })

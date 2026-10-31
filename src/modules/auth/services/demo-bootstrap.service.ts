@@ -120,6 +120,24 @@ export class DemoBootstrapService implements OnModuleInit {
       return this.restoreDemoCredentialsIfNeeded();
     }
 
+    if (
+      (process.env.NODE_ENV === 'production' ||
+        process.env.NODE_ENV === 'staging') &&
+      process.env.AUTH_DEV_FIXED_OTP === 'true'
+    ) {
+      this.logger.warn(
+        'AUTH_DEV_FIXED_OTP=true is set but IGNORED in production/staging. Remove it from the hosting environment.',
+      );
+    }
+    if (
+      process.env.NODE_ENV === 'production' &&
+      !this.configService.get<string>('otp.msg91.authKey')
+    ) {
+      this.logger.error(
+        'Production without MSG91 credentials: phone OTP sends are refused until MSG91_AUTH_KEY and MSG91_OTP_TEMPLATE_ID are configured.',
+      );
+    }
+
     const demoUsers = await this.prisma.user.findMany({
       where: {
         OR: [

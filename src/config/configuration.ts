@@ -9,6 +9,7 @@ export type AppConfig = {
     apiVersion: string;
     logLevel: EnvConfig['LOG_LEVEL'];
     corsOrigins: string[];
+    corsAllowPlatformHosts: boolean;
     skipDbConnectOnBoot: boolean;
   };
   /**
@@ -40,11 +41,13 @@ export type AppConfig = {
     otpExpiresInSeconds: number;
     otpMaxAttempts: number;
     otpResendCooldownSeconds: number;
+    /** Max OTP sends per identifier+purpose per rolling hour (DB-backed). */
+    otpMaxSendsPerHour: number;
     authDevExposeOtp: boolean;
     /**
      * Demo phone +918240890242 accepts OTP 123456.
-     * True during the development phase; false when AUTH_STRICT_OTP=true
-     * or when MSG91 OTP provider credentials are configured.
+     * Fail-closed: true ONLY outside production/staging when
+     * AUTH_DEV_FIXED_OTP=true is set explicitly (see `resolveFixedDevOtp`).
      */
     authDevFixedOtp: boolean;
     /**
@@ -192,20 +195,24 @@ const clientOrigins = (
 
 /**
  * Whether the fixed demo OTP (123456 for the demo phone) is accepted.
- * Disabled when:
- * - AUTH_STRICT_OTP=true (explicit production SMS lock), OR
- * - OTP_PROVIDER=msg91 with MSG91_AUTH_KEY configured (real provider active)
  *
- * AUTH_DEV_FIXED_OTP alone cannot re-enable the bypass once either lock applies.
+ * FAIL-CLOSED: the bypass is OFF unless it is explicitly opted into AND the
+ * runtime is not production. It is hard-disabled when:
+ * - NODE_ENV=production or staging (no flag can re-enable it), OR
+ * - AUTH_STRICT_OTP=true, OR
+ * - OTP_PROVIDER=msg91 with MSG91_AUTH_KEY configured (real provider active), OR
+ * - AUTH_DEV_FIXED_OTP is not explicitly "true".
  */
 export const resolveFixedDevOtp = (
   env: Record<string, string | undefined>,
 ): boolean => {
+  const nodeEnv = (env.NODE_ENV ?? '').trim().toLowerCase();
+  if (nodeEnv === 'production' || nodeEnv === 'staging') return false;
   if (env.AUTH_STRICT_OTP === 'true') return false;
   const provider = (env.OTP_PROVIDER ?? '').trim().toLowerCase();
   const authKey = (env.MSG91_AUTH_KEY ?? '').trim();
   if (provider === 'msg91' && authKey.length > 0) return false;
-  return true;
+  return (env.AUTH_DEV_FIXED_OTP ?? '').trim().toLowerCase() === 'true';
 };
 
 /**
@@ -253,6 +260,7 @@ export default (): AppConfig => {
         process.env.CORS_ORIGINS ??
           'http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:4000,http://localhost:5173,http://localhost:8081',
       ),
+      corsAllowPlatformHosts: process.env.CORS_ALLOW_PLATFORM_HOSTS !== 'false',
       skipDbConnectOnBoot:
         process.env.SKIP_DB_CONNECT_ON_BOOT === 'true' ||
         process.env.NODE_ENV === 'test',
@@ -309,6 +317,7 @@ export default (): AppConfig => {
       otpResendCooldownSeconds: Number(
         process.env.OTP_RESEND_COOLDOWN_SECONDS ?? 60,
       ),
+      otpMaxSendsPerHour: Number(process.env.OTP_MAX_SENDS_PER_HOUR ?? 5),
       authDevExposeOtp: process.env.AUTH_DEV_EXPOSE_OTP === 'true',
       authStrictOtp: process.env.AUTH_STRICT_OTP === 'true',
       authDevFixedOtp: resolveFixedDevOtp(process.env),
@@ -335,8 +344,11 @@ export default (): AppConfig => {
       return {
         provider,
         environment: otpEnvironment,
+        // Fail-closed: in production/staging a real SMS provider is mandatory,
+        // regardless of OTP_PROVIDER. Without it phone OTP sends are refused.
         requireProviderInProduction:
-          process.env.NODE_ENV === 'production' && provider === 'msg91',
+          process.env.NODE_ENV === 'production' ||
+          process.env.NODE_ENV === 'staging',
         msg91: {
           authKey: (process.env.MSG91_AUTH_KEY ?? '').trim(),
           templateId: (

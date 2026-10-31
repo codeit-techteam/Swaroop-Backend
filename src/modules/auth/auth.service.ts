@@ -108,6 +108,26 @@ export class AuthService {
       );
     }
 
+    // Rolling-hour send cap per identifier+purpose (DB-backed so it holds across
+    // instances). Protects SMS spend and blocks OTP-bombing / enumeration.
+    const maxSendsPerHour =
+      this.configService.get<number>('security.otpMaxSendsPerHour') ?? 5;
+    const sentLastHour = await this.prisma.otpVerification.count({
+      where: {
+        identifier,
+        purpose,
+        createdAt: { gt: new Date(Date.now() - 60 * 60 * 1000) },
+      },
+    });
+    if (sentLastHour >= maxSendsPerHour) {
+      throw new AuthException(
+        AuthErrorCode.AUTH_OTP_RATE_LIMITED,
+        'Too many OTP requests. Please try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+        { retryAfterSeconds: 3600 },
+      );
+    }
+
     await this.prisma.otpVerification.updateMany({
       where: {
         identifier,

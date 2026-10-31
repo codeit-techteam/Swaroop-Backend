@@ -10,6 +10,7 @@ import {
   IsNumber,
   IsObject,
   IsOptional,
+  IsPositive,
   IsString,
   IsUUID,
   Matches,
@@ -29,7 +30,7 @@ export class OfferPriceTierInputDto {
   @ApiProperty()
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @IsPositive({ message: 'minQty must be greater than 0' })
   minQty!: number;
 
   @ApiPropertyOptional()
@@ -42,7 +43,7 @@ export class OfferPriceTierInputDto {
   @ApiProperty()
   @Type(() => Number)
   @IsNumber()
-  @Min(0)
+  @IsPositive({ message: 'price must be greater than 0' })
   price!: number;
 
   @ApiPropertyOptional({ enum: CurrencyCode, default: CurrencyCode.INR })

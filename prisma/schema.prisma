@@ -709,6 +709,7 @@ enum CurrencyCode {
   USD
   EUR
   AED
+  CNY
 }
 
 enum EntityOwnerType {
@@ -736,6 +737,7 @@ enum EntityOwnerType {
   IMPORT_MASTER
   IMPORT_SHIPMENT
   SUPPORT_TICKET
+  NEW_GRADE_REQUEST
   OTHER
 }
 
@@ -785,6 +787,7 @@ model User {
   notificationPreferences NotificationPreference[]
   auditLogs               AuditLog[]               @relation("AuditActor")
   assignedCreditApplications CreditApplication[]   @relation("CreditApplicationAssignee")
+  assignedNewGradeRequests NewGradeRequest[]       @relation("NewGradeRequestAssignee")
   assignedCreditProfiles  CustomerCreditProfile[]  @relation("CreditProfileAssignee")
   creditTransactions      CreditTransaction[]      @relation("CreditTransactionActor")
   creditApplicationEvents CreditApplicationEvent[] @relation("CreditApplicationEventActor")
@@ -1038,6 +1041,7 @@ model CustomerProfile {
   orders           Order[]
   checkoutQuotes   CheckoutQuote[]
   bulkLogisticsQuotes BulkLogisticsQuoteRequest[]
+  newGradeRequests NewGradeRequest[]
   importListings   ImportListing[]
   priceAlerts      PriceAlert[]
 
@@ -1110,6 +1114,111 @@ model BulkLogisticsQuoteRequest {
   @@index([status, createdAt])
   @@index([assignedAdminId])
   @@map("bulk_logistics_quote_requests")
+}
+
+// =============================================================================
+// NEW GRADE REQUESTS (customer asks for a material/grade not in the catalogue)
+// =============================================================================
+
+enum NewGradeRequestStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  INFO_REQUIRED
+  GRADE_IDENTIFIED
+  QUOTATION_AVAILABLE
+  CONVERTED_TO_PR
+  REJECTED
+  CLOSED
+}
+
+/// A customer request for a grade that is not in the catalogue. Standalone from
+/// PurchaseRequest on purpose: it has no offer/seller, so it never enters seller
+/// matching and is never visible to sellers (blind-marketplace safe).
+model NewGradeRequest {
+  id                String                @id @default(uuid()) @db.Uuid
+  referenceNumber   String                @unique @map("reference_number")
+  customerProfileId String                @map("customer_profile_id") @db.Uuid
+  requestedById     String?               @map("requested_by_id") @db.Uuid
+  status            NewGradeRequestStatus @default(SUBMITTED)
+
+  // Material
+  gradeName         String                @map("grade_name")
+  materialCategory  String                @map("material_category")
+  categoryId        String?               @map("category_id") @db.Uuid
+  manufacturer      String?
+  gradeGroup        String?               @map("grade_group")
+  application       String?
+  technicalSpecs    String?               @map("technical_specs")
+  remarks           String?
+
+  // Commercial
+  quantity          Decimal               @db.Decimal(18, 3)
+  unit              String                @default("MT")
+  deliveryLocation  String                @map("delivery_location")
+  deliveryPincode   String?               @map("delivery_pincode")
+  deliveryAddressId String?               @map("delivery_address_id") @db.Uuid
+  requiredByDate    DateTime?             @map("required_by_date") @db.Date
+  preferredPackaging String?              @map("preferred_packaging")
+
+  // Contact (snapshot at submission)
+  contactName       String                @map("contact_name")
+  contactPhone      String                @map("contact_phone")
+  contactEmail      String?               @map("contact_email")
+
+  /// lower(trim(gradeName))|lower(trim(manufacturer)) — duplicate-open-request rule.
+  dedupeKey         String                @map("dedupe_key")
+  idempotencyKey    String?               @unique @map("idempotency_key")
+
+  // Admin workflow
+  assignedAdminId   String?               @map("assigned_admin_id") @db.Uuid
+  resolvedGradeId   String?               @map("resolved_grade_id") @db.Uuid
+  /// MAPPED_EXISTING | CREATED_NEW
+  resolutionType    String?               @map("resolution_type")
+  /// Latest customer-visible message from admin (info request / rejection reason).
+  adminMessage      String?               @map("admin_message")
+  customerResponse  String?               @map("customer_response")
+  closureReason     String?               @map("closure_reason")
+  metadata          Json?
+
+  submittedAt       DateTime              @default(now()) @map("submitted_at")
+  reviewedAt        DateTime?             @map("reviewed_at")
+  closedAt          DateTime?             @map("closed_at")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+
+  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  category        GradeCategory?  @relation(fields: [categoryId], references: [id])
+  assignedAdmin   User?           @relation("NewGradeRequestAssignee", fields: [assignedAdminId], references: [id])
+  resolvedGrade   Grade?          @relation("NewGradeRequestResolvedGrade", fields: [resolvedGradeId], references: [id])
+  events          NewGradeRequestEvent[]
+
+  @@index([customerProfileId, status])
+  @@index([customerProfileId, dedupeKey])
+  @@index([status, createdAt])
+  @@index([assignedAdminId])
+  @@index([resolvedGradeId])
+  @@map("new_grade_requests")
+}
+
+/// Decision history + customer-visible timeline + internal admin notes.
+model NewGradeRequestEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  requestId     String   @map("request_id") @db.Uuid
+  eventType     String   @map("event_type")
+  fromStatus    NewGradeRequestStatus? @map("from_status")
+  toStatus      NewGradeRequestStatus? @map("to_status")
+  actorRole     String   @map("actor_role")
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  message       String?
+  /// Internal events (admin notes) are never returned to customers.
+  internal      Boolean  @default(false)
+  metadata      Json?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  request NewGradeRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, createdAt])
+  @@map("new_grade_request_events")
 }
 
 model CustomerPreference {
@@ -1611,6 +1720,7 @@ model GradeCategory {
   grades        Grade[]
   subcategories Subcategory[]
   importListings ImportListing[]
+  newGradeRequests NewGradeRequest[]
 
   @@index([parentGroup])
   @@index([isActive])
@@ -1725,6 +1835,7 @@ model Grade {
   checkoutQuotes       CheckoutQuote[]
   importListings       ImportListing[]
   priceAlerts          PriceAlert[]
+  resolvedForGradeRequests NewGradeRequest[] @relation("NewGradeRequestResolvedGrade")
 
   @@index([categoryId])
   @@index([subcategoryId])

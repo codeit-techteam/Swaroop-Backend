@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createHash, randomInt, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomInt, randomBytes } from 'node:crypto';
 import * as bcrypt from 'bcrypt';
 
 @Injectable()
@@ -23,8 +23,16 @@ export class CryptoService {
     return String(randomInt(min, max));
   }
 
+  /**
+   * Keyed hash (HMAC-SHA256) of a locally generated OTP. A 6-digit OTP has only
+   * 10^6 values, so an unkeyed hash would be trivially reversible if the table
+   * leaked; keying it with a server secret prevents offline recovery.
+   * (MSG91 flow never stores an OTP at all — only the provider request id.)
+   */
   hashOtp(otp: string): string {
-    return createHash('sha256').update(otp).digest('hex');
+    const secret =
+      this.configService.get<string>('security.jwtAccessSecret') ?? '';
+    return createHmac('sha256', secret).update(otp).digest('hex');
   }
 
   hashToken(token: string): string {
