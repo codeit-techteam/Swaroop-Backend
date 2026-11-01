@@ -79,9 +79,16 @@ export class AuthService {
     const maxAttempts =
       this.configService.get<number>('security.otpMaxAttempts') ?? 5;
     const otpLength = this.configService.get<number>('security.otpLength') ?? 6;
+    const fixedDevForThisPhone =
+      this.isFixedDevOtpEnabled() &&
+      identifierType === OtpIdentifierType.PHONE &&
+      identifier === DEMO_PHONE_E164;
+    // Demo phone stays on local OTP 123456 and must not wait on MSG91.
+    // A provider 502 is rewritten by the DigitalOcean edge into an HTML 504.
     const useMsg91 =
       identifierType === OtpIdentifierType.PHONE &&
-      this.otpDelivery.isMsg91PhoneProvider();
+      this.otpDelivery.isMsg91PhoneProvider() &&
+      !fixedDevForThisPhone;
 
     const recent = await this.prisma.otpVerification.findFirst({
       where: {
@@ -159,7 +166,7 @@ export class AuthService {
         throw new AuthException(
           AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
           'Unable to send OTP right now. Please try again shortly.',
-          HttpStatus.BAD_GATEWAY,
+          HttpStatus.SERVICE_UNAVAILABLE,
         );
       }
 
@@ -192,7 +199,7 @@ export class AuthService {
         throw new AuthException(
           AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
           'Unable to send OTP right now. Please try again shortly.',
-          HttpStatus.BAD_GATEWAY,
+          HttpStatus.SERVICE_UNAVAILABLE,
         );
       }
     }
@@ -305,7 +312,7 @@ export class AuthService {
         throw new AuthException(
           AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
           'Unable to verify OTP right now. Please try again shortly.',
-          HttpStatus.BAD_GATEWAY,
+          HttpStatus.SERVICE_UNAVAILABLE,
         );
       }
 

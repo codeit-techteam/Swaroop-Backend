@@ -45,9 +45,9 @@ export type AppConfig = {
     otpMaxSendsPerHour: number;
     authDevExposeOtp: boolean;
     /**
-     * Demo phone +918240890242 accepts OTP 123456.
-     * Fail-closed: true ONLY outside production/staging when
-     * AUTH_DEV_FIXED_OTP=true is set explicitly (see `resolveFixedDevOtp`).
+     * Demo phone +918240890242 accepts OTP 123456 during development.
+     * Off when AUTH_STRICT_OTP=true or AUTH_DEV_FIXED_OTP=false.
+     * See `resolveFixedDevOtp`.
      */
     authDevFixedOtp: boolean;
     /**
@@ -194,25 +194,25 @@ const clientOrigins = (
 };
 
 /**
- * Whether the fixed demo OTP (123456 for the demo phone) is accepted.
+ * Whether the fixed demo OTP (123456 for +918240890242 only) is accepted.
  *
- * FAIL-CLOSED: the bypass is OFF unless it is explicitly opted into AND the
- * runtime is not production. It is hard-disabled when:
- * - NODE_ENV=production or staging (no flag can re-enable it), OR
- * - AUTH_STRICT_OTP=true, OR
- * - OTP_PROVIDER=msg91 with MSG91_AUTH_KEY configured (real provider active), OR
- * - AUTH_DEV_FIXED_OTP is not explicitly "true".
+ * The product is still in development. The DigitalOcean test server runs
+ * NODE_ENV=production, and a failing MSG91 send is rewritten by the edge
+ * from 502 into an HTML 504, which blocks login. Until AUTH_STRICT_OTP=true,
+ * the demo phone keeps 123456 and does not call MSG91.
+ *
+ * Turn the bypass off with AUTH_STRICT_OTP=true (production SMS lock) or
+ * AUTH_DEV_FIXED_OTP=false. Other phone numbers still use MSG91.
  */
 export const resolveFixedDevOtp = (
   env: Record<string, string | undefined>,
 ): boolean => {
-  const nodeEnv = (env.NODE_ENV ?? '').trim().toLowerCase();
-  if (nodeEnv === 'production' || nodeEnv === 'staging') return false;
-  if (env.AUTH_STRICT_OTP === 'true') return false;
-  const provider = (env.OTP_PROVIDER ?? '').trim().toLowerCase();
-  const authKey = (env.MSG91_AUTH_KEY ?? '').trim();
-  if (provider === 'msg91' && authKey.length > 0) return false;
-  return (env.AUTH_DEV_FIXED_OTP ?? '').trim().toLowerCase() === 'true';
+  if ((env.AUTH_STRICT_OTP ?? '').trim().toLowerCase() === 'true') return false;
+  const flag = (env.AUTH_DEV_FIXED_OTP ?? '').trim().toLowerCase();
+  if (flag === 'false' || flag === '0' || flag === 'no' || flag === 'off') {
+    return false;
+  }
+  return true;
 };
 
 /**
@@ -425,13 +425,14 @@ export default (): AppConfig => {
     },
     legal: (() => {
       const trim = (v: string | undefined) => (v ?? '').trim().replace(/\/+$/, '');
-      // Live marketing site on Vercel. petrotrade.in is still a GoDaddy park/lander
-      // and swaroop-website.vercel.app 404s — use the deployed host until custom DNS is live.
-      const LIVE_WEBSITE_URL = 'https://swaroop-website-mocha.vercel.app';
+      // Official site. polystorex.com/terms, /privacy and /contact return 200.
+      // Older Vercel hosts are rewritten onto this origin.
+      const LIVE_WEBSITE_URL = 'https://polystorex.com';
       const BROKEN_WEBSITE_HOSTS = new Set([
         'petrotrade.in',
         'www.petrotrade.in',
         'swaroop-website.vercel.app',
+        'swaroop-website-mocha.vercel.app',
       ]);
       const resolveWebsiteOrigin = (raw: string): string => {
         const value = trim(raw);

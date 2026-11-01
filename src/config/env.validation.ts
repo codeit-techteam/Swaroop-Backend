@@ -78,14 +78,12 @@ export const envSchema = z
     MSG91_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
     AUTH_DEV_EXPOSE_OTP: booleanFromString.optional().default(false),
     /**
-     * Opt-in development bypass (fixed OTP for the demo phone). Ignored in
-     * production/staging, with AUTH_STRICT_OTP, or with an active MSG91
-     * provider (see `resolveFixedDevOtp`). Defaults to OFF.
+     * Set false to disable demo-phone OTP 123456. Defaults to on until
+     * AUTH_STRICT_OTP=true. See `resolveFixedDevOtp`.
      */
     AUTH_DEV_FIXED_OTP: booleanFromString.optional(),
     /**
      * When true, fixed demo OTP is forbidden (real SMS production lock).
-     * Also disabled automatically when OTP_PROVIDER=msg91 with MSG91_AUTH_KEY.
      */
     AUTH_STRICT_OTP: booleanFromString.optional().default(false),
     /**

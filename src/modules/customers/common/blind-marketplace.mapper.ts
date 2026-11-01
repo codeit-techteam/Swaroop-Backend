@@ -199,9 +199,12 @@ export function listingManufacturer(
   productBrand: string | null | undefined,
   grade?: GradeLabelSource | null,
 ): string | null {
+  // Grade Master is the catalogue source of truth. A denormalized product
+  // manufacturer (for example the bad "Relindvb" row on ABS 3000D) must not
+  // hide the canonical grade manufacturer (TAITA).
   return (
-    productManufacturer?.trim() ||
     grade?.manufacturer?.trim() ||
+    productManufacturer?.trim() ||
     productBrand?.trim() ||
     null
   );

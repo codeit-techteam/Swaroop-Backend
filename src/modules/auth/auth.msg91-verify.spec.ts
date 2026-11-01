@@ -157,7 +157,7 @@ describe('AuthService MSG91 verify path', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(AuthException);
       const ex = error as AuthException;
-      expect(ex.getStatus()).toBe(HttpStatus.BAD_GATEWAY);
+      expect(ex.getStatus()).toBe(HttpStatus.SERVICE_UNAVAILABLE);
     }
 
     expect(prisma.$transaction).not.toHaveBeenCalled();

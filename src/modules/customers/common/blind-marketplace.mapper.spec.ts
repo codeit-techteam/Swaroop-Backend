@@ -68,6 +68,37 @@ describe('blind marketplace mapper', () => {
     expect(payload.grade?.category?.parentGroup).toBe('POLYMERS');
   });
 
+  it('prefers the Grade Master manufacturer over a bad product manufacturer', () => {
+    const payload = toBlindProduct({
+      id: 'prod-3000d',
+      code: 'SO-ABS-3000D-TAITA-DD7728',
+      name: 'ABS EXTRUSION 3000D - TAITA',
+      brand: 'Relindvb',
+      manufacturer: 'Relindvb',
+      description: null,
+      technicalSpecs: {},
+      mfi: null,
+      density: null,
+      packaging: '25 kg bags',
+      unit: 'MT',
+      countryOfOrigin: 'India',
+      supplyOrigin: 'India',
+      status: 'ACTIVE',
+      grade: {
+        id: 'grade-3000d',
+        code: 'SO-ABS-3000D-TAITA-DD7728',
+        name: '3000D',
+        displayName: 'ABS EXTRUSION 3000D - TAITA',
+        gradeNo: '3000D',
+        gradeGroup: 'ABS EXTRUSION',
+        manufacturer: 'TAITA',
+      },
+    });
+    expect(payload.manufacturer).toBe('TAITA');
+    expect(payload.brand).toBe('TAITA');
+    expect(JSON.stringify(payload)).not.toContain('Relindvb');
+  });
+
   it('B-06: collapses commercially identical listings but keeps distinct offers', () => {
     const twinA = {
       id: 'prod-a',

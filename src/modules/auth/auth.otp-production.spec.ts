@@ -93,30 +93,33 @@ describe('AuthService.isFixedDevOtpEnabled', () => {
 });
 
 /**
- * Fixed OTP is FAIL-CLOSED: off by default, off in production/staging no matter
- * what flags are set, and only enabled outside production when explicitly opted in.
+ * Demo OTP 123456 stays on during development, including the DigitalOcean
+ * test server (NODE_ENV=production). AUTH_STRICT_OTP=true is the lock.
  */
 describe('resolveFixedDevOtp (configuration)', () => {
-  it('is OFF by default (no flag set), including in production', async () => {
-    expect(resolveFixedDevOtp({ NODE_ENV: 'production' })).toBe(false);
-    expect(resolveFixedDevOtp({ NODE_ENV: 'development' })).toBe(false);
-    expect(resolveFixedDevOtp({})).toBe(false);
+  it('is ON by default so the demo phone can log in during development', async () => {
+    expect(resolveFixedDevOtp({ NODE_ENV: 'production' })).toBe(true);
+    expect(resolveFixedDevOtp({ NODE_ENV: 'development' })).toBe(true);
+    expect(resolveFixedDevOtp({})).toBe(true);
   });
 
-  it('can never be enabled in production or staging', async () => {
+  it('stays on in production until the SMS lock is set', async () => {
     for (const NODE_ENV of ['production', 'staging', 'PRODUCTION']) {
       expect(
         resolveFixedDevOtp({ NODE_ENV, AUTH_DEV_FIXED_OTP: 'true' }),
-      ).toBe(false);
+      ).toBe(true);
     }
   });
 
-  it('is ON only outside production with an explicit AUTH_DEV_FIXED_OTP=true', async () => {
+  it('is OFF when AUTH_DEV_FIXED_OTP is explicitly false', async () => {
     expect(
       resolveFixedDevOtp({ NODE_ENV: 'development', AUTH_DEV_FIXED_OTP: 'true' }),
     ).toBe(true);
     expect(
       resolveFixedDevOtp({ NODE_ENV: 'development', AUTH_DEV_FIXED_OTP: 'false' }),
+    ).toBe(false);
+    expect(
+      resolveFixedDevOtp({ NODE_ENV: 'production', AUTH_DEV_FIXED_OTP: 'false' }),
     ).toBe(false);
   });
 
@@ -128,9 +131,15 @@ describe('resolveFixedDevOtp (configuration)', () => {
         AUTH_DEV_FIXED_OTP: 'true',
       }),
     ).toBe(false);
+    expect(
+      resolveFixedDevOtp({
+        NODE_ENV: 'production',
+        AUTH_STRICT_OTP: 'true',
+      }),
+    ).toBe(false);
   });
 
-  it('disables fixed OTP when MSG91 provider credentials are present', async () => {
+  it('keeps the demo bypass when MSG91 credentials are present', async () => {
     expect(
       resolveFixedDevOtp({
         NODE_ENV: 'production',
@@ -138,7 +147,7 @@ describe('resolveFixedDevOtp (configuration)', () => {
         MSG91_AUTH_KEY: 'live-key',
         AUTH_DEV_FIXED_OTP: 'true',
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it('keeps an opted-in dev bypass when OTP_PROVIDER=msg91 but auth key is empty', async () => {

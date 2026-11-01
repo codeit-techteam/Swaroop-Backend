@@ -123,10 +123,11 @@ export class DemoBootstrapService implements OnModuleInit {
     if (
       (process.env.NODE_ENV === 'production' ||
         process.env.NODE_ENV === 'staging') &&
+      process.env.AUTH_STRICT_OTP === 'true' &&
       process.env.AUTH_DEV_FIXED_OTP === 'true'
     ) {
       this.logger.warn(
-        'AUTH_DEV_FIXED_OTP=true is set but IGNORED in production/staging. Remove it from the hosting environment.',
+        'AUTH_DEV_FIXED_OTP=true is ignored because AUTH_STRICT_OTP=true. Demo OTP 123456 is off.',
       );
     }
     if (
