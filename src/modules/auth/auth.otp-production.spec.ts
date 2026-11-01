@@ -361,15 +361,41 @@ describe('OtpDeliveryService production fail-closed', () => {
           'otp.requireProviderInProduction': true,
         })[key],
     };
-    const msg91 = { isConfigured: () => false };
+    const msg91 = { isConfigured: () => false, sendOtp: vi.fn() };
     const svc = new OtpDeliveryService(config as never, msg91 as never);
+    // No local otp → production must refuse without a provider.
     await expect(
       svc.send({
         identifier: '+919999900001',
         identifierType: 'PHONE',
         purpose: 'LOGIN',
-        otp: '123456',
       }),
     ).rejects.toThrow(/not configured/i);
+  });
+
+  it('does not call MSG91 when a local demo OTP is already provided', async () => {
+    const { OtpDeliveryService } = await import(
+      './services/otp-delivery.service.js'
+    );
+    const sendOtp = vi.fn();
+    const config = {
+      get: (key: string) =>
+        ({
+          'app.env': 'production',
+          'otp.requireProviderInProduction': true,
+          'security.otpLength': 6,
+          'security.otpExpiresInSeconds': 300,
+        })[key],
+    };
+    const msg91 = { isConfigured: () => true, sendOtp };
+    const svc = new OtpDeliveryService(config as never, msg91 as never);
+    const result = await svc.send({
+      identifier: '+918240890242',
+      identifierType: 'PHONE',
+      purpose: 'LOGIN',
+      otp: '123456',
+    });
+    expect(sendOtp).not.toHaveBeenCalled();
+    expect(result.provider).toBe('local');
   });
 });

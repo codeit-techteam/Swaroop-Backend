@@ -40,7 +40,15 @@ export class OtpDeliveryService {
   async send(payload: OtpDeliveryPayload): Promise<OtpDeliveryResult> {
     const env = this.configService.get<string>('app.env');
 
-    if (payload.identifierType === 'PHONE' && this.msg91.isConfigured()) {
+    // Local/dev OTP is passed in explicitly (demo phone 123456). Never forward
+    // that challenge to MSG91 — a provider failure would still block login.
+    const useLocalOtp = Boolean(payload.otp);
+
+    if (
+      payload.identifierType === 'PHONE' &&
+      this.msg91.isConfigured() &&
+      !useLocalOtp
+    ) {
       const otpLength =
         this.configService.get<number>('security.otpLength') ?? 6;
       const expiresIn =
@@ -58,7 +66,7 @@ export class OtpDeliveryService {
       };
     }
 
-    if (payload.identifierType === 'PHONE') {
+    if (payload.identifierType === 'PHONE' && !useLocalOtp) {
       const requireProvider =
         this.configService.get<boolean>('otp.requireProviderInProduction') ===
           true ||
