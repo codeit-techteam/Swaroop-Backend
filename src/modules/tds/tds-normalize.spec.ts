@@ -6,6 +6,7 @@ import {
   initialVerificationStatus,
   normalizeMatchToken,
   parseGradeTdsObjectKey,
+  producerAliasTokens,
   producerBaseName,
 } from './tds-normalize.js';
 
@@ -16,6 +17,16 @@ describe('tds-normalize', () => {
 
   it('strips producer parenthetical aliases', () => {
     expect(producerBaseName('SABIC (PE100)')).toBe('SABIC');
+  });
+
+  it('maps R2-style EXXONMOBIL_VISTAMAX producer paths to EXXON catalogue aliases', () => {
+    const tokens = producerAliasTokens('EXXONMOBIL_VISTAMAX');
+    expect(tokens).toEqual(
+      expect.arrayContaining(['EXXONMOBIL', 'EXXON', 'VISTAMAX']),
+    );
+    expect(producerAliasTokens('EXXON')).toEqual(
+      expect.arrayContaining(['EXXON', 'EXXONMOBIL']),
+    );
   });
 
   it('builds stable import keys', () => {

@@ -24,13 +24,41 @@ import type {
 
 const productInclude = {
   grade: {
-    select: { id: true, code: true, name: true, displayName: true },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      displayName: true,
+      gradeNo: true,
+      manufacturer: true,
+      gradeGroup: true,
+    },
   },
   organization: {
     select: { id: true, name: true, legalName: true, code: true },
   },
   sellerProfile: { select: { id: true, status: true } },
 } satisfies Prisma.ProductInclude;
+
+/** Turn filenames / codes into searchable tokens: ABS_EXTRUSION_SR101_TDS.pdf → ["SR101", ...] */
+function searchTokensFromQuery(raw: string): string[] {
+  const cleaned = raw
+    .replace(/\.(pdf|png|jpe?g|webp)$/i, '')
+    .replace(/[_\-/]+/g, ' ')
+    .replace(/\b(TDS|TECHNICAL|DATA|SHEET|DOCUMENT)\b/gi, ' ')
+    .trim();
+  const tokens = cleaned
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2);
+  // Prefer distinctive grade-like tokens (letters+digits) first.
+  tokens.sort((a, b) => {
+    const score = (t: string) =>
+      (/[A-Z]/i.test(t) && /\d/.test(t) ? 0 : t.length >= 4 ? 1 : 2);
+    return score(a) - score(b) || b.length - a.length;
+  });
+  return [...new Set(tokens)].slice(0, 6);
+}
 
 @Injectable()
 export class AdminProductsService {
@@ -47,11 +75,29 @@ export class AdminProductsService {
     if (query.gradeId) where.gradeId = query.gradeId;
     if (query.search?.trim()) {
       const q = query.search.trim();
-      where.OR = [
-        { code: { contains: q, mode: 'insensitive' } },
-        { name: { contains: q, mode: 'insensitive' } },
-        { brand: { contains: q, mode: 'insensitive' } },
+      const tokens = searchTokensFromQuery(q);
+      const phrases = [q, ...tokens].filter(Boolean);
+      const fieldMatchers = (term: string): Prisma.ProductWhereInput[] => [
+        { code: { contains: term, mode: 'insensitive' } },
+        { name: { contains: term, mode: 'insensitive' } },
+        { brand: { contains: term, mode: 'insensitive' } },
+        { manufacturer: { contains: term, mode: 'insensitive' } },
+        {
+          grade: {
+            is: {
+              OR: [
+                { code: { contains: term, mode: 'insensitive' } },
+                { name: { contains: term, mode: 'insensitive' } },
+                { displayName: { contains: term, mode: 'insensitive' } },
+                { gradeNo: { contains: term, mode: 'insensitive' } },
+                { manufacturer: { contains: term, mode: 'insensitive' } },
+                { gradeGroup: { contains: term, mode: 'insensitive' } },
+              ],
+            },
+          },
+        },
       ];
+      where.OR = phrases.flatMap((term) => fieldMatchers(term));
     }
 
     const [items, total] = await Promise.all([

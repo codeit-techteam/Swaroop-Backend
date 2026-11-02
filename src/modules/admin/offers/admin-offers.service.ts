@@ -10,6 +10,12 @@ import {
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
 import {
+  assessMaterialPriceReview,
+  pricePerKgFromMt,
+  pricePerMtFromKg,
+  unitPriceString,
+} from '../../customers/checkout/commerce-pricing.js';
+import {
   paginationMeta,
   skipTake,
 } from '../../master-data/common/pagination.js';
@@ -17,6 +23,7 @@ import { AdminAuditService } from '../common/admin-audit.service.js';
 import type {
   AdminOfferActionDto,
   AdminOffersQueryDto,
+  AdminUpdateOfferPriceDto,
 } from './admin-offers.dto.js';
 
 const offerInclude = {
@@ -176,6 +183,87 @@ export class AdminOffersService {
       'OFFER_SUSPENDED',
       dto,
     );
+  }
+
+  /**
+   * Correct marketplace material price. Always persists ₹/MT on Offer.basePrice.
+   * Checkout total = (price×qty) − discount + freight + GST — freight can dominate
+   * when material price is unrealistically low (e.g. ₹10/MT).
+   */
+  async updatePrice(
+    id: string,
+    actorUserId: string,
+    dto: AdminUpdateOfferPriceDto,
+  ) {
+    const hasMt = dto.pricePerMt != null;
+    const hasKg = dto.pricePerKg != null;
+    if (hasMt === hasKg) {
+      throw new BadRequestException(
+        'Provide exactly one of pricePerMt or pricePerKg',
+      );
+    }
+
+    const existing = await this.prisma.offer.findFirst({
+      where: { id, deletedAt: null },
+    });
+    if (!existing) throw new NotFoundException('Offer not found');
+
+    const nextMt = hasMt
+      ? new Prisma.Decimal(dto.pricePerMt!)
+      : pricePerMtFromKg(dto.pricePerKg!);
+    if (!nextMt.isFinite() || nextMt.lte(0)) {
+      throw new BadRequestException('Price must be a positive number');
+    }
+
+    const review = assessMaterialPriceReview(nextMt);
+    const previousMeta =
+      existing.metadata && typeof existing.metadata === 'object'
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+
+    const offer = await this.prisma.offer.update({
+      where: { id },
+      data: {
+        basePrice: nextMt,
+        unit: 'MT',
+        metadata: {
+          ...previousMeta,
+          needsPriceReview: review.needsPriceReview,
+          priceReviewReason: review.reason,
+          adminPriceCorrection: {
+            at: new Date().toISOString(),
+            byUserId: actorUserId,
+            reason: dto.reason.trim(),
+            previousPricePerMt: unitPriceString(existing.basePrice),
+            pricePerMt: unitPriceString(nextMt),
+            pricePerKg: unitPriceString(pricePerKgFromMt(nextMt)),
+            inputUnit: hasMt ? 'MT' : 'KG',
+          },
+        },
+      },
+      include: offerInclude,
+    });
+
+    await this.audit.log({
+      action: 'OFFER_PRICE_UPDATED',
+      actorUserId,
+      organizationId: existing.organizationId,
+      entityType: EntityOwnerType.OFFER,
+      entityId: id,
+      previousData: {
+        basePrice: unitPriceString(existing.basePrice),
+        unit: existing.unit,
+      },
+      newData: {
+        basePrice: unitPriceString(nextMt),
+        unit: 'MT',
+        pricePerKg: unitPriceString(pricePerKgFromMt(nextMt)),
+        reason: dto.reason.trim(),
+        needsPriceReview: review.needsPriceReview,
+      },
+    });
+
+    return serializeOffer(offer);
   }
 
   async summary() {

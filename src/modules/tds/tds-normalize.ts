@@ -20,6 +20,38 @@ export function producerBaseName(value: string | null | undefined): string {
   return normalizeMatchToken(withoutParen || raw);
 }
 
+/**
+ * Common catalogue vs storage-path producer spellings.
+ * Keys/values are already normalizeMatchToken'd (uppercase, spaces).
+ * Example: R2 path EXXONMOBIL_VISTAMAX must match grade manufacturer EXXON.
+ */
+const PRODUCER_ALIAS_GROUPS: string[][] = [
+  ['EXXON', 'EXXONMOBIL', 'EXXON MOBIL', 'EXXONMOBIL CHEMICAL'],
+  ['DOW', 'DOW CHEMICAL', 'DOWCHEMICAL'],
+  ['LG', 'LG CHEM', 'LGCHEM', 'LG CHEMICAL'],
+  ['SABIC', 'SAUDI BASIC'],
+  ['BOROUGE', 'ABU DHABI POLYMERS'],
+  ['RELIANCE', 'RIL', 'RELIANCE INDUSTRIES'],
+  ['INEOS', 'INEOS STYROLUTION'],
+  ['TOTAL', 'TOTALENERGIES', 'TOTAL ENERGIES'],
+  ['MOL', 'MOLGROUP', 'MOL GROUP'],
+  ['BASELL', 'LYONDELLBASELL', 'LYONDELL BASELL'],
+];
+
+function expandKnownProducerAliases(token: string): string[] {
+  const out: string[] = [];
+  for (const group of PRODUCER_ALIAS_GROUPS) {
+    if (group.includes(token)) {
+      out.push(...group);
+    }
+  }
+  return out;
+}
+
+/**
+ * Tokens used to pair a TDS producer path/name with grade.manufacturer.
+ * Never match on grade number alone — callers must still require a shared token.
+ */
 export function producerAliasTokens(value: string | null | undefined): string[] {
   const raw = String(value ?? '').trim();
   const tokens = new Set<string>();
@@ -27,11 +59,24 @@ export function producerAliasTokens(value: string | null | undefined): string[] 
   if (full) tokens.add(full);
   const base = producerBaseName(raw);
   if (base) tokens.add(base);
+
   const paren = raw.match(/\(([^)]+)\)/g) ?? [];
   for (const p of paren) {
     const inner = normalizeMatchToken(p.replace(/[()]/g, ''));
     if (inner) tokens.add(inner);
   }
+
+  // EXXONMOBIL VISTAMAX → EXXONMOBIL (+ known EXXON aliases). Skip short noise.
+  for (const part of base.split(' ')) {
+    if (part.length >= 3) tokens.add(part);
+  }
+
+  for (const token of [...tokens]) {
+    for (const alias of expandKnownProducerAliases(token)) {
+      tokens.add(alias);
+    }
+  }
+
   return [...tokens];
 }
 

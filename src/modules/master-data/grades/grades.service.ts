@@ -15,13 +15,13 @@ import {
 } from '../common/pagination.js';
 import { formatCategoryDisplayName } from '../../grades/common/category-label.js';
 import { assertFound, handlePrismaUnique } from '../common/prisma-helpers.js';
-import type {
-  CreateGradeDto,
-  GradeFacetQueryDto,
-  GradeQueryDto,
-  UpdateGradeDto,
-  UpdateGradeStatusDto,
-  UpdateGradeVisibilityDto,
+import {
+  type CreateGradeDto,
+  type GradeFacetQueryDto,
+  type GradeQueryDto,
+  type UpdateGradeDto,
+  type UpdateGradeStatusDto,
+  type UpdateGradeVisibilityDto,
 } from './grades.dto.js';
 
 const gradeInclude = {
@@ -43,7 +43,117 @@ const SORTABLE = [
 ];
 
 /** Source.One columns are owned by the CSV import, not by manual edits. */
-const SOURCE_MANAGED_FIELDS = ['code', 'categoryId', 'subcategoryId'] as const;
+const SOURCE_MANAGED_FIELDS = [
+  'code',
+  'categoryId',
+  'subcategoryId',
+  'gradeGroup',
+  'gradeNo',
+  'manufacturer',
+  'fullGradeName',
+] as const;
+
+type GradeMetadataBag = {
+  features?: string[];
+  catalogSpecs?: {
+    mfi?: string;
+    density?: string;
+    casNumber?: string;
+    defaultPackaging?: string;
+  };
+};
+
+function trimOrNull(value?: string | null): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value == null) return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function normalizeFeatures(features?: string[]): string[] | undefined {
+  if (features === undefined) return undefined;
+  return [
+    ...new Set(
+      features
+        .map((f) => f.trim())
+        .filter((f) => f.length > 0)
+        .slice(0, 20),
+    ),
+  ];
+}
+
+function normalizeCatalogSpecs(
+  specs?: CreateGradeDto['catalogSpecs'],
+): GradeMetadataBag['catalogSpecs'] | null | undefined {
+  if (specs === undefined) return undefined;
+  if (specs == null) return null;
+  const next: NonNullable<GradeMetadataBag['catalogSpecs']> = {};
+  const mfi = trimOrNull(specs.mfi);
+  const density = trimOrNull(specs.density);
+  const casNumber = trimOrNull(specs.casNumber);
+  const defaultPackaging = trimOrNull(specs.defaultPackaging);
+  if (mfi) next.mfi = mfi;
+  if (density) next.density = density;
+  if (casNumber) next.casNumber = casNumber;
+  if (defaultPackaging) next.defaultPackaging = defaultPackaging;
+  return Object.keys(next).length ? next : null;
+}
+
+function mergeGradeMetadata(
+  existing: unknown,
+  dto: Pick<CreateGradeDto, 'features' | 'catalogSpecs'>,
+): Prisma.InputJsonValue | typeof Prisma.JsonNull | undefined {
+  if (dto.features === undefined && dto.catalogSpecs === undefined) {
+    return undefined;
+  }
+  const current =
+    existing && typeof existing === 'object' && !Array.isArray(existing)
+      ? ({ ...(existing as Record<string, unknown>) } as GradeMetadataBag &
+          Record<string, unknown>)
+      : ({} as GradeMetadataBag & Record<string, unknown>);
+
+  if (dto.features !== undefined) {
+    const features = normalizeFeatures(dto.features);
+    if (!features?.length) delete current.features;
+    else current.features = features;
+  }
+  if (dto.catalogSpecs !== undefined) {
+    const catalogSpecs = normalizeCatalogSpecs(dto.catalogSpecs);
+    if (!catalogSpecs) delete current.catalogSpecs;
+    else current.catalogSpecs = catalogSpecs;
+  }
+
+  return Object.keys(current).length
+    ? (current as Prisma.InputJsonValue)
+    : Prisma.JsonNull;
+}
+
+export function parseGradeCatalogMetadata(metadata: unknown): GradeMetadataBag {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return {};
+  }
+  const record = metadata as Record<string, unknown>;
+  const features = Array.isArray(record.features)
+    ? record.features.filter(
+        (f): f is string => typeof f === 'string' && f.trim().length > 0,
+      )
+    : undefined;
+  const rawSpecs = record.catalogSpecs;
+  let catalogSpecs: GradeMetadataBag['catalogSpecs'];
+  if (rawSpecs && typeof rawSpecs === 'object' && !Array.isArray(rawSpecs)) {
+    const s = rawSpecs as Record<string, unknown>;
+    catalogSpecs = {
+      mfi: typeof s.mfi === 'string' ? s.mfi : undefined,
+      density: typeof s.density === 'string' ? s.density : undefined,
+      casNumber: typeof s.casNumber === 'string' ? s.casNumber : undefined,
+      defaultPackaging:
+        typeof s.defaultPackaging === 'string'
+          ? s.defaultPackaging
+          : undefined,
+    };
+  }
+  return { features, catalogSpecs };
+}
 
 /** Compact form for chemical alias detection (e.g. "TiO₂" → "tio2", "tio" → "tio"). */
 function compactGradeSearchKey(q: string): string {
@@ -183,6 +293,8 @@ export class GradesService {
           dto.applicationCodes,
         );
 
+        const metadata = mergeGradeMetadata(null, dto);
+
         const grade = await tx.grade.create({
           data: {
             code: dto.code.trim().toUpperCase(),
@@ -196,7 +308,22 @@ export class GradesService {
             customerVisible: dto.customerVisible ?? true,
             sellerVisible: dto.sellerVisible ?? true,
             sortOrder: dto.sortOrder ?? 0,
-            hsnCode: dto.hsnCode,
+            hsnCode: trimOrNull(dto.hsnCode) ?? undefined,
+            gradeGroup: trimOrNull(dto.gradeGroup) ?? undefined,
+            gradeNo: trimOrNull(dto.gradeNo) ?? undefined,
+            manufacturer: trimOrNull(dto.manufacturer) ?? undefined,
+            fullGradeName: trimOrNull(dto.fullGradeName) ?? undefined,
+            ...(metadata !== undefined ? { metadata } : {}),
+            priceTodayRsKg:
+              dto.priceTodayRsKg == null
+                ? undefined
+                : new Prisma.Decimal(dto.priceTodayRsKg),
+            producerPriceRsKg:
+              dto.producerPriceRsKg == null
+                ? undefined
+                : new Prisma.Decimal(dto.producerPriceRsKg),
+            producerPriceType: dto.producerPriceType?.trim() || undefined,
+            inTodaysDelhiPriceList: dto.priceTodayRsKg != null,
             createdById: actorUserId,
             updatedById: actorUserId,
             gradeApplications: applicationIds.length
@@ -327,6 +454,11 @@ export class GradesService {
           sellerVisible: true,
           sortOrder: true,
           hsnCode: true,
+          gradeGroup: true,
+          gradeNo: true,
+          manufacturer: true,
+          fullGradeName: true,
+          metadata: true,
         },
       }),
       'Grade not found',
@@ -336,9 +468,15 @@ export class GradesService {
   async update(id: string, dto: UpdateGradeDto, actorUserId?: string) {
     const before = await this.loadForChange(id);
     if (before.source) {
-      const locked = SOURCE_MANAGED_FIELDS.filter(
-        (field) => dto[field] !== undefined && dto[field] !== before[field],
-      );
+      const locked = SOURCE_MANAGED_FIELDS.filter((field) => {
+        const next = dto[field];
+        if (next === undefined) return false;
+        const previous = before[field];
+        if (typeof next === 'string' || next == null) {
+          return trimOrNull(next as string | null) !== (previous ?? null);
+        }
+        return next !== previous;
+      });
       if (locked.length) {
         throw new BadRequestException(
           `${locked.join(', ')} of ${before.source} grades are managed by the grade master import`,
@@ -380,6 +518,8 @@ export class GradesService {
           }
         }
 
+        const metadata = mergeGradeMetadata(before.metadata, dto);
+
         const grade = await tx.grade.update({
           where: { id },
           data: {
@@ -394,7 +534,47 @@ export class GradesService {
             customerVisible: dto.customerVisible,
             sellerVisible: dto.sellerVisible,
             sortOrder: dto.sortOrder,
-            hsnCode: dto.hsnCode,
+            ...(dto.hsnCode !== undefined
+              ? { hsnCode: trimOrNull(dto.hsnCode) }
+              : {}),
+            ...(dto.gradeGroup !== undefined
+              ? { gradeGroup: trimOrNull(dto.gradeGroup) }
+              : {}),
+            ...(dto.gradeNo !== undefined
+              ? { gradeNo: trimOrNull(dto.gradeNo) }
+              : {}),
+            ...(dto.manufacturer !== undefined
+              ? { manufacturer: trimOrNull(dto.manufacturer) }
+              : {}),
+            ...(dto.fullGradeName !== undefined
+              ? { fullGradeName: trimOrNull(dto.fullGradeName) }
+              : {}),
+            ...(metadata !== undefined ? { metadata } : {}),
+            ...(dto.priceTodayRsKg !== undefined
+              ? {
+                  priceTodayRsKg:
+                    dto.priceTodayRsKg == null
+                      ? null
+                      : new Prisma.Decimal(dto.priceTodayRsKg),
+                  // Manual correction keeps it visible on today's Delhi list when set.
+                  ...(dto.priceTodayRsKg != null
+                    ? { inTodaysDelhiPriceList: true }
+                    : {}),
+                }
+              : {}),
+            ...(dto.producerPriceRsKg !== undefined
+              ? {
+                  producerPriceRsKg:
+                    dto.producerPriceRsKg == null
+                      ? null
+                      : new Prisma.Decimal(dto.producerPriceRsKg),
+                }
+              : {}),
+            ...(dto.producerPriceType !== undefined
+              ? {
+                  producerPriceType: dto.producerPriceType?.trim() || null,
+                }
+              : {}),
             updatedById: actorUserId,
           },
           include: gradeInclude,
@@ -702,6 +882,22 @@ export class GradesService {
     grade: Prisma.GradeGetPayload<{ include: typeof gradeInclude }>,
     consumer = false,
   ) {
+    const catalog = parseGradeCatalogMetadata(grade.metadata);
+    const applicationLabels = grade.gradeApplications.map((ga) => ({
+      id: ga.application.id,
+      code: ga.application.code,
+      name: ga.application.name,
+    }));
+    // Free-text apps on Grade.applications when Application master had no match.
+    const applicationNames =
+      applicationLabels.length > 0
+        ? applicationLabels.map((a) => a.name)
+        : Array.isArray(grade.applications)
+          ? grade.applications.filter(
+              (a): a is string => typeof a === 'string' && a.trim().length > 0,
+            )
+          : [];
+
     const base = {
       id: grade.id,
       code: grade.code,
@@ -718,6 +914,9 @@ export class GradesService {
       gradeNo: grade.gradeNo,
       manufacturer: grade.manufacturer,
       fullGradeName: grade.fullGradeName,
+      hsnCode: grade.hsnCode,
+      features: catalog.features ?? [],
+      catalogSpecs: catalog.catalogSpecs ?? null,
       inTodaysDelhiPriceList: grade.inTodaysDelhiPriceList,
       source: grade.source,
       category: {
@@ -737,11 +936,8 @@ export class GradesService {
             name: grade.subcategory.name,
           }
         : null,
-      applications: grade.gradeApplications.map((ga) => ({
-        id: ga.application.id,
-        code: ga.application.code,
-        name: ga.application.name,
-      })),
+      applications: applicationLabels,
+      applicationNames,
     };
 
     if (consumer) {
@@ -757,7 +953,6 @@ export class GradesService {
       version: grade.version,
       lastImportedAt: grade.lastImportedAt,
       importBatchId: grade.importBatchId,
-      hsnCode: grade.hsnCode,
       metadata: grade.metadata,
       createdById: grade.createdById,
       updatedById: grade.updatedById,

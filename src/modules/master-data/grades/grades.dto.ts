@@ -5,15 +5,45 @@ import {
   IsBoolean,
   IsEnum,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
+  ValidateNested,
 } from 'class-validator';
 import { GradeStatus } from '../../../generated/prisma/client.js';
 import { PaginationQueryDto } from '../common/pagination.js';
+
+/** Catalog defaults stored on Grade.metadata for Seller/Customer fallbacks. */
+export class GradeCatalogSpecsDto {
+  @ApiPropertyOptional({ example: '0.36' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  mfi?: string;
+
+  @ApiPropertyOptional({ example: '0.952' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  density?: string;
+
+  @ApiPropertyOptional({ example: '9003-07-0' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  casNumber?: string;
+
+  @ApiPropertyOptional({ example: '25 KG Bags' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  defaultPackaging?: string;
+}
 
 export class CreateGradeDto {
   @ApiProperty({ example: 'HDPE_FILM' })
@@ -82,6 +112,71 @@ export class CreateGradeDto {
   @IsString()
   @MaxLength(32)
   hsnCode?: string;
+
+  @ApiPropertyOptional({ example: 'HDPE FILM' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  gradeGroup?: string | null;
+
+  @ApiPropertyOptional({ example: 'F46003' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  gradeNo?: string | null;
+
+  @ApiPropertyOptional({ example: 'RIL' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  manufacturer?: string | null;
+
+  @ApiPropertyOptional({ example: 'HDPE FILM F46003 - RIL' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  fullGradeName?: string | null;
+
+  /** Product feature checklist shown on Customer PDP when set. */
+  @ApiPropertyOptional({
+    type: [String],
+    example: ['Virgin Material', 'IS Certified'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  features?: string[];
+
+  /** Typical specs / packaging hints; Seller may override on listing. */
+  @ApiPropertyOptional({ type: GradeCatalogSpecsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => GradeCatalogSpecsDto)
+  catalogSpecs?: GradeCatalogSpecsDto | null;
+
+  /** Delhi / reference list price in ₹ per kg. Null clears. */
+  @ApiPropertyOptional({ example: 98.5, nullable: true })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  priceTodayRsKg?: number | null;
+
+  /** Producer list price in ₹ per kg. Null clears. */
+  @ApiPropertyOptional({ example: 97.25, nullable: true })
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @Type(() => Number)
+  @IsNumber({ maxDecimalPlaces: 4 })
+  @Min(0)
+  producerPriceRsKg?: number | null;
+
+  @ApiPropertyOptional({ example: 'LIST' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  producerPriceType?: string | null;
 }
 
 export class UpdateGradeDto extends PartialType(CreateGradeDto) {}

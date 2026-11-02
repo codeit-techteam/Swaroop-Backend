@@ -19,6 +19,7 @@ import { ADMIN_CORE_ROLES } from '../common/admin-roles.js';
 import {
   AdminOfferActionDto,
   AdminOffersQueryDto,
+  AdminUpdateOfferPriceDto,
 } from './admin-offers.dto.js';
 import { AdminOffersService } from './admin-offers.service.js';
 
@@ -100,6 +101,23 @@ export class AdminOffersController {
     return successResponse(
       await this.offers.suspend(id, user.id, dto),
       'Offer suspended',
+    );
+  }
+
+  @Post(':id/price')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Set material selling price (₹/MT). Accepts pricePerMt or pricePerKg; stores Offer.basePrice in ₹/MT.',
+  })
+  async updatePrice(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AdminUpdateOfferPriceDto,
+  ) {
+    return successResponse(
+      await this.offers.updatePrice(id, user.id, dto),
+      'Offer price updated',
     );
   }
 }

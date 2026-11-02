@@ -10,6 +10,7 @@ import {
   buildFulfilmentInfo,
   dedupeBlindProducts,
   MarketplaceException,
+  mergeGradeCatalogIntoSpecs,
   resolveOfferUnitPrice,
   toBlindOffer,
   toBlindProduct,
@@ -66,6 +67,80 @@ describe('blind marketplace mapper', () => {
     expect(payload.mfi).toBe('0.36');
     expect(payload.grade?.fullGradeName).toBe('HDPE FILM F46003 - RIL');
     expect(payload.grade?.category?.parentGroup).toBe('POLYMERS');
+  });
+
+  it('merges Grade Master apps/features/specs when seller fields are empty', () => {
+    const payload = toBlindProduct({
+      id: 'prod-merge',
+      code: 'ABS-3000D',
+      name: 'ABS EXTRUSION 3000D - TAITA',
+      brand: null,
+      manufacturer: null,
+      description: null,
+      technicalSpecs: {},
+      mfi: null,
+      density: null,
+      packaging: null,
+      unit: 'MT',
+      countryOfOrigin: 'India',
+      supplyOrigin: null,
+      status: 'ACTIVE',
+      grade: {
+        id: 'grade-merge',
+        code: 'SO-ABS-3000D',
+        name: '3000D',
+        displayName: 'ABS EXTRUSION 3000D - TAITA',
+        manufacturer: 'TAITA',
+        hsnCode: '3903.30.00',
+        applicationNames: ['ABS EXTRUSION'],
+        features: ['Virgin Material', 'IS Certified'],
+        metadata: {
+          catalogSpecs: {
+            mfi: '3.0',
+            density: '1.04',
+            casNumber: '9003-56-9',
+            defaultPackaging: '25 KG Bags',
+          },
+        },
+      },
+      offers: [
+        {
+          id: 'offer-merge',
+          quantity: 57,
+          moq: 10,
+          unit: 'MT',
+          basePrice: 10,
+          currency: 'INR',
+        },
+      ],
+    });
+
+    expect(payload.packaging).toBe('25 KG Bags');
+    expect(payload.mfi).toBe('3.0');
+    expect(payload.density).toBe('1.04');
+    expect(payload.grade?.hsnCode).toBe('3903.30.00');
+    expect(payload.listing?.fulfilment?.hsnCode).toBe('3903.30.00');
+    expect(payload.technicalSpecs).toMatchObject({
+      applications: ['ABS EXTRUSION'],
+      features: ['Virgin Material', 'IS Certified'],
+      casNumber: '9003-56-9',
+      defaultPackaging: '25 KG Bags',
+    });
+  });
+
+  it('keeps seller technicalSpecs over Grade Master catalog defaults', () => {
+    const merged = mergeGradeCatalogIntoSpecs(
+      { applications: ['Film'], mfi: '0.36', features: ['Seller Feature'] },
+      {
+        applications: ['Grade App'],
+        features: ['Grade Feature'],
+        catalogSpecs: { mfi: '9.9', defaultPackaging: 'Jumbo' },
+      },
+    );
+    expect(merged.applications).toEqual(['Film']);
+    expect(merged.features).toEqual(['Seller Feature']);
+    expect(merged.mfi).toBe('0.36');
+    expect(merged.defaultPackaging).toBe('Jumbo');
   });
 
   it('prefers the Grade Master manufacturer over a bad product manufacturer', () => {

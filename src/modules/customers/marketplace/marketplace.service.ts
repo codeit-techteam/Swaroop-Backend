@@ -153,6 +153,13 @@ const productInclude = {
       gradeGroup: true,
       manufacturer: true,
       hsnCode: true,
+      applications: true,
+      metadata: true,
+      gradeApplications: {
+        select: {
+          application: { select: { name: true, code: true } },
+        },
+      },
       category: {
         select: { id: true, code: true, name: true, parentGroup: true },
       },

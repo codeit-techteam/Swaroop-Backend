@@ -586,6 +586,102 @@ export class GradeTdsService {
     };
   }
 
+  private mapAdminDocument(d: {
+    id: string;
+    gradeId: string | null;
+    categoryCode: string;
+    gradeCode: string;
+    producerName: string;
+    documentTitle: string;
+    documentType: string;
+    originalFilename: string | null;
+    storageKey: string | null;
+    mimeType: string | null;
+    fileSizeBytes: bigint | null;
+    checksum: string | null;
+    sourceKind: TdsSourceKind;
+    sourceRaw: string | null;
+    sourceUrl: string | null;
+    sourceFilePath: string | null;
+    workbookAvailability: string | null;
+    workbookNotes: string | null;
+    verificationStatus: TdsVerificationStatus;
+    reviewNotes: string | null;
+    revision: number;
+    isActive: boolean;
+    mappingConfidence: string | null;
+    uploadedAt: Date | null;
+    approvedAt: Date | null;
+    createdAt: Date;
+    updatedAt: Date;
+    grade?: {
+      id: string;
+      code: string;
+      name: string;
+      displayName?: string | null;
+      manufacturer?: string | null;
+      gradeNo?: string | null;
+      gradeGroup?: string | null;
+      fullGradeName?: string | null;
+      products?: Array<{ id: string; name: string; code: string }>;
+    } | null;
+  }) {
+    const linkedProducts = d.grade?.products ?? [];
+    const primaryProductName = linkedProducts[0]?.name ?? null;
+    const syncedTitle =
+      primaryProductName ||
+      (d.grade ? this.gradeDisplayName(d.grade) : d.documentTitle);
+    return {
+      id: d.id,
+      gradeId: d.gradeId,
+      grade: d.grade
+        ? {
+            id: d.grade.id,
+            code: d.grade.code,
+            name: d.grade.displayName ?? d.grade.name,
+            manufacturer: d.grade.manufacturer ?? null,
+            gradeNo: d.grade.gradeNo ?? null,
+            gradeGroup: d.grade.gradeGroup ?? null,
+            fullGradeName: d.grade.fullGradeName ?? null,
+          }
+        : null,
+      linkedProducts: linkedProducts.map((p) => ({
+        id: p.id,
+        name: p.name,
+        code: p.code,
+      })),
+      productName: primaryProductName,
+      categoryCode: d.categoryCode,
+      gradeCode: d.gradeCode,
+      producerName: d.producerName,
+      documentTitle: syncedTitle,
+      libraryTitle: d.documentTitle,
+      documentType: d.documentType,
+      originalFilename: d.originalFilename,
+      mimeType: d.mimeType,
+      // Number() — JSON cannot serialize Prisma BigInt (was causing Admin upload 500).
+      fileSizeBytes: d.fileSizeBytes != null ? Number(d.fileSizeBytes) : null,
+      checksum: d.checksum,
+      sourceKind: d.sourceKind,
+      sourceRaw: d.sourceRaw,
+      sourceUrl: d.sourceUrl,
+      sourceFilePath: d.sourceFilePath,
+      workbookAvailability: d.workbookAvailability,
+      workbookNotes: d.workbookNotes,
+      verificationStatus: d.verificationStatus,
+      reviewNotes: d.reviewNotes,
+      revision: d.revision,
+      isActive: d.isActive,
+      mappingConfidence: d.mappingConfidence,
+      hasFile: Boolean(d.storageKey),
+      storageKey: d.storageKey,
+      uploadedAt: d.uploadedAt?.toISOString() ?? null,
+      approvedAt: d.approvedAt?.toISOString() ?? null,
+      createdAt: d.createdAt.toISOString(),
+      updatedAt: d.updatedAt.toISOString(),
+    };
+  }
+
   async adminGet(id: string) {
     const d = await this.prisma.gradeTdsDocument.findFirst({
       where: { id, deletedAt: null },
@@ -599,22 +695,33 @@ export class GradeTdsService {
             manufacturer: true,
             gradeNo: true,
             gradeGroup: true,
+            fullGradeName: true,
+            products: {
+              where: { deletedAt: null },
+              take: 5,
+              orderBy: { updatedAt: 'desc' },
+              select: { id: true, name: true, code: true },
+            },
           },
         },
       },
     });
     if (!d) throw new NotFoundException('TDS document not found');
-    return d;
+    return this.mapAdminDocument(d);
   }
 
   async adminPreviewUrl(id: string) {
     const d = await this.adminGet(id);
     if (!d.storageKey) throw new NotFoundException('No file stored');
     this.storage.assertConfigured();
+    const safeName = (d.originalFilename || 'tds.pdf').replace(/"/g, '');
     const url = await this.storage.getSignedUrl({
       key: d.storageKey,
       operation: 'get',
       expiresInSeconds: 900,
+      // Inline so Admin can embed PDF/image in an iframe / <img>.
+      responseContentDisposition: `inline; filename="${safeName}"`,
+      responseContentType: d.mimeType ?? undefined,
     });
     return {
       url,
@@ -633,7 +740,7 @@ export class GradeTdsService {
         'Map this document to a grade before approving',
       );
     }
-    const updated = await this.prisma.gradeTdsDocument.update({
+    await this.prisma.gradeTdsDocument.update({
       where: { id },
       data: {
         verificationStatus: TdsVerificationStatus.VERIFIED,
@@ -644,13 +751,13 @@ export class GradeTdsService {
       },
     });
 
-    await this.notifyOpenTdsRequests(d.gradeId, updated.id, d.gradeCode);
-    return updated;
+    await this.notifyOpenTdsRequests(d.gradeId, id, d.gradeCode);
+    return this.adminGet(id);
   }
 
   async adminReject(id: string, adminUserId: string, reason: string) {
     const d = await this.adminGet(id);
-    return this.prisma.gradeTdsDocument.update({
+    await this.prisma.gradeTdsDocument.update({
       where: { id },
       data: {
         verificationStatus: TdsVerificationStatus.REJECTED,
@@ -659,6 +766,7 @@ export class GradeTdsService {
         reviewNotes: reason?.trim() || d.reviewNotes,
       },
     });
+    return this.adminGet(id);
   }
 
   async adminMapGrade(id: string, gradeId: string, notes?: string) {
@@ -669,7 +777,7 @@ export class GradeTdsService {
     });
     if (!grade) throw new NotFoundException('Grade not found');
 
-    return this.prisma.gradeTdsDocument.update({
+    await this.prisma.gradeTdsDocument.update({
       where: { id },
       data: {
         gradeId: grade.id,
@@ -681,6 +789,7 @@ export class GradeTdsService {
         reviewNotes: notes?.trim() || d.reviewNotes,
       },
     });
+    return this.adminGet(id);
   }
 
   /**
@@ -854,8 +963,12 @@ export class GradeTdsService {
           uploadedAt: new Date(),
           uploadedById: input.adminUserId,
           verificationStatus,
-          approvedById: approveNow ? input.adminUserId : existing.approvedById,
-          approvedAt: approveNow ? new Date() : existing.approvedAt,
+          ...(approveNow
+            ? {
+                approvedById: input.adminUserId,
+                approvedAt: new Date(),
+              }
+            : {}),
           reviewNotes: reviewNotes || existing.reviewNotes,
           mappingConfidence: 'manual',
           isActive: true,
@@ -1149,8 +1262,14 @@ export class GradeTdsService {
             gradeCode: parsed.grade,
             producerName: parsed.producer,
             revision: Math.max(existing.revision, parsed.revision),
+            // Keep a prior manual (or already-linked) grade when auto-match misses.
             gradeId: match.gradeId ?? existing.gradeId,
-            mappingConfidence: match.confidence,
+            mappingConfidence:
+              match.gradeId
+                ? match.confidence
+                : existing.mappingConfidence === 'manual'
+                  ? 'manual'
+                  : match.confidence,
             isActive: true,
             deletedAt: null,
             ...(shouldPromote

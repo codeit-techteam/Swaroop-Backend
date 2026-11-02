@@ -56,6 +56,98 @@ function specString(specs: unknown, ...keys: string[]): string | null {
   return null;
 }
 
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export type GradeCatalogDefaults = {
+  applications?: unknown;
+  features?: unknown;
+  catalogSpecs?: {
+    mfi?: string | null;
+    density?: string | null;
+    casNumber?: string | null;
+    defaultPackaging?: string | null;
+  } | null;
+  metadata?: unknown;
+};
+
+function gradeCatalogFromMetadata(metadata: unknown): {
+  features: string[];
+  catalogSpecs: NonNullable<GradeCatalogDefaults['catalogSpecs']>;
+} {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return { features: [], catalogSpecs: {} };
+  }
+  const record = metadata as Record<string, unknown>;
+  const features = asStringList(record.features);
+  const raw = record.catalogSpecs;
+  const catalogSpecs: NonNullable<GradeCatalogDefaults['catalogSpecs']> = {};
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const s = raw as Record<string, unknown>;
+    if (typeof s.mfi === 'string' && s.mfi.trim()) catalogSpecs.mfi = s.mfi.trim();
+    if (typeof s.density === 'string' && s.density.trim())
+      catalogSpecs.density = s.density.trim();
+    if (typeof s.casNumber === 'string' && s.casNumber.trim())
+      catalogSpecs.casNumber = s.casNumber.trim();
+    if (typeof s.defaultPackaging === 'string' && s.defaultPackaging.trim())
+      catalogSpecs.defaultPackaging = s.defaultPackaging.trim();
+  }
+  return { features, catalogSpecs };
+}
+
+/**
+ * Merge Grade Master catalog defaults into product technicalSpecs.
+ * Seller-owned values always win when present.
+ */
+export function mergeGradeCatalogIntoSpecs(
+  technicalSpecs: unknown,
+  grade?: GradeCatalogDefaults | null,
+): Record<string, unknown> {
+  const base =
+    technicalSpecs &&
+    typeof technicalSpecs === 'object' &&
+    !Array.isArray(technicalSpecs)
+      ? { ...(technicalSpecs as Record<string, unknown>) }
+      : {};
+
+  const fromMeta = gradeCatalogFromMetadata(grade?.metadata);
+  const features =
+    asStringList(base.features).length > 0
+      ? asStringList(base.features)
+      : asStringList(grade?.features).length > 0
+        ? asStringList(grade?.features)
+        : fromMeta.features;
+  if (features.length) base.features = features;
+
+  const sellerApps = asStringList(base.applications);
+  const gradeApps = asStringList(grade?.applications);
+  if (!sellerApps.length && gradeApps.length) {
+    base.applications = gradeApps;
+    if (!base.application && gradeApps[0]) base.application = gradeApps[0];
+  }
+
+  const catalog = {
+    ...fromMeta.catalogSpecs,
+    ...(grade?.catalogSpecs ?? {}),
+  };
+  if (!specString(base, 'mfi') && catalog.mfi) base.mfi = catalog.mfi;
+  if (!specString(base, 'density') && catalog.density)
+    base.density = catalog.density;
+  if (!specString(base, 'casNumber', 'cas', 'CAS') && catalog.casNumber) {
+    base.casNumber = catalog.casNumber;
+  }
+  if (!specString(base, 'defaultPackaging') && catalog.defaultPackaging) {
+    base.defaultPackaging = catalog.defaultPackaging;
+  }
+
+  return base;
+}
+
 export type FulfilmentInfo = {
   /** Where the material ships from (blind-safe: city/state only). */
   warehouse: {
@@ -330,6 +422,15 @@ export function toBlindProduct(product: {
     gradeGroup?: string | null;
     manufacturer?: string | null;
     hsnCode?: string | null;
+    /** Prisma Json column or resolved string labels. */
+    applications?: unknown;
+    applicationNames?: unknown;
+    features?: unknown;
+    catalogSpecs?: GradeCatalogDefaults['catalogSpecs'];
+    metadata?: unknown;
+    gradeApplications?: Array<{
+      application?: { name?: string | null; code?: string | null } | null;
+    }>;
     category?: {
       id: string;
       code: string;
@@ -376,8 +477,35 @@ export function toBlindProduct(product: {
     product.brand,
     product.grade,
   );
+  const gradeApps = [
+    ...asStringList(product.grade?.applicationNames),
+    ...asStringList(product.grade?.applications),
+    ...(product.grade?.gradeApplications ?? [])
+      .map(
+        (ga) =>
+          ga.application?.name?.trim() || ga.application?.code?.trim() || '',
+      )
+      .filter(Boolean),
+  ];
+  const uniqueGradeApps = [...new Set(gradeApps)];
+  const technicalSpecs = mergeGradeCatalogIntoSpecs(product.technicalSpecs, {
+    applications: uniqueGradeApps,
+    features: product.grade?.features,
+    catalogSpecs: product.grade?.catalogSpecs,
+    metadata: product.grade?.metadata,
+  });
+  const catalogPackaging =
+    typeof technicalSpecs.defaultPackaging === 'string'
+      ? technicalSpecs.defaultPackaging
+      : null;
+  const mergedMfi =
+    product.mfi?.trim() ||
+    (typeof technicalSpecs.mfi === 'string' ? technicalSpecs.mfi : null);
+  const mergedDensity =
+    product.density?.trim() ||
+    (typeof technicalSpecs.density === 'string' ? technicalSpecs.density : null);
   const fulfilment = buildFulfilmentInfo({
-    technicalSpecs: product.technicalSpecs,
+    technicalSpecs,
     countryOfOrigin: product.countryOfOrigin,
     supplyOrigin: product.supplyOrigin,
     grade: product.grade,
@@ -390,11 +518,11 @@ export function toBlindProduct(product: {
     brand: manufacturer,
     manufacturer,
     description: product.description,
-    technicalSpecs: product.technicalSpecs,
-    // Only surface MFI when present on the verified product record.
-    mfi: product.mfi?.trim() || null,
-    density: product.density,
-    packaging: product.packaging,
+    technicalSpecs,
+    // Prefer verified product columns; fall back to Grade Master catalog specs.
+    mfi: mergedMfi,
+    density: mergedDensity,
+    packaging: product.packaging?.trim() || catalogPackaging,
     unit: product.unit,
     countryOfOrigin: product.countryOfOrigin,
     supplyOrigin: product.supplyOrigin,
@@ -409,6 +537,7 @@ export function toBlindProduct(product: {
           gradeNo: product.grade.gradeNo ?? null,
           gradeGroup: product.grade.gradeGroup ?? null,
           manufacturer: product.grade.manufacturer ?? null,
+          hsnCode: product.grade.hsnCode ?? null,
           category: product.grade.category ?? null,
         }
       : null,
