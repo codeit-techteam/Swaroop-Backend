@@ -39,6 +39,11 @@ Thumbs.db
 .temp/
 .cache/
 
+# Local TDS import reports (CLI artifacts; do not ship in Docker context)
+tds-*-report*.json
+tds-import-report-*.json
+tds-dryrun-*.json
+
 # Docker
 docker-data/
 

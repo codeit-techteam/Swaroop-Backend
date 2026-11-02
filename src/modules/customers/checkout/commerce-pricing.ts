@@ -325,16 +325,19 @@ export function buildCommercePricingBreakdown(input: {
 /** Non-binding listing card preview at MOQ (ADVANCE assumptions). */
 export function buildListingPricingPreview(input: {
   offerId: string;
-  unitPrice: Prisma.Decimal | number | string | null | undefined;
-  moq: Prisma.Decimal | number | string | null | undefined;
+  /** Loose input — validated/coerced inside before pricing. */
+  unitPrice: unknown;
+  moq: unknown;
   currency?: string | null;
 }): CommercePricingBreakdown | null {
   try {
-    const unitPrice = assertSellableUnitPrice(input.unitPrice);
+    const unitPrice = assertSellableUnitPrice(
+      input.unitPrice as Prisma.Decimal | number | string | null | undefined,
+    );
     const moq =
-      input.moq == null || toDecimal(input.moq).lte(0)
+      input.moq == null || toDecimal(input.moq as Prisma.Decimal | number | string).lte(0)
         ? new Prisma.Decimal(1)
-        : toDecimal(input.moq);
+        : toDecimal(input.moq as Prisma.Decimal | number | string);
     return buildCommercePricingBreakdown({
       offerId: input.offerId,
       unitPrice,
