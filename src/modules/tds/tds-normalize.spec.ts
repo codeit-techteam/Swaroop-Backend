@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildGradeTdsObjectKey,
   buildImportKey,
   classifySourceKind,
   initialVerificationStatus,
   normalizeMatchToken,
+  parseGradeTdsObjectKey,
   producerBaseName,
 } from './tds-normalize.js';
 
@@ -25,6 +27,27 @@ describe('tds-normalize', () => {
         filePath: 'ABS_EXTRUSION/ABS_EXTRUSION_SR101_TDS.pdf',
       }),
     ).toContain('SR101');
+  });
+
+  it('round-trips grade TDS object keys used by R2 sync', () => {
+    const key = buildGradeTdsObjectKey({
+      category: 'ABS_EXTRUSION',
+      grade: 'RS670',
+      producer: 'LG',
+      revision: 1,
+      filename: 'ABS_EXTRUSION_RS670_TDS.pdf',
+    });
+    expect(key).toBe(
+      'tds/ABS_EXTRUSION/RS670/LG/v1/ABS_EXTRUSION_RS670_TDS.pdf',
+    );
+    expect(parseGradeTdsObjectKey(key)).toEqual({
+      category: 'ABS_EXTRUSION',
+      grade: 'RS670',
+      producer: 'LG',
+      revision: 1,
+      filename: 'ABS_EXTRUSION_RS670_TDS.pdf',
+    });
+    expect(parseGradeTdsObjectKey('other/path.pdf')).toBeNull();
   });
 
   it('classifies provenance kinds', () => {

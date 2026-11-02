@@ -77,6 +77,12 @@ class UpdateRequestDto {
   @IsOptional() @IsUUID() fulfilledDocumentId?: string;
 }
 
+class SyncStorageDto {
+  @IsOptional() @IsString() @MaxLength(200) prefix?: string;
+  /** When omitted/true, matched grades are published immediately. */
+  @IsOptional() autoVerify?: boolean | string;
+}
+
 @ApiTags('Admin TDS Library')
 @Controller({ path: 'admin/tds', version: '1' })
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -89,6 +95,31 @@ export class AdminTdsController {
   @ApiOperation({ summary: 'TDS library dashboard counters' })
   async dashboard() {
     return successResponse(await this.tds.adminDashboard(), 'TDS dashboard');
+  }
+
+  @Post('documents/sync-storage')
+  @ApiOperation({
+    summary:
+      'Reconcile R2 tds/ objects into the grade TDS library so Customer/Seller apps show Available when PDFs already exist in storage',
+  })
+  async syncStorage(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: SyncStorageDto,
+  ) {
+    const autoVerify =
+      body.autoVerify === undefined ||
+      body.autoVerify === true ||
+      body.autoVerify === 'true' ||
+      body.autoVerify === '1';
+    const result = await this.tds.adminReconcileFromStorage({
+      adminUserId: user.id,
+      autoVerify,
+      prefix: body.prefix,
+    });
+    return successResponse(
+      result,
+      `Synced ${result.created + result.updated} TDS objects from storage (${result.verified} verified)`,
+    );
   }
 
   @Get('documents')

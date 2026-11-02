@@ -17,10 +17,15 @@ import { StorageService } from '../../storage/storage.service.js';
 import { skipTake } from '../master-data/common/pagination.js';
 import { NotificationService } from '../notifications/notification.service.js';
 import {
+  loadGradeMatchIndex,
+  matchGradeFromIndex,
+} from './tds-grade-matcher.js';
+import {
   buildGradeTdsObjectKey,
   buildImportKey,
   isAllowedTdsMime,
   mimeFromFilename,
+  parseGradeTdsObjectKey,
   sanitizeObjectSegment,
 } from './tds-normalize.js';
 
@@ -925,7 +930,7 @@ export class GradeTdsService {
     gradeId: string,
     documentId: string,
     gradeCode: string,
-  ) {
+  ): Promise<number> {
     const openReqs = await this.prisma.tdsRequest.findMany({
       where: {
         gradeId,
@@ -958,6 +963,7 @@ export class GradeTdsService {
         /* non-fatal */
       }
     }
+    return openReqs.length;
   }
 
   async adminListRequests(query: {
@@ -1014,5 +1020,228 @@ export class GradeTdsService {
             : undefined,
       },
     });
+  }
+
+  /**
+   * Production reconcile: scan R2 `tds/` objects and upsert grade_tds_documents.
+   * Files already in storage (e.g. prior import without DB rows) become visible
+   * to Customer App / WebApp / Seller once mapped + verified.
+   */
+  async adminReconcileFromStorage(input?: {
+    adminUserId?: string;
+    /** When true (default), matched grades are published immediately. */
+    autoVerify?: boolean;
+    prefix?: string;
+  }) {
+    this.storage.assertConfigured();
+    const autoVerify = input?.autoVerify !== false;
+    const prefix = (input?.prefix?.trim() || 'tds/').replace(/^\/*/, '');
+    const listed = await this.storage.listAllObjects(prefix.endsWith('/') ? prefix : `${prefix}/`);
+    const index = await loadGradeMatchIndex(this.prisma);
+
+    const stats = {
+      scanned: 0,
+      skipped: 0,
+      created: 0,
+      updated: 0,
+      verified: 0,
+      needsMapping: 0,
+      fulfilledRequests: 0,
+      sample: [] as string[],
+    };
+
+    const pushSample = (line: string) => {
+      if (stats.sample.length < 25) stats.sample.push(line);
+    };
+
+    for (const obj of listed) {
+      const parsed = parseGradeTdsObjectKey(obj.key);
+      if (!parsed) {
+        stats.skipped += 1;
+        continue;
+      }
+      const mime = mimeFromFilename(parsed.filename);
+      if (!isAllowedTdsMime(mime)) {
+        stats.skipped += 1;
+        continue;
+      }
+      stats.scanned += 1;
+
+      const head = await this.storage.headObject(obj.key);
+      const metaImportKey = head?.metadata?.importkey?.trim() || null;
+      const checksum = head?.metadata?.checksum?.trim() || null;
+      const importKey =
+        metaImportKey ||
+        buildImportKey({
+          category: parsed.category,
+          grade: parsed.grade,
+          producer: parsed.producer,
+          filePath: obj.key,
+        });
+
+      const match = matchGradeFromIndex(index, {
+        category: parsed.category.replace(/_/g, ' '),
+        grade: parsed.grade,
+        producer: parsed.producer,
+      });
+
+      const gradeMatched = Boolean(match.gradeId);
+      const ambiguous = match.confidence === 'ambiguous';
+      let verificationStatus: TdsVerificationStatus =
+        !gradeMatched || ambiguous
+          ? TdsVerificationStatus.NEEDS_MAPPING
+          : autoVerify
+            ? TdsVerificationStatus.VERIFIED
+            : TdsVerificationStatus.PENDING_REVIEW;
+
+      const existing =
+        (await this.prisma.gradeTdsDocument.findUnique({
+          where: { importKey },
+        })) ??
+        (await this.prisma.gradeTdsDocument.findFirst({
+          where: { storageKey: obj.key, deletedAt: null },
+        }));
+
+      const documentTitle = `${parsed.category.replace(/_/g, ' ')} ${parsed.grade} – ${parsed.producer}`.trim();
+      const fileSizeBytes =
+        head?.size != null
+          ? BigInt(head.size)
+          : obj.size != null
+            ? BigInt(obj.size)
+            : null;
+
+      if (existing) {
+        const shouldPromote =
+          autoVerify &&
+          gradeMatched &&
+          !ambiguous &&
+          existing.verificationStatus !== TdsVerificationStatus.VERIFIED &&
+          existing.verificationStatus !== TdsVerificationStatus.REJECTED;
+
+        const updated = await this.prisma.gradeTdsDocument.update({
+          where: { id: existing.id },
+          data: {
+            storageKey: obj.key,
+            originalFilename: parsed.filename,
+            mimeType: mime,
+            fileSizeBytes: fileSizeBytes ?? existing.fileSizeBytes,
+            checksum: checksum ?? existing.checksum,
+            categoryCode: parsed.category,
+            gradeCode: parsed.grade,
+            producerName: parsed.producer,
+            revision: Math.max(existing.revision, parsed.revision),
+            gradeId: match.gradeId ?? existing.gradeId,
+            mappingConfidence: match.confidence,
+            isActive: true,
+            deletedAt: null,
+            ...(shouldPromote
+              ? {
+                  verificationStatus: TdsVerificationStatus.VERIFIED,
+                  approvedAt: existing.approvedAt ?? new Date(),
+                  approvedById: existing.approvedById ?? input?.adminUserId ?? null,
+                  reviewNotes: [
+                    existing.reviewNotes,
+                    'Auto-verified from R2 storage sync',
+                  ]
+                    .filter(Boolean)
+                    .join(' | '),
+                }
+              : existing.gradeId || !match.gradeId
+                ? {}
+                : {
+                    verificationStatus,
+                    reviewNotes: [
+                      existing.reviewNotes,
+                      `Storage sync: ${match.reason}`,
+                    ]
+                      .filter(Boolean)
+                      .join(' | '),
+                  }),
+          },
+        });
+        stats.updated += 1;
+        if (
+          updated.verificationStatus === TdsVerificationStatus.VERIFIED &&
+          updated.gradeId
+        ) {
+          stats.verified += 1;
+          const fulfilled = await this.notifyOpenTdsRequests(
+            updated.gradeId,
+            updated.id,
+            updated.gradeCode,
+          );
+          stats.fulfilledRequests += fulfilled;
+        } else if (
+          updated.verificationStatus === TdsVerificationStatus.NEEDS_MAPPING
+        ) {
+          stats.needsMapping += 1;
+        }
+        pushSample(
+          `${obj.key} → updated (${updated.verificationStatus}, grade=${updated.gradeId ?? 'none'})`,
+        );
+        continue;
+      }
+
+      const created = await this.prisma.gradeTdsDocument.create({
+        data: {
+          importKey,
+          gradeId: match.gradeId,
+          categoryCode: parsed.category,
+          gradeCode: parsed.grade,
+          producerName: parsed.producer,
+          documentTitle,
+          documentType: 'TDS',
+          originalFilename: parsed.filename,
+          storageKey: obj.key,
+          mimeType: mime,
+          fileSizeBytes,
+          checksum,
+          sourceKind: TdsSourceKind.OTHER,
+          sourceRaw: 'r2-storage-sync',
+          sourceFilePath: obj.key,
+          verificationStatus,
+          mappingConfidence: match.confidence,
+          revision: parsed.revision,
+          isActive: true,
+          uploadedAt: obj.lastModified ?? new Date(),
+          uploadedById: input?.adminUserId ?? null,
+          approvedAt:
+            verificationStatus === TdsVerificationStatus.VERIFIED
+              ? new Date()
+              : null,
+          approvedById:
+            verificationStatus === TdsVerificationStatus.VERIFIED
+              ? input?.adminUserId ?? null
+              : null,
+          reviewNotes: `Synced from R2 storage | ${match.reason}`,
+        },
+      });
+      stats.created += 1;
+      if (
+        created.verificationStatus === TdsVerificationStatus.VERIFIED &&
+        created.gradeId
+      ) {
+        stats.verified += 1;
+        const fulfilled = await this.notifyOpenTdsRequests(
+          created.gradeId,
+          created.id,
+          created.gradeCode,
+        );
+        stats.fulfilledRequests += fulfilled;
+      } else if (
+        created.verificationStatus === TdsVerificationStatus.NEEDS_MAPPING
+      ) {
+        stats.needsMapping += 1;
+      }
+      pushSample(
+        `${obj.key} → created (${created.verificationStatus}, grade=${created.gradeId ?? 'none'})`,
+      );
+    }
+
+    return {
+      prefix,
+      autoVerify,
+      ...stats,
+    };
   }
 }

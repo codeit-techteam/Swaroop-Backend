@@ -85,6 +85,34 @@ export function buildGradeTdsObjectKey(input: {
   ].join('/');
 }
 
+/**
+ * Inverse of buildGradeTdsObjectKey for R2 → DB reconcile.
+ * Returns null when the key is not a TDS library object.
+ */
+export function parseGradeTdsObjectKey(key: string): {
+  category: string;
+  grade: string;
+  producer: string;
+  revision: number;
+  filename: string;
+} | null {
+  const parts = key.replace(/^\/+/, '').split('/').filter(Boolean);
+  if (parts.length < 6) return null;
+  if (parts[0]!.toLowerCase() !== 'tds') return null;
+  const revisionPart = parts[parts.length - 2]!;
+  const revisionMatch = /^v(\d+)$/i.exec(revisionPart);
+  if (!revisionMatch) return null;
+  const filename = parts[parts.length - 1]!;
+  if (!filename || filename.endsWith('/')) return null;
+  return {
+    category: parts[1]!,
+    grade: parts[2]!,
+    producer: parts[3]!,
+    revision: Math.max(1, Number(revisionMatch[1]) || 1),
+    filename,
+  };
+}
+
 export function classifySourceKind(
   availability: string | null | undefined,
   source: string | null | undefined,

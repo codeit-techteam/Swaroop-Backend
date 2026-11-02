@@ -2,6 +2,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
@@ -12,6 +13,9 @@ import type { AppConfig } from '../../config/configuration.js';
 import { StorageNotConfiguredException } from '../storage.errors.js';
 import type {
   ObjectStorageProvider,
+  StorageListObjectsInput,
+  StorageListObjectsResult,
+  StorageObjectMeta,
   StorageSignedUrlInput,
   StorageUploadInput,
   StorageUploadResult,
@@ -100,17 +104,59 @@ export class CloudflareR2Provider implements ObjectStorageProvider {
   }
 
   async exists(key: string): Promise<boolean> {
+    const meta = await this.headObject(key);
+    return meta != null;
+  }
+
+  async listObjects(
+    input: StorageListObjectsInput,
+  ): Promise<StorageListObjectsResult> {
+    const client = this.requireClient();
+    const result = await client.send(
+      new ListObjectsV2Command({
+        Bucket: this.bucketName,
+        Prefix: input.prefix,
+        ContinuationToken: input.continuationToken,
+        MaxKeys: Math.min(Math.max(input.maxKeys ?? 500, 1), 1000),
+      }),
+    );
+    return {
+      objects: (result.Contents ?? [])
+        .filter((item): item is typeof item & { Key: string } => Boolean(item.Key))
+        .map((item) => ({
+          key: item.Key,
+          size: item.Size,
+          lastModified: item.LastModified,
+        })),
+      continuationToken: result.IsTruncated
+        ? result.NextContinuationToken
+        : undefined,
+      isTruncated: Boolean(result.IsTruncated),
+    };
+  }
+
+  async headObject(key: string): Promise<StorageObjectMeta | null> {
     const client = this.requireClient();
     try {
-      await client.send(
+      const result = await client.send(
         new HeadObjectCommand({
           Bucket: this.bucketName,
           Key: key,
         }),
       );
-      return true;
+      const metadata: Record<string, string> = {};
+      for (const [k, v] of Object.entries(result.Metadata ?? {})) {
+        if (v != null) metadata[k.toLowerCase()] = String(v);
+      }
+      return {
+        key,
+        size: result.ContentLength,
+        contentType: result.ContentType,
+        etag: result.ETag,
+        metadata,
+      };
     } catch {
-      return false;
+      return null;
     }
   }
 

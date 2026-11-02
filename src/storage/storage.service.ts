@@ -5,6 +5,9 @@ import { CloudflareR2Provider } from './providers/cloudflare-r2.provider.js';
 import { NoopStorageProvider } from './providers/noop-storage.provider.js';
 import type {
   ObjectStorageProvider,
+  StorageListObjectsInput,
+  StorageListObjectsResult,
+  StorageObjectMeta,
   StorageProviderName,
   StorageSignedUrlInput,
   StorageUploadInput,
@@ -79,6 +82,49 @@ export class StorageService {
       return this.provider.exists(key);
     }
     return false;
+  }
+
+  async listObjects(
+    input: StorageListObjectsInput,
+  ): Promise<StorageListObjectsResult> {
+    this.assertConfigured();
+    if (!this.provider.listObjects) {
+      throw new StorageNotConfiguredException(
+        'Object listing is not supported by the active storage provider',
+      );
+    }
+    return this.provider.listObjects(input);
+  }
+
+  /**
+   * Paginate through every object under a prefix (R2/S3 ListObjectsV2).
+   */
+  async listAllObjects(
+    prefix: string,
+    options?: { maxKeysPerPage?: number; hardLimit?: number },
+  ) {
+    const hardLimit = options?.hardLimit ?? 50_000;
+    const objects: StorageListObjectsResult['objects'] = [];
+    let continuationToken: string | undefined;
+    do {
+      const page = await this.listObjects({
+        prefix,
+        continuationToken,
+        maxKeys: options?.maxKeysPerPage ?? 500,
+      });
+      objects.push(...page.objects);
+      continuationToken = page.continuationToken;
+      if (objects.length >= hardLimit) break;
+    } while (continuationToken);
+    return objects.slice(0, hardLimit);
+  }
+
+  async headObject(key: string): Promise<StorageObjectMeta | null> {
+    this.assertConfigured();
+    if (!this.provider.headObject) {
+      return null;
+    }
+    return this.provider.headObject(key);
   }
 
   getPublicBaseUrl(): string {
