@@ -45,6 +45,21 @@ export class ProductsController {
     );
   }
 
+  @Get(':id/tds')
+  @ApiOperation({
+    summary:
+      'Verified grade-library TDS for this product (same docs as grade page; titled with product name)',
+  })
+  async listProductTds(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ) {
+    return successResponse(
+      await this.productsService.listProductTdsDocuments(user.id, id),
+      'Product TDS documents',
+    );
+  }
+
   @Get(':id/documents')
   @ApiOperation({
     summary: 'List customer-visible product documents (no seller identity)',

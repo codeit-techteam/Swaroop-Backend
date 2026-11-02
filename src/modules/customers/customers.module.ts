@@ -41,6 +41,7 @@ import { CustomerOrdersController } from './orders/customer-orders.controller.js
 import { CustomerOrdersService } from './orders/customer-orders.service.js';
 import { PriceAlertsController } from './price-alerts/price-alerts.controller.js';
 import { PriceAlertsService } from './price-alerts/price-alerts.service.js';
+import { TdsModule } from '../tds/tds.module.js';
 
 @Module({
   imports: [
@@ -51,6 +52,7 @@ import { PriceAlertsService } from './price-alerts/price-alerts.service.js';
     NotificationsModule,
     OrganizationsModule,
     KycVerificationModule,
+    TdsModule,
   ],
   controllers: [
     PublicMarketplaceController,

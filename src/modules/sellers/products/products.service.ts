@@ -9,6 +9,7 @@ import {
   DEFAULT_DISPATCH_WINDOW,
   estimateDeliveryTerms,
 } from '../../customers/common/delivery-timing.js';
+import { assessMaterialPriceReview } from '../../customers/checkout/commerce-pricing.js';
 import {
   CurrencyCode,
   EntityOwnerType,
@@ -454,6 +455,7 @@ export class ProductsService {
             metadata: {
               gstPercent: resolveListingGstPercent(dto),
               dispatchWindow: resolveListingDispatchWindow(dto),
+              ...priceReviewMetadata(dto.sellingPrice),
             } as Prisma.InputJsonValue,
             priceTiers: dto.priceTiers?.length
               ? {
@@ -990,6 +992,7 @@ export class ProductsService {
       delete offerMeta.inactivePriceTier;
       offerMeta.gstPercent = gstPercent;
       offerMeta.dispatchWindow = resolveListingDispatchWindow(dto);
+      Object.assign(offerMeta, priceReviewMetadata(nextBase));
 
       if (offer) {
         await tx.offerPriceTier.deleteMany({ where: { offerId: offer.id } });
@@ -1198,4 +1201,13 @@ function resolveListingGstPercent(dto: CreateMarketplaceListingDto): number {
   const n =
     typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
   return Number.isFinite(n) && n >= 0 ? n : 18;
+}
+
+/** Soft admin-review flags — never reject legitimate low prices. */
+function priceReviewMetadata(sellingPricePerMt: number) {
+  const review = assessMaterialPriceReview(sellingPricePerMt);
+  return {
+    needsPriceReview: review.needsPriceReview,
+    priceReviewReason: review.reason,
+  };
 }

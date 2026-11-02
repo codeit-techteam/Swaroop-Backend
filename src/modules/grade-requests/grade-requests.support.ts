@@ -37,7 +37,7 @@ export class GradeRequestSupport {
     input: {
       requestId: string;
       eventType: string;
-      actorRole: 'CUSTOMER' | 'ADMIN' | 'SYSTEM';
+      actorRole: 'CUSTOMER' | 'SELLER' | 'ADMIN' | 'SYSTEM';
       actorUserId?: string | null;
       fromStatus?: NewGradeRequestStatus | null;
       toStatus?: NewGradeRequestStatus | null;
@@ -134,6 +134,25 @@ export class GradeRequestSupport {
     }
   }
 
+  /**
+   * Notify whoever raised the request (customer or seller) — resolves through
+   * `requestedById`, so it works for both requester types.
+   */
+  async notifyRequester(
+    request: {
+      id: string;
+      referenceNumber: string;
+      requestedById: string | null;
+      organizationId?: string;
+    },
+    title: string,
+    body: string,
+    eventKey: string,
+  ) {
+    return this.notifyCustomer(request, title, body, eventKey);
+  }
+
+  /** Targets `requestedById`, so it already works for seller-raised requests too. */
   async notifyCustomer(
     request: {
       id: string;
@@ -158,7 +177,7 @@ export class GradeRequestSupport {
       });
     } catch (error) {
       this.logger.warn(
-        `Customer notification failed for ${request.referenceNumber}: ${
+        `Requester notification failed for ${request.referenceNumber}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

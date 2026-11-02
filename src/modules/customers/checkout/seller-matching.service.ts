@@ -6,14 +6,17 @@ import {
   ProductStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
-import { cmp, toDecimal } from '../../payments/common/money.util.js';
+import { cmp } from '../../payments/common/money.util.js';
 import {
   assertMarketplaceOffer,
   MarketplaceException,
   resolveOfferUnitPrice,
 } from '../common/blind-marketplace.mapper.js';
 import { CheckoutException } from './checkout.errors.js';
-import { assertQuantityRules } from './commerce-pricing.js';
+import {
+  assertQuantityRules,
+  assertSellableUnitPrice,
+} from './commerce-pricing.js';
 
 export type MatchStrategy =
   'EXPLICIT_OFFER' | 'PRODUCT_BEST_PRICE' | 'GRADE_BEST_PRICE';
@@ -80,7 +83,7 @@ export class SellerMatchingService {
       this.assertOffer(offer, quantity, input.increment);
       return {
         offer,
-        unitPrice: resolveOfferUnitPrice(offer, quantity),
+        unitPrice: this.requireUnitPrice(offer, quantity),
         strategy: 'EXPLICIT_OFFER',
       };
     }
@@ -145,7 +148,7 @@ export class SellerMatchingService {
         this.assertOffer(offer, quantity, increment);
         ranked.push({
           offer,
-          unitPrice: toDecimal(resolveOfferUnitPrice(offer, quantity)),
+          unitPrice: this.requireUnitPrice(offer, quantity),
         });
       } catch {
         continue;
@@ -158,6 +161,21 @@ export class SellerMatchingService {
     });
     const winner = ranked[0];
     return winner ?? null;
+  }
+
+  private requireUnitPrice(
+    offer: MatchedOffer,
+    quantity: number,
+  ): Prisma.Decimal {
+    try {
+      return assertSellableUnitPrice(resolveOfferUnitPrice(offer, quantity));
+    } catch (err) {
+      const code = (err as { code?: string }).code ?? 'OFFER_PRICE_UNAVAILABLE';
+      throw new CheckoutException(
+        code,
+        'This offer has no verified material price. Purchase is blocked until the seller or admin corrects the price.',
+      );
+    }
   }
 
   private assertOffer(
@@ -173,8 +191,12 @@ export class SellerMatchingService {
         available: offer.quantity,
         increment,
       });
+      this.requireUnitPrice(offer, quantity);
     } catch (err) {
       if (err instanceof MarketplaceException) {
+        throw err;
+      }
+      if (err instanceof CheckoutException) {
         throw err;
       }
       const code = (err as { code?: string }).code;

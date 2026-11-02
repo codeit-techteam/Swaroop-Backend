@@ -33,6 +33,7 @@ import {
   isSellerCreditPriceTier,
   sanitizeSellerPaymentTerms,
 } from '../../payments/common/platform-credit.js';
+import { assessMaterialPriceReview } from '../../customers/checkout/commerce-pricing.js';
 import {
   assertNonOverlappingPriceTiers,
   resolveOfferValidityWindow,
@@ -282,6 +283,15 @@ export class OffersService {
     }
 
     const referenceNumber = await this.nextOfferNumber();
+    const priceReview = assessMaterialPriceReview(dto.basePrice);
+    const baseMeta =
+      dto.metadata && typeof dto.metadata === 'object' && !Array.isArray(dto.metadata)
+        ? { ...(dto.metadata as Record<string, unknown>) }
+        : {};
+    baseMeta.needsPriceReview = priceReview.needsPriceReview;
+    baseMeta.priceReviewReason = priceReview.reason;
+    // Seller offer prices are always ₹/MT (Offer.basePrice). Do not treat as ₹/kg.
+    baseMeta.pricingUnit = 'MT';
 
     const offer = await this.prisma.offer.create({
       data: {
@@ -307,7 +317,7 @@ export class OffersService {
         visibility: dto.visibility ?? 'MARKETPLACE',
         version: 1,
         createdById: userId,
-        metadata: dto.metadata as Prisma.InputJsonValue,
+        metadata: baseMeta as Prisma.InputJsonValue,
         priceTiers: priceTiers?.length
           ? {
               create: priceTiers.map((t) => ({
@@ -619,6 +629,29 @@ export class OffersService {
       dto.quantity != null &&
       Number(dto.quantity) !== Number(existing.quantity);
 
+    const nextPrice =
+      dto.basePrice != null ? dto.basePrice : Number(existing.basePrice);
+    const priceReview = assessMaterialPriceReview(nextPrice);
+    const existingMeta =
+      existing.metadata &&
+      typeof existing.metadata === 'object' &&
+      !Array.isArray(existing.metadata)
+        ? { ...(existing.metadata as Record<string, unknown>) }
+        : {};
+    const incomingMeta =
+      dto.metadata &&
+      typeof dto.metadata === 'object' &&
+      !Array.isArray(dto.metadata)
+        ? { ...(dto.metadata as Record<string, unknown>) }
+        : {};
+    const mergedMeta = {
+      ...existingMeta,
+      ...incomingMeta,
+      needsPriceReview: priceReview.needsPriceReview,
+      priceReviewReason: priceReview.reason,
+      pricingUnit: 'MT',
+    };
+
     const offerId = existing.id;
     const offer = await this.prisma.$transaction(async (tx) => {
       if (dto.version != null) {
@@ -672,10 +705,7 @@ export class OffersService {
           validFrom: validity ? validity.validFrom : undefined,
           validUntil: validity ? validity.validUntil : undefined,
           visibility: dto.visibility,
-          metadata:
-            dto.metadata === undefined
-              ? undefined
-              : (dto.metadata as Prisma.InputJsonValue),
+          metadata: mergedMeta as Prisma.InputJsonValue,
           version: { increment: 1 },
         },
         include: offerInclude,

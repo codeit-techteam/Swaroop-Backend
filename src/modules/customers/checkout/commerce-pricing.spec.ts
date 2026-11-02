@@ -2,6 +2,10 @@ import { PaymentMethod, Prisma } from '../../../generated/prisma/client.js';
 import { describe, expect, it } from 'vitest';
 import {
   assertQuantityRules,
+  assertSellableUnitPrice,
+  assessMaterialPriceReview,
+  buildCommercePricingBreakdown,
+  buildListingPricingPreview,
   buildPricingVersion,
   calculateQuoteAmounts,
   platformDiscountBps,
@@ -151,5 +155,56 @@ describe('commerce pricing', () => {
     expect(unitPriceString(pricePerMtFromKg(perKg))).toBe('148000.0000');
     // Odd MT prices keep precision (no float drift).
     expect(unitPriceString(pricePerKgFromMt('148001.50'))).toBe('148.0015');
+  });
+
+  it('ABS EXTRUSION 3000D regression: ₹10/MT × 10 MT ADVANCE → ₹14862.10', () => {
+    // Production case: stored Offer.basePrice = 10 (suspicious but authoritative).
+    // Freight ₹1250/MT + 5% ADVANCE discount + 18% GST must match the existing estimate.
+    const amounts = calculateQuoteAmounts({
+      unitPrice: '10',
+      quantity: 10,
+      paymentMethod: PaymentMethod.ADVANCE,
+    });
+    expect(amounts.baseAmount.toFixed(2)).toBe('100.00');
+    expect(amounts.discountAmount.toFixed(2)).toBe('5.00');
+    expect(amounts.freightAmount.toFixed(2)).toBe('12500.00');
+    expect(amounts.taxAmount.toFixed(2)).toBe('2267.10');
+    expect(amounts.totalAmount.toFixed(2)).toBe('14862.10');
+
+    const breakdown = buildCommercePricingBreakdown({
+      offerId: 'abs-extrusion-3000d-taita',
+      unitPrice: '10',
+      quantity: 10,
+      paymentMethod: PaymentMethod.ADVANCE,
+    });
+    expect(breakdown.materialPricePerMT).toBe('10.0000');
+    expect(breakdown.finalAmount).toBe('14862.10');
+    expect(breakdown.finalAmountPerMT).toBe('1486.21');
+    expect(breakdown.needsPriceReview).toBe(true);
+    expect(breakdown.freightPerMT).toBe('1250.00');
+    expect(breakdown.gstPercent).toBe(18);
+    expect(breakdown.advanceDiscountPercent).toBe(5);
+  });
+
+  it('flags material prices below freight for admin review without rejecting them', () => {
+    expect(assessMaterialPriceReview('10').needsPriceReview).toBe(true);
+    expect(assessMaterialPriceReview('148000').needsPriceReview).toBe(false);
+    expect(() => assertSellableUnitPrice(0)).toThrow();
+    expect(() => assertSellableUnitPrice(null)).toThrow();
+    expect(assertSellableUnitPrice('10').toFixed(4)).toBe('10.0000');
+  });
+
+  it('builds listing pricing preview at MOQ without inventing material price', () => {
+    const preview = buildListingPricingPreview({
+      offerId: 'offer-abs',
+      unitPrice: '10',
+      moq: '10',
+    });
+    expect(preview).not.toBeNull();
+    expect(preview!.materialPricePerMT).toBe('10.0000');
+    expect(preview!.finalAmount).toBe('14862.10');
+    expect(preview!.finalAmountPerMT).toBe('1486.21');
+    // Material and landed stay distinct — never substitute landed as material.
+    expect(preview!.materialPricePerMT).not.toBe(preview!.finalAmountPerMT);
   });
 });

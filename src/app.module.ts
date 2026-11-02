@@ -41,6 +41,7 @@ import { ShipmentsModule } from './modules/shipments/index.js';
 import { SupportModule } from './modules/support/index.js';
 import { UsersModule } from './modules/users/index.js';
 import { WebsiteEnquiriesModule } from './modules/website-enquiries/index.js';
+import { TdsModule } from './modules/tds/tds.module.js';
 import { StorageModule } from './storage/storage.module.js';
 
 /** Caller-supplied X-Request-Id is reused only when it is a short, log-safe token. */
@@ -149,6 +150,7 @@ const REQUEST_ID_PATTERN = /^[A-Za-z0-9._-]{8,128}$/;
     AuditModule,
     ImportModule,
     WebsiteEnquiriesModule,
+    TdsModule,
   ],
   providers: [
     {

@@ -8,10 +8,13 @@ import {
 } from '../marketplace/marketplace.service.js';
 import {
   assertQuantityRules,
-  calculateQuoteAmounts,
+  assertSellableUnitPrice,
+  buildCommercePricingBreakdown,
   DEFAULT_COMMERCE_PRICING,
   moneyString,
+  pricePerKgFromMt,
   unitPriceString,
+  type CommercePricingBreakdown,
 } from './commerce-pricing.js';
 
 export type MarketplaceEstimateInput = {
@@ -23,6 +26,7 @@ export type MarketplaceEstimateInput = {
 /**
  * Non-binding landed-cost estimate from authoritative offer price.
  * Never converts foreign currencies to INR without a configured FX rate.
+ * Clients must display breakdown fields as returned — do not recalculate.
  */
 export async function buildMarketplaceEstimate(
   prisma: PrismaService,
@@ -36,8 +40,12 @@ export async function buildMarketplaceEstimate(
 
   const paymentMethod = dto.paymentMethod ?? PaymentMethod.ADVANCE;
   const quantity = new Prisma.Decimal(dto.quantity);
-  const unitPrice = resolveOfferUnitPrice(offer, Number(quantity));
-  if (unitPrice == null) {
+  let unitPrice: Prisma.Decimal;
+  try {
+    unitPrice = assertSellableUnitPrice(
+      resolveOfferUnitPrice(offer, Number(quantity)),
+    );
+  } catch {
     throw new BadRequestException('Offer has no sellable unit price');
   }
 
@@ -58,9 +66,7 @@ export async function buildMarketplaceEstimate(
 
   const currency = (offer.currency ?? 'INR').toUpperCase();
   const pricePerMt = unitPriceString(unitPrice);
-  const pricePerKg = unitPriceString(
-    new Prisma.Decimal(unitPrice).dividedBy(1000),
-  );
+  const pricePerKg = unitPriceString(pricePerKgFromMt(unitPrice));
 
   if (currency !== 'INR') {
     return {
@@ -72,43 +78,43 @@ export async function buildMarketplaceEstimate(
       paymentMethod,
       note: 'Offer currency is not INR. No foreign→INR conversion without a configured exchange rate.',
       amounts: null,
+      pricing: null as CommercePricingBreakdown | null,
       exTax: null,
       tax: null,
       inclusiveTotal: null,
     };
   }
 
-  const amounts = calculateQuoteAmounts({
+  const pricing = buildCommercePricingBreakdown({
+    offerId: offer.id,
     unitPrice,
     quantity,
     paymentMethod,
+    currency,
   });
 
   return {
     binding: false as const,
     currency: 'INR',
-    unitPricePerMt: pricePerMt,
+    unitPricePerMt: pricing.materialPricePerMT,
     unitPricePerKg: pricePerKg,
     quantity: quantity.toString(),
     paymentMethod,
+    /** Full commercial breakdown — single source of truth for UIs. */
     amounts: null,
+    pricing,
     exTax: {
-      material: moneyString(amounts.baseAmount),
-      discount: moneyString(amounts.discountAmount),
-      freight: moneyString(amounts.freightAmount),
-      platformFee: moneyString(amounts.platformFee),
-      taxable: moneyString(
-        amounts.baseAmount
-          .minus(amounts.discountAmount)
-          .plus(amounts.freightAmount)
-          .plus(amounts.platformFee),
-      ),
+      material: pricing.materialSubtotal,
+      discount: pricing.discountAmount,
+      freight: pricing.freightTotal,
+      platformFee: moneyString(DEFAULT_COMMERCE_PRICING.platformFee),
+      taxable: pricing.taxableAmount,
     },
     tax: {
-      bps: amounts.taxBps,
-      amount: moneyString(amounts.taxAmount),
+      bps: Math.round(pricing.gstPercent * 100),
+      amount: pricing.gstAmount,
     },
-    inclusiveTotal: moneyString(amounts.totalAmount),
+    inclusiveTotal: pricing.finalAmount,
     note: 'Estimate only. Final checkout totals are recalculated server-side when you place an order.',
   };
 }

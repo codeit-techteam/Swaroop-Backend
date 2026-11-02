@@ -181,3 +181,168 @@ export function pricePerMtFromKg(
 ): Prisma.Decimal {
   return toDecimal(pricePerKg).times(1000);
 }
+
+/**
+ * Reject null / non-positive unit prices. Never fall back to ₹0 / ₹10.
+ */
+export function assertSellableUnitPrice(
+  unitPrice: Prisma.Decimal | number | string | null | undefined,
+): Prisma.Decimal {
+  if (unitPrice == null || unitPrice === '') {
+    throw Object.assign(new Error('OFFER_PRICE_UNAVAILABLE'), {
+      code: 'OFFER_PRICE_UNAVAILABLE',
+    });
+  }
+  const price = toDecimal(unitPrice);
+  if (!price.isFinite() || price.lte(0)) {
+    throw Object.assign(new Error('OFFER_PRICE_UNAVAILABLE'), {
+      code: 'OFFER_PRICE_UNAVAILABLE',
+    });
+  }
+  return price;
+}
+
+/**
+ * Soft commercial review flag — does not block listing or checkout.
+ * Material priced below platform freight/MT is commercially suspicious for
+ * polymers and should be verified by admin (e.g. ₹10/MT with ₹1,250 freight).
+ */
+export function assessMaterialPriceReview(
+  materialPricePerMt: Prisma.Decimal | number | string,
+  config: CommercePricingConfig = DEFAULT_COMMERCE_PRICING,
+): {
+  needsPriceReview: boolean;
+  reason: string | null;
+} {
+  const price = toDecimal(materialPricePerMt);
+  const freight = toDecimal(config.freightPerMt);
+  if (!price.isFinite() || price.lte(0)) {
+    return {
+      needsPriceReview: true,
+      reason: 'Material price is missing or not positive',
+    };
+  }
+  if (freight.gt(0) && price.lt(freight)) {
+    return {
+      needsPriceReview: true,
+      reason: `Material price (₹${moneyString(price)}/MT) is below platform freight (₹${moneyString(freight)}/MT)`,
+    };
+  }
+  return { needsPriceReview: false, reason: null };
+}
+
+export type CommercePricingBreakdown = {
+  materialPricePerMT: string;
+  freightPerMT: string;
+  advanceDiscountPercent: number;
+  gstPercent: number;
+  quantityMT: string;
+  materialSubtotal: string;
+  freightTotal: string;
+  discountAmount: string;
+  taxableAmount: string;
+  gstAmount: string;
+  finalAmount: string;
+  finalAmountPerMT: string;
+  currency: string;
+  pricingUnit: 'MT';
+  offerId: string;
+  priceVersion: string;
+  paymentMethod: PaymentMethod;
+  needsPriceReview: boolean;
+  priceReviewReason: string | null;
+};
+
+/**
+ * Single commercial breakdown for listing previews, estimates, and checkout.
+ * All amounts come from calculateQuoteAmounts — do not recalculate on clients.
+ */
+export function buildCommercePricingBreakdown(input: {
+  offerId: string;
+  unitPrice: Prisma.Decimal | number | string;
+  quantity: Prisma.Decimal | number | string;
+  paymentMethod: PaymentMethod;
+  currency?: string;
+  config?: CommercePricingConfig;
+}): CommercePricingBreakdown {
+  const config = input.config ?? DEFAULT_COMMERCE_PRICING;
+  const unitPrice = assertSellableUnitPrice(input.unitPrice);
+  const amounts = calculateQuoteAmounts(
+    {
+      unitPrice,
+      quantity: input.quantity,
+      paymentMethod: input.paymentMethod,
+    },
+    config,
+  );
+  const discountBps = platformDiscountBps(input.paymentMethod, config);
+  const taxable = round2(
+    amounts.baseAmount
+      .minus(amounts.discountAmount)
+      .plus(amounts.freightAmount)
+      .plus(amounts.platformFee),
+  );
+  const review = assessMaterialPriceReview(unitPrice, config);
+  const priceVersion = buildPricingVersion({
+    offerId: input.offerId,
+    unitPrice: unitPriceString(amounts.unitPrice),
+    quantity: amounts.quantity.toFixed(3),
+    paymentMethod: input.paymentMethod,
+    taxBps: amounts.taxBps,
+    freightPerMt: config.freightPerMt,
+    discountBps,
+    platformFee: moneyString(amounts.platformFee),
+    insuranceAmount: moneyString(amounts.insuranceAmount),
+  });
+
+  return {
+    materialPricePerMT: unitPriceString(amounts.unitPrice),
+    freightPerMT: moneyString(config.freightPerMt),
+    advanceDiscountPercent: discountBps / 100,
+    gstPercent: amounts.taxBps / 100,
+    quantityMT: amounts.quantity.toFixed(3),
+    materialSubtotal: moneyString(amounts.baseAmount),
+    freightTotal: moneyString(amounts.freightAmount),
+    discountAmount: moneyString(amounts.discountAmount),
+    taxableAmount: moneyString(taxable),
+    gstAmount: moneyString(amounts.taxAmount),
+    finalAmount: moneyString(amounts.totalAmount),
+    finalAmountPerMT: moneyString(
+      amounts.quantity.gt(0)
+        ? amounts.totalAmount.dividedBy(amounts.quantity)
+        : 0,
+    ),
+    currency: (input.currency ?? 'INR').toUpperCase(),
+    pricingUnit: 'MT',
+    offerId: input.offerId,
+    priceVersion,
+    paymentMethod: input.paymentMethod,
+    needsPriceReview: review.needsPriceReview,
+    priceReviewReason: review.reason,
+  };
+}
+
+/** Non-binding listing card preview at MOQ (ADVANCE assumptions). */
+export function buildListingPricingPreview(input: {
+  offerId: string;
+  unitPrice: Prisma.Decimal | number | string | null | undefined;
+  moq: Prisma.Decimal | number | string | null | undefined;
+  currency?: string | null;
+}): CommercePricingBreakdown | null {
+  try {
+    const unitPrice = assertSellableUnitPrice(input.unitPrice);
+    const moq =
+      input.moq == null || toDecimal(input.moq).lte(0)
+        ? new Prisma.Decimal(1)
+        : toDecimal(input.moq);
+    return buildCommercePricingBreakdown({
+      offerId: input.offerId,
+      unitPrice,
+      quantity: moq,
+      paymentMethod: PaymentMethod.ADVANCE,
+      currency: input.currency ?? 'INR',
+    });
+  } catch {
+    return null;
+  }
+}

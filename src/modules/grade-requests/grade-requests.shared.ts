@@ -121,9 +121,19 @@ export const GRADE_REQUEST_STATUS_DESCRIPTIONS: Record<
   [S.CLOSED]: 'This request is closed.',
 };
 
+/** Seller-facing copy: CONVERTED_TO_PR reads differently for sellers. */
+export const SELLER_GRADE_REQUEST_STATUS_DESCRIPTIONS: Record<
+  NewGradeRequestStatus,
+  string
+> = {
+  ...GRADE_REQUEST_STATUS_DESCRIPTIONS,
+  [S.CONVERTED_TO_PR]:
+    'Your request has been completed. The grade is available for listing once it is published.',
+};
+
 /**
  * Duplicate rule key: lower-cased, whitespace-collapsed grade name + manufacturer.
- * Two requests with the same key from the same customer cannot both be open.
+ * Two requests with the same key from the same requester (customer or seller) cannot both be open.
  */
 export function normalizeDedupeKey(
   gradeName: string,
@@ -176,7 +186,10 @@ export function toCustomerTimeline(events: GradeRequestEventRow[]) {
       toStatusLabel: e.toStatus
         ? GRADE_REQUEST_STATUS_LABELS[e.toStatus]
         : null,
-      actor: e.actorRole === 'CUSTOMER' ? 'YOU' : 'POLYSTOREX',
+      actor:
+        e.actorRole === 'CUSTOMER' || e.actorRole === 'SELLER'
+          ? 'YOU'
+          : 'POLYSTOREX',
       message: e.message,
       createdAt: e.createdAt.toISOString(),
     }));

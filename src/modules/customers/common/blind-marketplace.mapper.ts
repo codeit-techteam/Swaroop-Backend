@@ -9,6 +9,7 @@ import {
 } from '../../../generated/prisma/client.js';
 import { resolveProductCredit } from '../../payments/common/payment-eligibility.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
+import { buildListingPricingPreview } from '../checkout/commerce-pricing.js';
 import {
   resolveDeliveryEstimate,
   resolveDispatchWindow,
@@ -420,6 +421,7 @@ export function toBlindProduct(product: {
     listing: offer
       ? {
           offerId: offer.id,
+          /** Authoritative material unit price ₹/MT from Offer.basePrice (or tiers). */
           price: offer.basePrice,
           currency: offer.currency ?? 'INR',
           unit: offer.unit ?? product.unit,
@@ -438,6 +440,16 @@ export function toBlindProduct(product: {
             price: t.price,
             currency: t.currency ?? offer.currency ?? 'INR',
           })),
+          /**
+           * Landed-cost preview at MOQ (ADVANCE). Material price stays in `price`;
+           * never substitute finalAmountPerMT as the material price.
+           */
+          pricingPreview: buildListingPricingPreview({
+            offerId: offer.id,
+            unitPrice: offer.basePrice,
+            moq: offer.moq,
+            currency: offer.currency ?? 'INR',
+          }),
         }
       : null,
     supplier: {
@@ -513,6 +525,7 @@ export function toBlindOffer(offer: {
     quantityAvailable: offer.quantity,
     moq: offer.moq,
     unit: offer.unit,
+    /** Authoritative material unit price ₹/MT from Offer.basePrice. */
     price: offer.basePrice,
     currency: offer.currency,
     pricingBasis: offer.pricingBasis,
@@ -528,6 +541,12 @@ export function toBlindOffer(offer: {
     status: offer.status,
     gstPercent:
       gstPercent != null && Number.isFinite(gstPercent) ? gstPercent : 18,
+    pricingPreview: buildListingPricingPreview({
+      offerId: offer.id,
+      unitPrice: offer.basePrice,
+      moq: offer.moq,
+      currency: offer.currency,
+    }),
     packaging: offer.product?.packaging ?? null,
     region:
       offer.warehouse?.state || offer.warehouse?.city

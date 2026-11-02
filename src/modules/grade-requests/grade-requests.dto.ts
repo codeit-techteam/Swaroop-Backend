@@ -20,7 +20,10 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { NewGradeRequestStatus } from '../../generated/prisma/client.js';
+import {
+  NewGradeRequestRequesterType,
+  NewGradeRequestStatus,
+} from '../../generated/prisma/client.js';
 import { PaginationQueryDto } from '../master-data/common/pagination.js';
 import {
   GRADE_REQUEST_DOCUMENT_TYPES,
@@ -181,6 +184,13 @@ export class CustomerGradeRequestQueryDto extends PaginationQueryDto {
   status?: NewGradeRequestStatus;
 }
 
+export class SellerGradeRequestQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ enum: NewGradeRequestStatus })
+  @IsOptional()
+  @IsEnum(NewGradeRequestStatus)
+  status?: NewGradeRequestStatus;
+}
+
 export class GradeRequestRespondDto {
   @ApiProperty()
   @Transform(trim)
@@ -247,6 +257,11 @@ export class AdminGradeRequestQueryDto extends PaginationQueryDto {
   @IsString()
   @MaxLength(120)
   manufacturer?: string;
+
+  @ApiPropertyOptional({ enum: NewGradeRequestRequesterType })
+  @IsOptional()
+  @IsEnum(NewGradeRequestRequesterType)
+  requesterType?: NewGradeRequestRequesterType;
 }
 
 export class AdminAssignDto {

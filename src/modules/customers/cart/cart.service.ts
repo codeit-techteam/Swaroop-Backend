@@ -12,6 +12,7 @@ import {
   resolveOfferUnitPrice,
   toBlindOffer,
 } from '../common/blind-marketplace.mapper.js';
+import { assertSellableUnitPrice } from '../checkout/commerce-pricing.js';
 import { CustomerAuditService } from '../common/customer-audit.service.js';
 import {
   CustomerContext,
@@ -184,7 +185,7 @@ export class CartService {
     assertMarketplaceOffer(offer, quantity, offer.moq);
     assertAvailability(offer.quantity, quantity);
 
-    const unitPrice = resolveOfferUnitPrice(offer, quantity);
+    const unitPrice = this.requireUnitPrice(offer, quantity);
     const existing = cart.items.find((i) => i.offerId === dto.offerId);
 
     let item;
@@ -192,7 +193,7 @@ export class CartService {
       const nextQty = Number(existing.quantity) + quantity;
       assertMarketplaceOffer(offer, nextQty, offer.moq);
       assertAvailability(offer.quantity, nextQty);
-      const nextPrice = resolveOfferUnitPrice(offer, nextQty);
+      const nextPrice = this.requireUnitPrice(offer, nextQty);
       item = await this.prisma.cartItem.update({
         where: { id: existing.id },
         data: {
@@ -275,7 +276,7 @@ export class CartService {
     assertMarketplaceOffer(offer, quantity, offer.moq);
     assertAvailability(offer.quantity, quantity);
 
-    const unitPrice = resolveOfferUnitPrice(offer, quantity);
+    const unitPrice = this.requireUnitPrice(offer, quantity);
     if (
       dto.expectedUnitPrice != null &&
       Number(unitPrice) !== Number(dto.expectedUnitPrice)
@@ -417,7 +418,7 @@ export class CartService {
         const quantity = Number(item.quantity);
         assertMarketplaceOffer(offer, quantity, offer.moq);
         assertAvailability(offer.quantity, quantity);
-        const unitPrice = resolveOfferUnitPrice(offer, quantity);
+        const unitPrice = this.requireUnitPrice(offer, quantity);
         const livePrice = Number(unitPrice);
         const snapshotPrice = Number(item.unitPrice);
         const expected = expectedMap.get(item.id);
@@ -525,5 +526,19 @@ export class CartService {
       shippingAddressId: dto.shippingAddressId ?? null,
       billingAddressId: dto.billingAddressId ?? null,
     };
+  }
+
+  private requireUnitPrice(
+    offer: Parameters<typeof resolveOfferUnitPrice>[0],
+    quantity: number,
+  ) {
+    try {
+      return assertSellableUnitPrice(resolveOfferUnitPrice(offer, quantity));
+    } catch {
+      throw new MarketplaceException(
+        'OFFER_PRICE_UNAVAILABLE',
+        'This offer has no verified material price. Remove it from cart until the seller or admin corrects the price.',
+      );
+    }
   }
 }

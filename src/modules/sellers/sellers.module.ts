@@ -43,10 +43,12 @@ import { SellerPriceRevisionsController } from './price-revisions/price-revision
 import { SellerPriceRevisionsService } from './price-revisions/price-revisions.service.js';
 import { SellerProcurementWorkbenchController } from './procurement/seller-procurement-workbench.controller.js';
 import { SellerProcurementWorkbenchService } from './procurement/seller-procurement-workbench.service.js';
+import { TdsModule } from '../tds/tds.module.js';
 
 @Module({
   imports: [
     AuthModule,
+    TdsModule,
     ProcurementModule,
     DocumentsModule,
     OrganizationsModule,

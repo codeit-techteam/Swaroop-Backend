@@ -52,4 +52,16 @@ describe('seller manager access', () => {
       permissionForManagerRequest('POST', '/api/v1/seller/orders/abc'),
     ).toBe('orders.manage');
   });
+
+  it('maps seller grade requests (incl. their documents) to procurement', () => {
+    expect(
+      permissionForManagerRequest('GET', '/api/v1/seller/grade-requests'),
+    ).toBe('procurement.view');
+    expect(
+      permissionForManagerRequest(
+        'POST',
+        '/api/v1/seller/grade-requests/abc/documents',
+      ),
+    ).toBe('procurement.manage');
+  });
 });

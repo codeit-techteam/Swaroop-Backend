@@ -8,6 +8,7 @@ import {
 import {
   EntityOwnerType,
   GradeStatus,
+  NewGradeRequestRequesterType,
   NewGradeRequestStatus,
   Prisma,
 } from '../../generated/prisma/client.js';
@@ -61,6 +62,23 @@ const adminInclude = {
       },
     },
   },
+  sellerProfile: {
+    select: {
+      id: true,
+      organizationId: true,
+      organization: { select: { id: true, name: true } },
+      user: {
+        select: {
+          id: true,
+          email: true,
+          phone: true,
+          firstName: true,
+          lastName: true,
+          displayName: true,
+        },
+      },
+    },
+  },
   category: { select: { id: true, code: true, name: true, displayName: true } },
   assignedAdmin: {
     select: {
@@ -89,6 +107,22 @@ type AdminRow = Prisma.NewGradeRequestGetPayload<{
 }>;
 
 type Actor = { id: string; roles: string[] };
+
+/** The customer or seller account that raised the request (exactly one is set). */
+function requesterOf(row: AdminRow) {
+  const profile =
+    row.requesterType === NewGradeRequestRequesterType.SELLER
+      ? row.sellerProfile
+      : row.customerProfile;
+  return {
+    type: row.requesterType,
+    profileId: profile?.id ?? null,
+    organizationId: profile?.organizationId ?? undefined,
+    companyName: profile?.organization.name ?? null,
+    accountEmail: profile?.user.email ?? null,
+    accountPhone: profile?.user.phone ?? null,
+  };
+}
 
 const nameOf = (
   u?: {
@@ -122,6 +156,7 @@ export class AdminGradeRequestsService {
     const search = resolveSearch(query);
     const where: Prisma.NewGradeRequestWhereInput = {
       ...(query.status ? { status: query.status } : {}),
+      ...(query.requesterType ? { requesterType: query.requesterType } : {}),
       ...(query.manufacturer
         ? {
             manufacturer: {
@@ -148,6 +183,13 @@ export class AdminGradeRequestsService {
               { contactName: { contains: search, mode: 'insensitive' } },
               {
                 customerProfile: {
+                  organization: {
+                    name: { contains: search, mode: 'insensitive' },
+                  },
+                },
+              },
+              {
+                sellerProfile: {
                   organization: {
                     name: { contains: search, mode: 'insensitive' },
                   },
@@ -579,7 +621,7 @@ export class AdminGradeRequestsService {
     await this.support.audit({
       action: input.auditAction,
       actorUserId: actor.id,
-      organizationId: row.customerProfile.organizationId,
+      organizationId: requesterOf(row).organizationId,
       requestId: row.id,
       previousData: {
         status: row.status,
@@ -602,7 +644,7 @@ export class AdminGradeRequestsService {
           id: row.id,
           referenceNumber: row.referenceNumber,
           requestedById: row.requestedById,
-          organizationId: row.customerProfile.organizationId,
+          organizationId: requesterOf(row).organizationId,
         },
         n.title,
         n.body,
@@ -659,7 +701,7 @@ export class AdminGradeRequestsService {
     await this.support.audit({
       action: `NEW_GRADE_REQUEST_${to}`,
       actorUserId: actor.id,
-      organizationId: row.customerProfile.organizationId,
+      organizationId: requesterOf(row).organizationId,
       requestId: row.id,
       previousData: { status: row.status },
       newData: { status: to, message },
@@ -670,7 +712,7 @@ export class AdminGradeRequestsService {
         id: row.id,
         referenceNumber: row.referenceNumber,
         requestedById: row.requestedById,
-        organizationId: row.customerProfile.organizationId,
+        organizationId: requesterOf(row).organizationId,
       },
       n.title,
       n.body,
@@ -689,19 +731,31 @@ export class AdminGradeRequestsService {
   }
 
   private toAdminView(row: AdminRow) {
-    const u = row.customerProfile.user;
+    const requester = requesterOf(row);
+    const isCustomer =
+      row.requesterType === NewGradeRequestRequesterType.CUSTOMER;
     return {
       id: row.id,
       referenceNumber: row.referenceNumber,
       status: row.status,
       statusLabel: GRADE_REQUEST_STATUS_LABELS[row.status],
       isOpen: OPEN_GRADE_REQUEST_STATUSES.includes(row.status),
+      requesterType: row.requesterType,
+      requester: {
+        type: requester.type,
+        profileId: requester.profileId,
+        organizationId: requester.organizationId ?? null,
+        companyName: requester.companyName,
+        accountEmail: requester.accountEmail,
+        accountPhone: requester.accountPhone,
+      },
+      // Backward compatible: populated for CUSTOMER requests, null fields for SELLER.
       customer: {
-        customerProfileId: row.customerProfile.id,
-        organizationId: row.customerProfile.organizationId,
-        companyName: row.customerProfile.organization.name,
-        accountEmail: u.email,
-        accountPhone: u.phone,
+        customerProfileId: isCustomer ? requester.profileId : null,
+        organizationId: isCustomer ? (requester.organizationId ?? null) : null,
+        companyName: isCustomer ? requester.companyName : null,
+        accountEmail: isCustomer ? requester.accountEmail : null,
+        accountPhone: isCustomer ? requester.accountPhone : null,
       },
       contact: {
         name: row.contactName,

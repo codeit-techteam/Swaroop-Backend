@@ -17,6 +17,7 @@ import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
+import { GradeTdsService } from '../../tds/grade-tds.service.js';
 import {
   PatchProductDocumentDto,
   ReplaceProductDocumentDto,
@@ -30,7 +31,10 @@ import { ProductDocumentsService } from './product-documents.service.js';
 @ApiBearerAuth('bearer')
 @Roles(RoleCode.SELLER)
 export class ProductDocumentsController {
-  constructor(private readonly productDocuments: ProductDocumentsService) {}
+  constructor(
+    private readonly productDocuments: ProductDocumentsService,
+    private readonly gradeTds: GradeTdsService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List product technical documents' })
@@ -41,6 +45,23 @@ export class ProductDocumentsController {
     return successResponse(
       await this.productDocuments.listForProduct(user.id, productId),
       'Product documents retrieved',
+    );
+  }
+
+  @Get('grade-tds')
+  @ApiOperation({
+    summary:
+      'Verified platform grade-library TDS for this product (read-only; synced by product → grade name)',
+  })
+  async gradeLibraryTds(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('productId', ParseUUIDPipe) productId: string,
+  ) {
+    // Ownership check via listing docs service
+    await this.productDocuments.listForProduct(user.id, productId);
+    return successResponse(
+      await this.gradeTds.listForProduct(productId, { audience: 'seller' }),
+      'Grade library TDS',
     );
   }
 

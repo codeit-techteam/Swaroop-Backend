@@ -1117,7 +1117,7 @@ model BulkLogisticsQuoteRequest {
 }
 
 // =============================================================================
-// NEW GRADE REQUESTS (customer asks for a material/grade not in the catalogue)
+// NEW GRADE REQUESTS (customer OR seller asks for a material/grade not in the catalogue)
 // =============================================================================
 
 enum NewGradeRequestStatus {
@@ -1131,13 +1131,22 @@ enum NewGradeRequestStatus {
   CLOSED
 }
 
-/// A customer request for a grade that is not in the catalogue. Standalone from
-/// PurchaseRequest on purpose: it has no offer/seller, so it never enters seller
-/// matching and is never visible to sellers (blind-marketplace safe).
+enum NewGradeRequestRequesterType {
+  CUSTOMER
+  SELLER
+}
+
+/// A customer OR seller request for a grade that is not in the catalogue.
+/// Exactly one of customerProfileId / sellerProfileId is set (DB CHECK) and it
+/// matches requesterType. Standalone from PurchaseRequest on purpose: it has no
+/// offer, so it never enters seller matching. Blind-marketplace safe: each side
+/// only ever sees its OWN requests; sellers never see customer-origin rows.
 model NewGradeRequest {
   id                String                @id @default(uuid()) @db.Uuid
   referenceNumber   String                @unique @map("reference_number")
-  customerProfileId String                @map("customer_profile_id") @db.Uuid
+  requesterType     NewGradeRequestRequesterType @default(CUSTOMER) @map("requester_type")
+  customerProfileId String?               @map("customer_profile_id") @db.Uuid
+  sellerProfileId   String?               @map("seller_profile_id") @db.Uuid
   requestedById     String?               @map("requested_by_id") @db.Uuid
   status            NewGradeRequestStatus @default(SUBMITTED)
 
@@ -1186,7 +1195,8 @@ model NewGradeRequest {
   createdAt         DateTime              @default(now()) @map("created_at")
   updatedAt         DateTime              @updatedAt @map("updated_at")
 
-  customerProfile CustomerProfile @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  customerProfile CustomerProfile? @relation(fields: [customerProfileId], references: [id], onDelete: Cascade)
+  sellerProfile   SellerProfile?  @relation(fields: [sellerProfileId], references: [id], onDelete: Cascade)
   category        GradeCategory?  @relation(fields: [categoryId], references: [id])
   assignedAdmin   User?           @relation("NewGradeRequestAssignee", fields: [assignedAdminId], references: [id])
   resolvedGrade   Grade?          @relation("NewGradeRequestResolvedGrade", fields: [resolvedGradeId], references: [id])
@@ -1194,6 +1204,9 @@ model NewGradeRequest {
 
   @@index([customerProfileId, status])
   @@index([customerProfileId, dedupeKey])
+  @@index([sellerProfileId, status])
+  @@index([sellerProfileId, dedupeKey])
+  @@index([requesterType, status, createdAt])
   @@index([status, createdAt])
   @@index([assignedAdminId])
   @@index([resolvedGradeId])
@@ -1516,6 +1529,7 @@ model SellerProfile {
   prResponses       PurchaseRequestResponse[]
   managerAssignments SellerManagerAssignment[]
   importListings    ImportListing[]
+  newGradeRequests  NewGradeRequest[]
 
   @@index([status])
   @@map("seller_profiles")
@@ -1836,6 +1850,8 @@ model Grade {
   importListings       ImportListing[]
   priceAlerts          PriceAlert[]
   resolvedForGradeRequests NewGradeRequest[] @relation("NewGradeRequestResolvedGrade")
+  tdsDocuments             GradeTdsDocument[]
+  tdsRequests              TdsRequest[]
 
   @@index([categoryId])
   @@index([subcategoryId])
@@ -4385,6 +4401,161 @@ enum WebsiteEnquiryStatus {
   NEW
   IN_PROGRESS
   CLOSED
+}
+
+// =============================================================================
+// GRADE TDS LIBRARY (central technical document library)
+// =============================================================================
+
+enum TdsDocumentType {
+  TDS
+  SDS
+  MSDS
+  COA
+  OTHER
+}
+
+/// Admin / customer visibility gate — independent of workbook provenance.
+enum TdsVerificationStatus {
+  PENDING_REVIEW
+  VERIFIED
+  REJECTED
+  NEEDS_MAPPING
+  MISSING
+}
+
+enum TdsSourceKind {
+  APP
+  WEB
+  WEB_DEALER
+  WEB_MULTI_GRADE
+  WEB_DOUBTFUL
+  IMAGE
+  OTHER
+  UNKNOWN
+}
+
+enum TdsImportBatchStatus {
+  RUNNING
+  DRY_RUN
+  COMPLETED
+  FAILED
+}
+
+enum TdsRequestStatus {
+  OPEN
+  IN_PROGRESS
+  FULFILLED
+  REJECTED
+  CLOSED
+}
+
+/// Canonical grade-level technical document (TDS library).
+/// Missing-sheet rows are stored with verificationStatus=MISSING and no storageKey.
+model GradeTdsDocument {
+  id                   String                @id @default(uuid()) @db.Uuid
+  /// Idempotency key: normalized category|grade|producer|sourceFilePath
+  importKey            String                @unique @map("import_key")
+  gradeId              String?               @map("grade_id") @db.Uuid
+  categoryCode         String                @map("category_code")
+  gradeCode            String                @map("grade_code")
+  producerName         String                @map("producer_name")
+  documentTitle        String                @map("document_title")
+  documentType         TdsDocumentType       @default(TDS) @map("document_type")
+  originalFilename     String?               @map("original_filename")
+  storageKey           String?               @map("storage_key")
+  mimeType             String?               @map("mime_type")
+  fileSizeBytes        BigInt?               @map("file_size_bytes")
+  checksum             String?
+  sourceKind           TdsSourceKind         @default(UNKNOWN) @map("source_kind")
+  /// Raw Excel Source / status text (provenance).
+  sourceRaw            String?               @map("source_raw")
+  sourceUrl            String?               @map("source_url")
+  sourceFilePath       String?               @map("source_file_path")
+  /// Excel "TDS available" / catalogue status text.
+  workbookAvailability String?               @map("workbook_availability")
+  workbookNotes        String?               @map("workbook_notes")
+  verificationStatus   TdsVerificationStatus @default(PENDING_REVIEW) @map("verification_status")
+  reviewNotes          String?               @map("review_notes") @db.Text
+  revision             Int                   @default(1)
+  isActive             Boolean               @default(true) @map("is_active")
+  mappingConfidence    String?               @map("mapping_confidence")
+  importBatchId        String?               @map("import_batch_id") @db.Uuid
+  uploadedById         String?               @map("uploaded_by_id") @db.Uuid
+  approvedById         String?               @map("approved_by_id") @db.Uuid
+  approvedAt           DateTime?             @map("approved_at")
+  rejectedById         String?               @map("rejected_by_id") @db.Uuid
+  rejectedAt           DateTime?             @map("rejected_at")
+  effectiveDate        DateTime?             @map("effective_date")
+  uploadedAt           DateTime?             @map("uploaded_at")
+  createdAt            DateTime              @default(now()) @map("created_at")
+  updatedAt            DateTime              @updatedAt @map("updated_at")
+  deletedAt            DateTime?             @map("deleted_at")
+
+  grade       Grade?          @relation(fields: [gradeId], references: [id])
+  importBatch TdsImportBatch? @relation(fields: [importBatchId], references: [id])
+  tdsRequests TdsRequest[]
+
+  @@index([gradeId, verificationStatus, isActive])
+  @@index([categoryCode])
+  @@index([gradeCode])
+  @@index([producerName])
+  @@index([verificationStatus])
+  @@index([sourceKind])
+  @@index([checksum])
+  @@index([storageKey])
+  @@index([importBatchId])
+  @@index([createdAt])
+  @@map("grade_tds_documents")
+}
+
+model TdsImportBatch {
+  id             String               @id @default(uuid()) @db.Uuid
+  status         TdsImportBatchStatus @default(RUNNING)
+  dryRun         Boolean              @default(false) @map("dry_run")
+  excelFileName  String?              @map("excel_file_name")
+  zipFileNames   String[]             @default([]) @map("zip_file_names")
+  trigger        String               @default("CLI")
+  startedAt      DateTime             @default(now()) @map("started_at")
+  completedAt    DateTime?            @map("completed_at")
+  stats          Json?
+  report         Json?
+  errorMessage   String?              @map("error_message") @db.Text
+  createdById    String?              @map("created_by_id") @db.Uuid
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+
+  documents GradeTdsDocument[]
+
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@map("tds_import_batches")
+}
+
+/// Customer request when a grade has no verified TDS on file.
+model TdsRequest {
+  id                String           @id @default(uuid()) @db.Uuid
+  referenceNumber   String           @unique @map("reference_number")
+  userId            String           @map("user_id") @db.Uuid
+  customerProfileId String?          @map("customer_profile_id") @db.Uuid
+  gradeId           String           @map("grade_id") @db.Uuid
+  status            TdsRequestStatus @default(OPEN)
+  message           String?          @db.Text
+  adminNotes        String?          @map("admin_notes") @db.Text
+  fulfilledDocumentId String?        @map("fulfilled_document_id") @db.Uuid
+  assignedToUserId  String?          @map("assigned_to_user_id") @db.Uuid
+  resolvedAt        DateTime?        @map("resolved_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+
+  grade             Grade             @relation(fields: [gradeId], references: [id])
+  fulfilledDocument GradeTdsDocument? @relation(fields: [fulfilledDocumentId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([gradeId, status])
+  @@index([status, createdAt])
+  @@index([customerProfileId])
+  @@map("tds_requests")
 }
 
 /// Contact-form leads from the public Swaroop website (no account required).

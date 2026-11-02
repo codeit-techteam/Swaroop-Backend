@@ -17,6 +17,8 @@ export const CHECKOUT_ERROR_STATUS: Record<string, number> = {
   INVALID_QUANTITY_INCREMENT: HttpStatus.BAD_REQUEST,
   INSUFFICIENT_INVENTORY: HttpStatus.CONFLICT,
   NO_MATCHING_SELLER: HttpStatus.CONFLICT,
+  OFFER_INACTIVE: HttpStatus.CONFLICT,
+  OFFER_PRICE_UNAVAILABLE: HttpStatus.CONFLICT,
 };
 
 export class CheckoutException extends HttpException {

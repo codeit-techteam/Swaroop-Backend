@@ -49,6 +49,8 @@ import { AdminSellersService } from './sellers/admin-sellers.service.js';
 import { AdminManagerService } from './users/admin-manager.service.js';
 import { AdminUsersController } from './users/admin-users.controller.js';
 import { AdminUsersService } from './users/admin-users.service.js';
+import { AdminTdsController } from './tds/admin-tds.controller.js';
+import { TdsModule } from '../tds/tds.module.js';
 
 const adminProviders = [
   AdminAuditService,
@@ -81,6 +83,7 @@ const adminProviders = [
     MasterDataModule,
     NotificationsModule,
     DocumentsModule,
+    TdsModule,
   ],
   controllers: [
     AdminProcurementController,
@@ -107,6 +110,7 @@ const adminProviders = [
     AdminSearchController,
     AdminCreditController,
     AdminBulkLogisticsQuotesController,
+    AdminTdsController,
   ],
   providers: adminProviders,
   exports: [AdminProcurementService, AdminAuditService],

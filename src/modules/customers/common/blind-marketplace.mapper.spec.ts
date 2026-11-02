@@ -264,6 +264,12 @@ describe('blind marketplace mapper', () => {
     expect(payload.listing?.fulfilment?.dispatchWindow?.label).toBe('24 Hours');
     expect(payload.listing?.fulfilment?.warehouse?.label).toBe('Bhiwandi');
     expect(payload.listing?.fulfilment?.destinationAware).toBe(false);
+    // Material price stays Offer.basePrice; landed preview is separate.
+    expect(Number(payload.listing?.price)).toBe(10);
+    expect(payload.listing?.pricingPreview?.materialPricePerMT).toBe('10.0000');
+    expect(payload.listing?.pricingPreview?.finalAmount).toBe('14862.10');
+    expect(payload.listing?.pricingPreview?.finalAmountPerMT).toBe('1486.21');
+    expect(payload.listing?.pricingPreview?.needsPriceReview).toBe(true);
   });
 
   it('buildFulfilmentInfo calculates defaults when seller timing is missing', () => {

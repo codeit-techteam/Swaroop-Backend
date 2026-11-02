@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { NewGradeRequestStatus as S } from '../../generated/prisma/client.js';
 import { CustomerGradeRequestsService } from './customer-grade-requests.service.js';
 import { AdminGradeRequestsService } from './admin-grade-requests.service.js';
+import { SellerGradeRequestsService } from './seller-grade-requests.service.js';
 import {
   GRADE_REQUEST_TRANSITIONS,
   OPEN_GRADE_REQUEST_STATUSES,
@@ -143,6 +144,7 @@ function customerSetup(
         if (args.where.referenceNumber) return null;
         if (args.where.idempotencyKey) return null;
         return row({
+          requesterType: 'CUSTOMER',
           customerProfileId: opts.ownerProfileId ?? 'cp-1',
           referenceNumber: 'NGR-2026-000001',
           status: S.INFO_REQUIRED,
@@ -203,6 +205,7 @@ describe('CustomerGradeRequestsService.create', () => {
 
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({
+      requesterType: 'CUSTOMER',
       customerProfileId: 'cp-1', // associated with the authenticated customer
       requestedById: 'user-1',
       status: S.SUBMITTED,
@@ -293,6 +296,7 @@ describe('CustomerGradeRequestsService ownership & responses', () => {
       prisma.newGradeRequest as { findUnique: ReturnType<typeof vi.fn> }
     ).findUnique = vi.fn(async () => ({
       id: 'req-1',
+      requesterType: 'CUSTOMER',
       customerProfileId: 'cp-1',
       referenceNumber: 'NGR-1',
       status: S.UNDER_REVIEW,
@@ -315,6 +319,7 @@ describe('CustomerGradeRequestsService ownership & responses', () => {
       prisma.newGradeRequest as { findUnique: ReturnType<typeof vi.fn> }
     ).findUnique = vi.fn(async () => ({
       id: 'req-1',
+      requesterType: 'CUSTOMER',
       customerProfileId: 'cp-1',
       referenceNumber: 'NGR-1',
       status: S.GRADE_IDENTIFIED,
@@ -354,9 +359,11 @@ function adminRow(status: S, over: Record<string, unknown> = {}) {
     referenceNumber: 'NGR-2026-000001',
     status,
     requestedById: 'user-1',
+    requesterType: 'CUSTOMER',
     assignedAdminId: null,
     resolvedGradeId: null,
     reviewedAt: null,
+    sellerProfile: null,
     customerProfile: {
       id: 'cp-1',
       organizationId: 'org-1',
@@ -571,6 +578,258 @@ describe('AdminGradeRequestsService', () => {
         { id: 'proc-1', roles: ['PROCUREMENT_MANAGER'] },
       ),
     ).rejects.toMatchObject({ status: 403 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Seller service (own requests only — blind marketplace)
+// ---------------------------------------------------------------------------
+
+const SELLER_CTX = {
+  userId: 'seller-user-1',
+  sellerProfileId: 'sp-1',
+  organizationId: 'seller-org-1',
+  organizationName: 'Seller Traders',
+};
+
+function sellerSetup(
+  opts: {
+    ownerRow?: Record<string, unknown>;
+    catalogueMatches?: unknown[];
+  } = {},
+) {
+  const created: Record<string, unknown>[] = [];
+  const row = (data: Record<string, unknown>) => ({
+    id: 'req-s1',
+    submittedAt: new Date('2026-11-02T00:00:00Z'),
+    updatedAt: new Date('2026-11-02T00:00:00Z'),
+    requiredByDate: null,
+    resolvedGrade: null,
+    adminMessage: null,
+    closureReason: null,
+    customerResponse: null,
+    assignedAdminId: null,
+    quantity: { toString: () => String(data.quantity ?? 25) },
+    ...data,
+  });
+  const prisma: Record<string, unknown> = {
+    newGradeRequest: {
+      findUnique: vi.fn(async (args: { where: Record<string, string> }) => {
+        if (args.where.referenceNumber || args.where.idempotencyKey)
+          return null;
+        return row({
+          requesterType: 'SELLER',
+          sellerProfileId: 'sp-1',
+          customerProfileId: null,
+          referenceNumber: 'NGR-2026-000002',
+          status: S.SUBMITTED,
+          requestedById: 'seller-user-1',
+          ...opts.ownerRow,
+        });
+      }),
+      findFirst: vi.fn(async () => null),
+      findMany: vi.fn(async () => []),
+      count: vi.fn(async () => 0),
+      create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        created.push(data);
+        return row(data);
+      }),
+    },
+    newGradeRequestEvent: { findMany: vi.fn(async () => []) },
+    document: { findMany: vi.fn(async () => []) },
+    grade: { findMany: vi.fn(async () => opts.catalogueMatches ?? []) },
+    gradeCategory: { findFirst: vi.fn(async () => ({ id: 'cat-1' })) },
+    address: { findFirst: vi.fn(async () => null) },
+  };
+  prisma.$transaction = vi.fn(async (arg: unknown) =>
+    typeof arg === 'function'
+      ? (arg as (tx: unknown) => unknown)(prisma)
+      : Promise.all(arg as Promise<unknown>[]),
+  );
+  const support = {
+    recordEvent: vi.fn(async () => undefined),
+    audit: vi.fn(async () => undefined),
+    notifyAdmins: vi.fn(async () => undefined),
+  };
+  const service = new SellerGradeRequestsService(
+    prisma as never,
+    { requireSeller: vi.fn(async () => SELLER_CTX) } as never,
+    {} as never,
+    { isConfigured: () => false, getMaxDocumentSizeBytes: () => 1 } as never,
+    support as never,
+  );
+  return { service, prisma, support, created };
+}
+
+describe('SellerGradeRequestsService', () => {
+  it('creates a SELLER-owned request with no customer link', async () => {
+    const { service, created, support } = sellerSetup();
+    const result = await service.create(
+      'seller-user-1',
+      validDto({ idempotencyKey: 'abc' }),
+    );
+    expect(created[0]).toMatchObject({
+      requesterType: 'SELLER',
+      sellerProfileId: 'sp-1',
+      customerProfileId: null,
+      requestedById: 'seller-user-1',
+      status: S.SUBMITTED,
+      idempotencyKey: 'sp-1:abc',
+    });
+    expect(result.status).toBe(S.SUBMITTED);
+    expect(support.recordEvent).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ actorRole: 'SELLER' }),
+    );
+    expect(support.notifyAdmins).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.any(String),
+      expect.stringContaining('Seller Seller Traders'),
+    );
+  });
+
+  it('dedupes open requests within the seller scope only', async () => {
+    const { service, prisma } = sellerSetup();
+    await service.create('seller-user-1', validDto());
+    expect(
+      (prisma.newGradeRequest as { findFirst: ReturnType<typeof vi.fn> })
+        .findFirst,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          requesterType: 'SELLER',
+          sellerProfileId: 'sp-1',
+        }),
+      }),
+    );
+  });
+
+  it('catalogue match check uses sellerVisible, not customerVisible', async () => {
+    const { service, prisma } = sellerSetup();
+    await service.create('seller-user-1', validDto());
+    const where = (
+      (prisma.grade as { findMany: ReturnType<typeof vi.fn> }).findMany.mock
+        .calls[0][0] as { where: Record<string, unknown> }
+    ).where;
+    expect(where.sellerVisible).toBe(true);
+    expect(where.customerVisible).toBeUndefined();
+  });
+
+  it('list is always scoped to own SELLER requests', async () => {
+    const { service, prisma } = sellerSetup();
+    await service.list('seller-user-1', {} as never);
+    const args = (
+      prisma.newGradeRequest as { findMany: ReturnType<typeof vi.fn> }
+    ).findMany.mock.calls[0][0] as { where: Record<string, unknown> };
+    expect(args.where).toMatchObject({
+      requesterType: 'SELLER',
+      sellerProfileId: 'sp-1',
+    });
+  });
+
+  it("never exposes another seller's request", async () => {
+    const { service } = sellerSetup({ ownerRow: { sellerProfileId: 'sp-2' } });
+    await expect(
+      service.getOne('seller-user-1', 'req-s1'),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('never exposes a customer-origin request (blind marketplace)', async () => {
+    const { service } = sellerSetup({
+      ownerRow: {
+        requesterType: 'CUSTOMER',
+        sellerProfileId: null,
+        customerProfileId: 'cp-1',
+      },
+    });
+    await expect(
+      service.getOne('seller-user-1', 'req-s1'),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
+  it('reveals the resolved grade only when ACTIVE and sellerVisible', async () => {
+    const hidden = sellerSetup({
+      ownerRow: {
+        status: S.GRADE_IDENTIFIED,
+        resolvedGrade: {
+          id: 'g1',
+          code: 'SECRET-1',
+          name: 'x',
+          displayName: null,
+          status: 'ACTIVE',
+          sellerVisible: false,
+          deletedAt: null,
+        },
+      },
+    });
+    expect(
+      (await hidden.service.getOne('seller-user-1', 'req-s1')).resolvedGrade,
+    ).toBeNull();
+
+    const live = sellerSetup({
+      ownerRow: {
+        status: S.GRADE_IDENTIFIED,
+        resolvedGrade: {
+          id: 'g1',
+          code: 'F4811',
+          name: 'F4811',
+          displayName: null,
+          status: 'ACTIVE',
+          sellerVisible: true,
+          deletedAt: null,
+        },
+      },
+    });
+    expect(
+      (await live.service.getOne('seller-user-1', 'req-s1')).resolvedGrade,
+    ).toMatchObject({ code: 'F4811' });
+  });
+});
+
+describe('AdminGradeRequestsService seller requests', () => {
+  it('exposes requester info for SELLER rows and nulls the legacy customer block', async () => {
+    const { service } = adminSetup(S.SUBMITTED, {
+      requesterType: 'SELLER',
+      customerProfile: null,
+      sellerProfile: {
+        id: 'sp-1',
+        organizationId: 'seller-org-1',
+        organization: { id: 'seller-org-1', name: 'Seller Traders' },
+        user: { id: 'u2', email: 's@x.y', phone: '+912' },
+      },
+    });
+    const view = await service.getById('req-1');
+    expect(view.requesterType).toBe('SELLER');
+    expect(view.requester).toMatchObject({
+      type: 'SELLER',
+      profileId: 'sp-1',
+      companyName: 'Seller Traders',
+      accountEmail: 's@x.y',
+    });
+    expect(view.customer.customerProfileId).toBeNull();
+  });
+
+  it('notifies the seller requester on a status change', async () => {
+    const { service, support } = adminSetup(S.SUBMITTED, {
+      requesterType: 'SELLER',
+      customerProfile: null,
+      sellerProfile: {
+        id: 'sp-1',
+        organizationId: 'seller-org-1',
+        organization: { id: 'seller-org-1', name: 'Seller Traders' },
+        user: { id: 'u2', email: 's@x.y', phone: '+912' },
+      },
+    });
+    await service.changeStatus('req-1', { status: S.UNDER_REVIEW }, ADMIN);
+    expect(support.notifyCustomer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestedById: 'user-1',
+        organizationId: 'seller-org-1',
+      }),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
   });
 });
 

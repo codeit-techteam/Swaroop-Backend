@@ -331,6 +331,11 @@ export function permissionForManagerRequest(
     return rule('inventory.view', 'inventory.manage');
   }
   if (path.includes('/offers')) return rule('offers.view', 'offers.manage');
+  // New-grade requests (sourcing a grade not in the catalogue) follow procurement.
+  // Must precede the generic '/documents' rule: request documents live under it.
+  if (path.includes('/grade-requests')) {
+    return rule('procurement.view', 'procurement.manage');
+  }
   if (path.includes('/purchase-requests') || path.includes('/procurement')) {
     return rule('procurement.view', 'procurement.manage');
   }

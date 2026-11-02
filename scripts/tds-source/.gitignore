@@ -1,0 +1,6 @@
+*.xlsx
+*.zip
+*.pdf
+*.jpeg
+*.jpg
+!README.md

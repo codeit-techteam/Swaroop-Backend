@@ -10,6 +10,7 @@ import {
   DocumentStatus,
   EntityOwnerType,
   GradeStatus,
+  NewGradeRequestRequesterType,
   NewGradeRequestStatus,
   Prisma,
 } from '../../generated/prisma/client.js';
@@ -205,6 +206,7 @@ export class CustomerGradeRequestsService {
     // Rule 1: one OPEN request per (grade name + manufacturer) per customer.
     const open = await this.prisma.newGradeRequest.findFirst({
       where: {
+        requesterType: NewGradeRequestRequesterType.CUSTOMER,
         customerProfileId: ctx.customerProfileId,
         dedupeKey,
         status: { in: OPEN_GRADE_REQUEST_STATUSES },
@@ -253,7 +255,9 @@ export class CustomerGradeRequestsService {
       const row = await tx.newGradeRequest.create({
         data: {
           referenceNumber,
+          requesterType: NewGradeRequestRequesterType.CUSTOMER,
           customerProfileId: ctx.customerProfileId,
+          sellerProfileId: null,
           requestedById: userId,
           status: NewGradeRequestStatus.SUBMITTED,
           gradeName,
@@ -323,6 +327,7 @@ export class CustomerGradeRequestsService {
     const { page, limit, skip, take } = skipTake(query.page, query.limit);
     const search = resolveSearch(query);
     const where: Prisma.NewGradeRequestWhereInput = {
+      requesterType: NewGradeRequestRequesterType.CUSTOMER,
       customerProfileId: ctx.customerProfileId,
       ...(query.status ? { status: query.status } : {}),
       ...(search
@@ -607,7 +612,10 @@ export class CustomerGradeRequestsService {
       include: requestInclude,
     });
     if (!row) throw new NotFoundException('Grade request not found');
-    if (row.customerProfileId !== ctx.customerProfileId) {
+    if (
+      row.requesterType !== NewGradeRequestRequesterType.CUSTOMER ||
+      row.customerProfileId !== ctx.customerProfileId
+    ) {
       // Don't reveal that another customer's request exists.
       throw new NotFoundException('Grade request not found');
     }

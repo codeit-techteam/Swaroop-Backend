@@ -12,6 +12,7 @@ import {
   skipTake,
 } from '../../master-data/common/pagination.js';
 import { ProductDocumentsQueryService } from '../../documents/services/product-documents-query.service.js';
+import { GradeTdsService } from '../../tds/grade-tds.service.js';
 import {
   dedupeBlindProducts,
   toBlindOffer,
@@ -33,6 +34,7 @@ export class ProductsService {
     private readonly prisma: PrismaService,
     private readonly customerContext: CustomerContextService,
     private readonly productDocuments: ProductDocumentsQueryService,
+    private readonly gradeTds: GradeTdsService,
   ) {}
 
   private async ctx(userId?: string | null) {
@@ -118,11 +120,36 @@ export class ProductsService {
     });
     if (!product) throw new NotFoundException('Product not found');
     const blind = toBlindProduct(product);
-    const documents = await this.productDocuments.listCustomerVisible(
-      product.id,
-      product.offers?.[0]?.id ?? null,
-    );
-    return { ...blind, documents };
+    const [documents, gradeTds] = await Promise.all([
+      this.productDocuments.listCustomerVisible(
+        product.id,
+        product.offers?.[0]?.id ?? null,
+      ),
+      this.gradeTds
+        .listForProduct(product.id, { audience: 'customer' })
+        .catch(() => null),
+    ]);
+    return { ...blind, documents, gradeTds };
+  }
+
+  /** Grade-library TDS for a marketplace product (synced by product → grade). */
+  async listProductTdsDocuments(
+    userId: string | null | undefined,
+    productId: string,
+  ) {
+    await this.ctx(userId);
+    const product = await this.prisma.product.findFirst({
+      where: {
+        deletedAt: null,
+        OR: [
+          { id: productId },
+          { code: { equals: productId, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, gradeId: true },
+    });
+    if (!product?.gradeId) throw new NotFoundException('Product not found');
+    return this.gradeTds.listForProduct(product.id, { audience: 'customer' });
   }
 
   async listDocuments(userId: string | null | undefined, productId: string) {
@@ -171,85 +198,16 @@ export class ProductsService {
   }
 
   /**
-   * TDS metadata for buyable products under a grade. Never invents documents
-   * or attaches another grade's file. Download URLs stay auth-gated.
+   * Grade-level TDS library (independent of live offers / buyable products).
+   * Only verified, active documents with stored files are returned.
+   * Never invents documents or attaches another grade's file.
    */
   async listGradeTdsDocuments(
     userId: string | null | undefined,
     gradeId: string,
   ) {
     await this.ctx(userId);
-    const grade = await this.prisma.grade.findFirst({
-      where: { id: gradeId, ...customerGradeWhere },
-      select: { id: true, code: true, name: true, displayName: true },
-    });
-    if (!grade) throw new NotFoundException('Grade not found');
-
-    const products = await this.prisma.product.findMany({
-      where: { ...buyableMarketplaceProductWhere(), gradeId },
-      select: {
-        id: true,
-        code: true,
-        name: true,
-        brand: true,
-        manufacturer: true,
-      },
-      take: 50,
-    });
-    if (!products.length) {
-      return {
-        grade: {
-          id: grade.id,
-          code: grade.code,
-          name: grade.displayName ?? grade.name,
-        },
-        available: false,
-        message: 'TDS unavailable — no buyable products for this grade yet.',
-        items: [] as const,
-      };
-    }
-
-    const docs = await this.prisma.document.findMany({
-      where: {
-        deletedAt: null,
-        ownerType: EntityOwnerType.PRODUCT,
-        ownerId: { in: products.map((p) => p.id) },
-        category: {
-          in: [DocumentCategory.TDS, DocumentCategory.PRODUCT_TDS],
-        },
-        status: {
-          in: [DocumentStatus.VERIFIED, DocumentStatus.UPLOADED],
-        },
-      },
-      orderBy: [{ version: 'desc' }, { createdAt: 'desc' }],
-    });
-
-    const byProduct = new Map(products.map((p) => [p.id, p]));
-    const items = docs.map((doc) => {
-      const product = byProduct.get(doc.ownerId);
-      return {
-        ...this.productDocuments.mapCustomerDoc(doc),
-        productId: product?.id ?? doc.ownerId,
-        productCode: product?.code ?? null,
-        productName: product?.name ?? null,
-        manufacturer: product?.manufacturer ?? product?.brand ?? null,
-        downloadRequiresAuth: true,
-      };
-    });
-
-    return {
-      grade: {
-        id: grade.id,
-        code: grade.code,
-        name: grade.displayName ?? grade.name,
-      },
-      available: items.length > 0,
-      message:
-        items.length > 0
-          ? null
-          : 'TDS unavailable — no approved Technical Data Sheet is on file for products in this grade.',
-      items,
-    };
+    return this.gradeTds.listForGrade(gradeId);
   }
 
   async listOffers(

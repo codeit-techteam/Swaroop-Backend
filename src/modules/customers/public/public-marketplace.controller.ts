@@ -139,6 +139,18 @@ export class PublicMarketplaceController {
     );
   }
 
+  @Get('products/:id/tds')
+  @ApiOperation({
+    summary:
+      'Verified grade-library TDS for this product (metadata). Download requires auth.',
+  })
+  async productTds(@Param('id') id: string) {
+    return successResponse(
+      await this.products.listProductTdsDocuments(null, id),
+      'Product TDS documents',
+    );
+  }
+
   @Get('products/:id/documents')
   @ApiOperation({
     summary:

@@ -41,7 +41,32 @@ describe('buildMarketplaceEstimate', () => {
     expect(result.amounts).toBeNull();
     expect(result.exTax).not.toBeNull();
     expect(result.inclusiveTotal).toMatch(/^\d+\.\d{2}$/);
+    expect(result.pricing?.finalAmount).toBe(result.inclusiveTotal);
+    expect(result.pricing?.materialPricePerMT).toBe('148000.0000');
     expect(result.note).toMatch(/Estimate only/i);
+  });
+
+  it('ABS EXTRUSION 3000D estimate: material ₹10/MT stays distinct from landed total', async () => {
+    const prisma = prismaWithOffer(
+      offer({
+        id: 'abs-3000d',
+        basePrice: new Prisma.Decimal('10'),
+        moq: new Prisma.Decimal('10'),
+        quantity: new Prisma.Decimal('57'),
+      }),
+    );
+    const result = await buildMarketplaceEstimate(prisma, {
+      offerId: 'abs-3000d',
+      quantity: '10',
+      paymentMethod: PaymentMethod.ADVANCE,
+    });
+
+    expect(result.unitPricePerMt).toBe('10.0000');
+    expect(result.inclusiveTotal).toBe('14862.10');
+    expect(result.pricing?.finalAmountPerMT).toBe('1486.21');
+    expect(result.pricing?.needsPriceReview).toBe(true);
+    expect(result.exTax?.material).toBe('100.00');
+    expect(result.exTax?.freight).toBe('12500.00');
   });
 
   it('returns no INR conversion / null amounts for foreign currency', async () => {
