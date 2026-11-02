@@ -81,6 +81,10 @@ class SyncStorageDto {
   @IsOptional() @IsString() @MaxLength(200) prefix?: string;
   /** When omitted/true, matched grades are published immediately. */
   @IsOptional() autoVerify?: boolean | string;
+  /** Resume token from a previous chunk (R2 ListObjects continuation). */
+  @IsOptional() @IsString() @MaxLength(2048) continuationToken?: string;
+  /** Objects per request (10–200). Keep small to stay under DO gateway timeout. */
+  @IsOptional() limit?: number | string;
 }
 
 @ApiTags('Admin TDS Library')
@@ -100,7 +104,7 @@ export class AdminTdsController {
   @Post('documents/sync-storage')
   @ApiOperation({
     summary:
-      'Reconcile R2 tds/ objects into the grade TDS library so Customer/Seller apps show Available when PDFs already exist in storage',
+      'Reconcile R2 tds/ objects into the grade TDS library (chunked). Call repeatedly with continuationToken until done=true.',
   })
   async syncStorage(
     @CurrentUser() user: AuthenticatedUser,
@@ -111,14 +115,19 @@ export class AdminTdsController {
       body.autoVerify === true ||
       body.autoVerify === 'true' ||
       body.autoVerify === '1';
+    const limitRaw = Number(body.limit);
     const result = await this.tds.adminReconcileFromStorage({
       adminUserId: user.id,
       autoVerify,
       prefix: body.prefix,
+      continuationToken: body.continuationToken?.trim() || undefined,
+      limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
     });
     return successResponse(
       result,
-      `Synced ${result.created + result.updated} TDS objects from storage (${result.verified} verified)`,
+      result.done
+        ? `Storage sync complete — ${result.created} created, ${result.updated} updated, ${result.verified} verified`
+        : `Storage sync chunk — ${result.scanned} scanned (${result.created} created, ${result.updated} updated). More remaining.`,
     );
   }
 
