@@ -34,7 +34,8 @@
     "import:grades": "tsx scripts/import-grades.ts",
     "import:tds": "tsx scripts/import-tds-library.ts",
     "sync:tds-storage": "tsx scripts/sync-tds-from-storage.ts",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "catalogue:dry-run": "node scripts/dry-run-catalogue-cleanup.mjs"
   },
   "engines": {
     "node": ">=20.19.0"

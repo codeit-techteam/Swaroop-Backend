@@ -133,6 +133,8 @@ export type AppConfig = {
     privacyUrl: string;
     supportUrl: string;
     supportEmail: string;
+    supportPhone: string;
+    supportWhatsapp: string;
   };
 };
 
@@ -479,8 +481,14 @@ export default (): AppConfig => {
         termsUrl: resolvePublicPath(process.env.PUBLIC_TERMS_URL, '/terms'),
         privacyUrl: resolvePublicPath(process.env.PUBLIC_PRIVACY_URL, '/privacy'),
         supportUrl: resolvePublicPath(process.env.PUBLIC_SUPPORT_URL, '/contact'),
-        // Never invent an email — only expose when explicitly configured.
-        supportEmail: trim(process.env.PUBLIC_SUPPORT_EMAIL),
+        // Prefer env; fall back to client-approved contacts (4 Nov 2026).
+        supportEmail:
+          trim(process.env.PUBLIC_SUPPORT_EMAIL) || 'it@polystorex.com',
+        supportPhone:
+          trim(process.env.PUBLIC_SUPPORT_PHONE) || '+91 99626 20101',
+        supportWhatsapp:
+          trim(process.env.PUBLIC_SUPPORT_WHATSAPP) ||
+          'https://wa.me/919962620101',
       };
     })(),
   };

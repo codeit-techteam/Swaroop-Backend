@@ -25,6 +25,8 @@ export class PublicLegalLinksController {
     const privacyUrl = legal.privacyUrl || null;
     const supportUrl = legal.supportUrl || null;
     const supportEmail = legal.supportEmail || null;
+    const supportPhone = legal.supportPhone || null;
+    const supportWhatsapp = legal.supportWhatsapp || null;
     const missing: string[] = [];
     if (!termsUrl) missing.push('PUBLIC_TERMS_URL (or PUBLIC_WEBSITE_URL)');
     if (!privacyUrl) missing.push('PUBLIC_PRIVACY_URL (or PUBLIC_WEBSITE_URL)');
@@ -40,6 +42,8 @@ export class PublicLegalLinksController {
         privacyUrl,
         supportUrl,
         supportEmail,
+        supportPhone,
+        supportWhatsapp,
         missing,
       },
       'Legal links',

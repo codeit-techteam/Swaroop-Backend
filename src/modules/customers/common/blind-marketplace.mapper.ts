@@ -295,12 +295,58 @@ export function listingManufacturer(
   // Grade Master is the catalogue source of truth. A denormalized product
   // manufacturer (for example the bad "Relindvb" row on ABS 3000D) must not
   // hide the canonical grade manufacturer (TAITA).
+  // NOTE: This resolves the *internal* manufacturer. Customer marketplace
+  // responses must use `blindManufacturerLabel` / `sanitizeBlindDisplayName`.
   return (
     grade?.manufacturer?.trim() ||
     productManufacturer?.trim() ||
     productBrand?.trim() ||
     null
   );
+}
+
+/** Approved generic manufacturer label for buyer-facing marketplace payloads. */
+export const BLIND_MANUFACTURER_LABEL = 'PRIVATE';
+
+/**
+ * Strip trailing manufacturer suffixes from listing titles so buyers do not
+ * learn supplier identity from the display name (e.g. "ABS 3000D - TAITA").
+ */
+export function sanitizeBlindDisplayName(
+  name: string,
+  manufacturer?: string | null,
+): string {
+  let next = name.trim();
+  const maker = manufacturer?.trim();
+  if (!maker) {
+    return next;
+  }
+  const escaped = maker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  next = next
+    .replace(new RegExp(`\\s*[-–—|/]\\s*${escaped}\\s*$`, 'i'), '')
+    .replace(new RegExp(`\\s+${escaped}\\s*$`, 'i'), '')
+    .trim();
+  return next || name.trim();
+}
+
+/** Buyer-facing manufacturer field — never the real maker name. */
+export function blindManufacturerLabel(): string {
+  return BLIND_MANUFACTURER_LABEL;
+}
+
+/** Remove manufacturer tokens from codes shown to buyers (e.g. SO-ABS-3000D-TAITA-…). */
+export function sanitizeBlindCode(
+  code: string | null | undefined,
+  manufacturer?: string | null,
+): string | null {
+  if (!code) return null;
+  const maker = manufacturer?.trim();
+  if (!maker) return code;
+  const escaped = maker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cleaned = code
+    .replace(new RegExp(`([-_]|^)${escaped}([-_]|$)`, 'ig'), '$1PRIVATE$2')
+    .replace(/PRIVATEPRIVATE/gi, 'PRIVATE');
+  return cleaned;
 }
 
 type BlindDedupeProduct = {
@@ -472,10 +518,15 @@ export function toBlindProduct(product: {
 }) {
   const offer = product.offers?.[0];
   const tiers = commercialPriceTiers(offer?.priceTiers, offer?.metadata);
-  const manufacturer = listingManufacturer(
+  const internalManufacturer = listingManufacturer(
     product.manufacturer,
     product.brand,
     product.grade,
+  );
+  const manufacturer = blindManufacturerLabel();
+  const publicName = sanitizeBlindDisplayName(
+    listingDisplayName(product.name, product.grade),
+    internalManufacturer,
   );
   const gradeApps = [
     ...asStringList(product.grade?.applicationNames),
@@ -513,8 +564,8 @@ export function toBlindProduct(product: {
   });
   return {
     id: product.id,
-    code: product.code,
-    name: listingDisplayName(product.name, product.grade),
+    code: sanitizeBlindCode(product.code, internalManufacturer) ?? product.code,
+    name: publicName,
     brand: manufacturer,
     manufacturer,
     description: product.description,
@@ -530,13 +581,23 @@ export function toBlindProduct(product: {
     grade: product.grade
       ? {
           id: product.grade.id,
-          code: product.grade.code,
+          code:
+            sanitizeBlindCode(product.grade.code, internalManufacturer) ??
+            product.grade.code,
           name: product.grade.name,
-          displayName: product.grade.displayName ?? product.grade.name,
-          fullGradeName: product.grade.fullGradeName ?? null,
+          displayName: sanitizeBlindDisplayName(
+            product.grade.displayName ?? product.grade.name,
+            internalManufacturer,
+          ),
+          fullGradeName: product.grade.fullGradeName
+            ? sanitizeBlindDisplayName(
+                product.grade.fullGradeName,
+                internalManufacturer,
+              )
+            : null,
           gradeNo: product.grade.gradeNo ?? null,
           gradeGroup: product.grade.gradeGroup ?? null,
-          manufacturer: product.grade.manufacturer ?? null,
+          manufacturer,
           hsnCode: product.grade.hsnCode ?? null,
           category: product.grade.category ?? null,
         }
@@ -686,26 +747,47 @@ export function toBlindOffer(offer: {
     product: offer.product
       ? {
           id: offer.product.id,
-          code: offer.product.code,
-          name: listingDisplayName(offer.product.name, offer.grade),
-          unit: offer.product.unit,
-          manufacturer: listingManufacturer(
-            offer.product.manufacturer,
-            offer.product.brand,
-            offer.grade,
+          code:
+            sanitizeBlindCode(
+              offer.product.code,
+              listingManufacturer(
+                offer.product.manufacturer,
+                offer.product.brand,
+                offer.grade,
+              ),
+            ) ?? offer.product.code,
+          name: sanitizeBlindDisplayName(
+            listingDisplayName(offer.product.name, offer.grade),
+            listingManufacturer(
+              offer.product.manufacturer,
+              offer.product.brand,
+              offer.grade,
+            ),
           ),
+          unit: offer.product.unit,
+          manufacturer: blindManufacturerLabel(),
         }
       : null,
     grade: offer.grade
       ? {
           id: offer.grade.id,
-          code: offer.grade.code,
+          code:
+            sanitizeBlindCode(offer.grade.code, offer.grade.manufacturer) ??
+            offer.grade.code,
           name: offer.grade.name,
-          displayName: offer.grade.displayName ?? offer.grade.name,
-          fullGradeName: offer.grade.fullGradeName ?? null,
+          displayName: sanitizeBlindDisplayName(
+            offer.grade.displayName ?? offer.grade.name,
+            offer.grade.manufacturer,
+          ),
+          fullGradeName: offer.grade.fullGradeName
+            ? sanitizeBlindDisplayName(
+                offer.grade.fullGradeName,
+                offer.grade.manufacturer,
+              )
+            : null,
           gradeNo: offer.grade.gradeNo ?? null,
           gradeGroup: offer.grade.gradeGroup ?? null,
-          manufacturer: offer.grade.manufacturer ?? null,
+          manufacturer: blindManufacturerLabel(),
         }
       : null,
     priceTiers: commercialPriceTiers(offer.priceTiers, offer.metadata).map(
