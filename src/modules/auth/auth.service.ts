@@ -93,7 +93,7 @@ export class AuthService {
     const cooldown =
       this.configService.get<number>('security.otpResendCooldownSeconds') ?? 60;
     const expiresIn =
-      this.configService.get<number>('security.otpExpiresInSeconds') ?? 300;
+      this.configService.get<number>('security.otpExpiresInSeconds') ?? 600;
     const maxAttempts =
       this.configService.get<number>('security.otpMaxAttempts') ?? 5;
     const otpLength = this.configService.get<number>('security.otpLength') ?? 6;
