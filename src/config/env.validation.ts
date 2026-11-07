@@ -58,7 +58,7 @@ export const envSchema = z
     THROTTLE_LIMIT: z.coerce.number().int().positive().default(100),
 
     OTP_LENGTH: z.coerce.number().int().min(4).max(8).default(6),
-    OTP_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(300),
+    OTP_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(600),
     OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
     OTP_MAX_SENDS_PER_HOUR: z.coerce.number().int().min(1).max(30).default(5),

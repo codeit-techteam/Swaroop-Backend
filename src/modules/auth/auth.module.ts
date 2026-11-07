@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthController } from './auth.controller.js';
 import { AuthService } from './auth.service.js';
 import { JwtAuthGuard, RolesGuard } from './guards/auth.guards.js';
+import { Msg91OtpWebhookController } from './msg91-otp.webhook.controller.js';
 import { CryptoService } from './services/crypto.service.js';
 import { DemoBootstrapService } from './services/demo-bootstrap.service.js';
 import { Msg91OtpClient } from './services/msg91-otp.client.js';
@@ -27,7 +28,7 @@ import { JwtStrategy } from './strategies/jwt.strategy.js';
       }),
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, Msg91OtpWebhookController],
   providers: [
     AuthService,
     CryptoService,

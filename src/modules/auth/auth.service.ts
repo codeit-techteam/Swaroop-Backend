@@ -42,6 +42,10 @@ import type {
   SendOtpDto,
   VerifyOtpDto,
 } from './dto/auth.dto.js';
+import {
+  composeMobile,
+  normalizePhoneE164,
+} from './utils/phone.util.js';
 
 type RequestMeta = {
   ipAddress?: string;
@@ -995,12 +999,20 @@ export class AuthService {
     identifier: string;
     identifierType: OtpIdentifierType;
   } {
-    const phoneRaw = dto.phone ?? this.composeMobile(dto.mobile, dto.countryCode);
+    const phoneRaw = dto.phone ?? composeMobile(dto.mobile, dto.countryCode);
     if (phoneRaw) {
-      return {
-        identifier: this.normalizePhoneE164(phoneRaw),
-        identifierType: OtpIdentifierType.PHONE,
-      };
+      try {
+        return {
+          identifier: normalizePhoneE164(phoneRaw),
+          identifierType: OtpIdentifierType.PHONE,
+        };
+      } catch {
+        throw new AuthException(
+          AuthErrorCode.AUTH_IDENTIFIER_REQUIRED,
+          'phone must be a valid mobile number',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
     }
     if (dto.email) {
       return {
@@ -1011,45 +1023,6 @@ export class AuthService {
     throw new AuthException(
       AuthErrorCode.AUTH_IDENTIFIER_REQUIRED,
       'phone or email is required',
-      HttpStatus.BAD_REQUEST,
-    );
-  }
-
-  /** Build E.164-ish input from optional `mobile` + `countryCode` aliases. */
-  private composeMobile(
-    mobile?: string,
-    countryCode?: string,
-  ): string | undefined {
-    if (!mobile?.trim()) return undefined;
-    const digits = mobile.replace(/\D/g, '');
-    if (!digits) return undefined;
-    if (mobile.trim().startsWith('+')) return mobile.trim();
-    const cc = (countryCode ?? '+91').trim().replace(/^\+/, '') || '91';
-    return `+${cc}${digits}`;
-  }
-
-  /**
-   * Normalize Indian mobiles to E.164 (+91XXXXXXXXXX).
-   * Accepts +91…, 91…, or bare 10-digit numbers.
-   */
-  private normalizePhoneE164(raw: string): string {
-    const trimmed = raw.trim();
-    if (/^\+[1-9]\d{7,14}$/.test(trimmed)) {
-      return trimmed;
-    }
-    const digits = trimmed.replace(/\D/g, '');
-    if (digits.length === 10 && /^[6-9]/.test(digits)) {
-      return `+91${digits}`;
-    }
-    if (digits.length === 12 && digits.startsWith('91')) {
-      return `+${digits}`;
-    }
-    if (digits.length >= 8 && digits.length <= 15) {
-      return `+${digits}`;
-    }
-    throw new AuthException(
-      AuthErrorCode.AUTH_IDENTIFIER_REQUIRED,
-      'phone must be a valid mobile number',
       HttpStatus.BAD_REQUEST,
     );
   }

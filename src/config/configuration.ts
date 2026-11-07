@@ -314,7 +314,7 @@ export default (): AppConfig => {
       throttleTtlMs: Number(process.env.THROTTLE_TTL_MS ?? 60_000),
       throttleLimit: Number(process.env.THROTTLE_LIMIT ?? 100),
       otpLength: Number(process.env.OTP_LENGTH ?? 6),
-      otpExpiresInSeconds: Number(process.env.OTP_EXPIRES_IN_SECONDS ?? 300),
+      otpExpiresInSeconds: Number(process.env.OTP_EXPIRES_IN_SECONDS ?? 600),
       otpMaxAttempts: Number(process.env.OTP_MAX_ATTEMPTS ?? 5),
       otpResendCooldownSeconds: Number(
         process.env.OTP_RESEND_COOLDOWN_SECONDS ?? 60,

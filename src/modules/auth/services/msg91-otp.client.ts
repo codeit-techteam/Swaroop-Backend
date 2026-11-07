@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { toMsg91Mobile } from '../utils/phone.util.js';
 import {
   classifyMsg91Failure,
   maskPhoneForLog,
@@ -32,15 +33,18 @@ const MSG91_OTP_BASE = 'https://control.msg91.com/api/v5/otp';
 export const MSG91_CHALLENGE_PREFIX = 'msg91:req:';
 
 /**
- * Official MSG91 OTP API (Send / Verify / Resend).
+ * Official MSG91 SendOTP v5 API.
  * @see https://docs.msg91.com/otp
+ * Payload aligned with MSG91 panel "Template Code" for OTP_Template1:
+ *   POST control.msg91.com/api/v5/otp?template_id=&mobile=
+ *   body: { "OTP": "<code>" }
+ * plus query `otp` so ##OTP## is substituted for DLT-safe content.
  *
  * Never log auth keys or OTP values.
  *
- * Sender ID note: MSG91 OTP v5 templates are mapped to a DLT sender/header in
- * the MSG91 panel. Only pass `sender` when MSG91_SENDER_ID is explicitly set.
- * Do NOT fall back to MSG91_HEADER (e.g. VELPLY) — a mismatched sender query
- * param is a common cause of API-accepted SMS that never reaches the handset.
+ * API `type=success` only means MSG91 accepted the request. Handset delivery
+ * can still Fail in MSG91 Logs (DLT scrubbing). Configure the OTP webhook for
+ * failureReason visibility.
  */
 @Injectable()
 export class Msg91OtpClient {
@@ -59,18 +63,15 @@ export class Msg91OtpClient {
     return authKey.length > 0 && templateId.length > 0;
   }
 
-  /**
-   * Convert E.164 (+91XXXXXXXXXX) to MSG91 mobile format (91XXXXXXXXXX).
-   */
   toMsg91Mobile(e164Phone: string): string {
-    const digits = e164Phone.replace(/\D/g, '');
-    if (!digits) {
+    try {
+      return toMsg91Mobile(e164Phone);
+    } catch {
       throw new Msg91ProviderError(
         'Invalid mobile number for MSG91',
         'INVALID_MOBILE',
       );
     }
-    return digits;
   }
 
   async sendOtp(params: {
@@ -97,24 +98,21 @@ export class Msg91OtpClient {
     const otpLength = Math.min(9, Math.max(4, params.otpLength));
     const correlationId = params.correlationId ?? 'n/a';
 
+    // Match MSG91 Template Code + SendOTP v5 docs. template_id is mandatory —
+    // rows with Template-OTP "-" in MSG91 Logs are usually panel Test DLT /
+    // retry, not this path.
     const url = new URL(MSG91_OTP_BASE);
-    url.searchParams.set('mobile', mobile);
     url.searchParams.set('template_id', templateId);
+    url.searchParams.set('mobile', mobile);
     url.searchParams.set('otp_length', String(otpLength));
     url.searchParams.set('otp_expiry', String(otpExpiryMinutes));
     url.searchParams.set('realTimeResponse', '1');
-    url.searchParams.set('unicode', '0');
 
-    // Pass server-generated OTP for ##OTP## substitution (query) and for the
-    // MSG91 Template Code body variable `OTP` shown on OTP_Template1.
-    // Never log this value.
+    // Never log this value. Query `otp` fills ##OTP##; body OTP matches Template Code.
     if (params.otp) {
       url.searchParams.set('otp', params.otp);
     }
 
-    // MSG91 OTP_Template1 is now mapped to Sender ID VELPLY (same as Airtel DLT
-    // header). Prefer MSG91_SENDER_ID; else MSG91_HEADER; else VELPLY for the
-    // approved production template id.
     const configuredSender = (
       this.configService.get<string>('otp.msg91.senderId') ?? ''
     ).trim();
@@ -129,8 +127,6 @@ export class Msg91OtpClient {
       url.searchParams.set('sender', senderId);
     }
 
-    // Matches MSG91 panel "Template Code" for OTP_Template1:
-    // body: JSON.stringify({ OTP: "..." })
     const body: Record<string, string> = {};
     if (params.otp) {
       body.OTP = params.otp;
@@ -140,12 +136,12 @@ export class Msg91OtpClient {
       event: 'msg91.otp.send.request',
       correlationId,
       mobile: masked,
-      templateIdSuffix: templateId.slice(-6),
-      templateConfigured: true,
-      senderParam: senderId ? 'explicit' : 'omitted_use_template_mapping',
-      bodyKeys: Object.keys(body),
+      templateId,
+      senderId: senderId || 'n/a',
       otpExpiryMinutes,
       otpLength,
+      hasBodyOtp: Boolean(body.OTP),
+      hasQueryOtp: Boolean(params.otp),
     });
 
     let response: Msg91Json;

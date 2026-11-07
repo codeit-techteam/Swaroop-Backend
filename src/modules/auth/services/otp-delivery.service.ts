@@ -62,7 +62,7 @@ export class OtpDeliveryService {
       const otpLength =
         this.configService.get<number>('security.otpLength') ?? 6;
       const expiresIn =
-        this.configService.get<number>('security.otpExpiresInSeconds') ?? 300;
+        this.configService.get<number>('security.otpExpiresInSeconds') ?? 600;
 
       const result = await this.msg91.sendOtp({
         e164Phone: payload.identifier,
