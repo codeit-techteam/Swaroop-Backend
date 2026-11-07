@@ -14,6 +14,8 @@ export type OtpHealthStatus = {
   senderIdConfigured: boolean;
   /** DLT header documentation value present (not sent unless SENDER_ID set). */
   headerConfigured: boolean;
+  /** Airtel/TRAI DLT numeric template id (MSG91_DLT_TEMPLATE_ID / DLT_TE_ID). */
+  dltTemplateConfigured: boolean;
 };
 
 export type HealthStatus = {
@@ -84,8 +86,13 @@ export class HealthService {
     const header = (
       this.configService.get<string>('otp.msg91.header') ?? ''
     ).trim();
+    const dltTemplateId = (
+      this.configService.get<string>('otp.msg91.dltTemplateId') ?? ''
+    ).trim();
     const msg91Configured =
       provider === 'msg91' && authKey.length > 0 && templateId.length > 0;
+    const isProduction =
+      this.configService.get<string>('app.env') === 'production';
 
     const otp: OtpHealthStatus = {
       provider,
@@ -95,6 +102,7 @@ export class HealthService {
       templateConfigured: templateId.length > 0,
       senderIdConfigured: senderId.length > 0,
       headerConfigured: header.length > 0,
+      dltTemplateConfigured: dltTemplateId.length > 0,
     };
 
     const status: HealthStatus['status'] =
@@ -102,8 +110,12 @@ export class HealthService {
       (provider === 'msg91' && !msg91Configured) ||
       (provider === 'msg91' &&
         msg91Configured &&
-        this.configService.get<string>('app.env') === 'production' &&
-        !senderId.length)
+        isProduction &&
+        !senderId.length) ||
+      (provider === 'msg91' &&
+        msg91Configured &&
+        isProduction &&
+        !dltTemplateId.length)
         ? 'degraded'
         : 'ok';
 

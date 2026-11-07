@@ -260,6 +260,18 @@ export const envSchema = z
             'MSG91_OTP_TEMPLATE_ID is required when OTP_PROVIDER=msg91',
         });
       }
+      // India DLT: numeric Airtel template id — distinct from MSG91 hex template_id.
+      if (
+        data.NODE_ENV === 'production' &&
+        !(data.MSG91_DLT_TEMPLATE_ID ?? '').trim()
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MSG91_DLT_TEMPLATE_ID'],
+          message:
+            'MSG91_DLT_TEMPLATE_ID (Airtel DLT numeric id) is required in production when OTP_PROVIDER=msg91',
+        });
+      }
     }
 
     if (data.AUTH_STRICT_OTP && data.AUTH_DEV_EXPOSE_OTP) {

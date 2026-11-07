@@ -75,7 +75,10 @@ Until **Test DLT** works, Customer Web / Seller Web / Expo / Website cannot rece
 | `POST /api/v1/auth/otp/verify` | Verify + session |
 | `POST /api/v1/auth/webhooks/msg91/otp-delivery` | MSG91 delivery reports |
 
-Provider: MSG91 SendOTP v5 `POST https://control.msg91.com/api/v5/otp` with `template_id`, `mobile`, `otp`, `sender=VELPLY`, body `{ "OTP": "..." }` for `##OTP##`.
+Provider: MSG91 SendOTP v5 `POST https://control.msg91.com/api/v5/otp` with:
+- `template_id` = MSG91 hex id (`MSG91_OTP_TEMPLATE_ID` / `PolyStoreX_OTP_Template`)
+- `DLT_TE_ID` = Airtel numeric id (`MSG91_DLT_TEMPLATE_ID=1077252360053463958`)
+- `sender=VELPLY`, `mobile`, `otp`, body `{ "OTP": "...", "DLT_TE_ID": "..." }`
 
 Verification is **local HMAC** against the backend-generated OTP (MSG91 Verify is only for legacy challenge refs).
 

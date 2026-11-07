@@ -15,6 +15,7 @@ describe('Msg91OtpClient', () => {
       'otp.msg91.authKey': 'test-auth-key',
       'otp.msg91.templateId': '6ae081288c342f46e203bb12',
       'otp.msg91.senderId': 'VELPLY',
+      'otp.msg91.dltTemplateId': '1077252360053463958',
       'otp.msg91.timeoutMs': 5_000,
       ...overrides,
     };
@@ -63,6 +64,7 @@ describe('Msg91OtpClient', () => {
     expect(url).toContain('https://control.msg91.com/api/v5/otp?');
     expect(url).toContain('mobile=918240890242');
     expect(url).toContain('template_id=6ae081288c342f46e203bb12');
+    expect(url).toContain('DLT_TE_ID=1077252360053463958');
     expect(url).toContain('otp_length=6');
     expect(url).toContain('otp_expiry=5');
     expect(url).toContain('otp=482913');
@@ -70,8 +72,31 @@ describe('Msg91OtpClient', () => {
     expect((init.headers as Record<string, string>).authkey).toBe(
       'test-auth-key',
     );
-    // MSG91 Template Code for OTP_Template1 uses body variable OTP.
-    expect(JSON.parse(String(init.body))).toEqual({ OTP: '482913' });
+    // MSG91 Template Code uses body OTP; DLT_TE_ID is mirrored for scrubbing.
+    expect(JSON.parse(String(init.body))).toEqual({
+      OTP: '482913',
+      DLT_TE_ID: '1077252360053463958',
+    });
+  });
+
+  it('omits DLT_TE_ID when MSG91_DLT_TEMPLATE_ID is empty', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ type: 'success', request_id: 'req-no-dlt' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await makeClient({ 'otp.msg91.dltTemplateId': '' }).sendOtp({
+      e164Phone: '+918240890242',
+      otpLength: 6,
+      expiresInSeconds: 300,
+      otp: '111222',
+    });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).not.toContain('DLT_TE_ID=');
+    expect(JSON.parse(String(init.body))).toEqual({ OTP: '111222' });
   });
 
   it('falls back to MSG91_HEADER VELPLY when senderId is empty', async () => {

@@ -127,9 +127,33 @@ export class Msg91OtpClient {
       url.searchParams.set('sender', senderId);
     }
 
+    // Airtel/TRAI DLT content template id (numeric). Required for India
+    // delivery scrubbing — Error 211 when missing/invalid. Distinct from
+    // MSG91_OTP_TEMPLATE_ID (hex flow/template id in the SendOTP API).
+    const dltTemplateId = (
+      this.configService.get<string>('otp.msg91.dltTemplateId') ?? ''
+    ).trim();
+    if (dltTemplateId) {
+      url.searchParams.set('DLT_TE_ID', dltTemplateId);
+    }
+
+    const dltEntityId = (
+      this.configService.get<string>('otp.msg91.dltEntityId') ?? ''
+    ).trim();
+    if (dltEntityId) {
+      url.searchParams.set('PE_ID', dltEntityId);
+    }
+
     const body: Record<string, string> = {};
     if (params.otp) {
       body.OTP = params.otp;
+    }
+    // Mirror DLT ids in body for MSG91 routes that read JSON instead of query.
+    if (dltTemplateId) {
+      body.DLT_TE_ID = dltTemplateId;
+    }
+    if (dltEntityId) {
+      body.PE_ID = dltEntityId;
     }
 
     this.logger.log({
@@ -138,11 +162,22 @@ export class Msg91OtpClient {
       mobile: masked,
       templateId,
       senderId: senderId || 'n/a',
+      dltTemplateId: dltTemplateId || 'missing',
+      dltEntityConfigured: Boolean(dltEntityId),
       otpExpiryMinutes,
       otpLength,
       hasBodyOtp: Boolean(body.OTP),
       hasQueryOtp: Boolean(params.otp),
     });
+
+    if (!dltTemplateId) {
+      this.logger.warn({
+        event: 'msg91.otp.send.missing_dlt_template_id',
+        correlationId,
+        mobile: masked,
+        hint: 'Set MSG91_DLT_TEMPLATE_ID (Airtel DLT numeric id) — India SMS may Fail with Error 211',
+      });
+    }
 
     let response: Msg91Json;
     try {
