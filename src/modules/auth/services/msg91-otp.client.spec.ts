@@ -72,6 +72,31 @@ describe('Msg91OtpClient', () => {
     );
   });
 
+  it('falls back to DLT header when senderId is empty', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        type: 'success',
+        request_id: 'req-header',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await makeClient({
+      'otp.msg91.senderId': '',
+      'otp.msg91.header': 'VELPLY',
+    }).sendOtp({
+      e164Phone: '+918240890242',
+      otpLength: 6,
+      expiresInSeconds: 300,
+      otp: '123456',
+    });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('sender=VELPLY');
+  });
+
   it('treats HTTP 200 error payload as send failure', async () => {
     vi.stubGlobal(
       'fetch',

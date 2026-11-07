@@ -92,9 +92,17 @@ export class Msg91OtpClient {
       url.searchParams.set('otp', params.otp);
     }
 
-    const senderId = this.configService.get<string>('otp.msg91.senderId');
-    if (senderId) {
-      url.searchParams.set('sender', senderId);
+    // Prefer explicit Sender ID; otherwise use DLT-registered header (VELPLY)
+    // when configured. Mapping must match the approved MSG91 template.
+    const senderId = (
+      this.configService.get<string>('otp.msg91.senderId') ?? ''
+    ).trim();
+    const dltHeader = (
+      this.configService.get<string>('otp.msg91.header') ?? ''
+    ).trim();
+    const sender = senderId || dltHeader;
+    if (sender) {
+      url.searchParams.set('sender', sender);
     }
 
     // Approved template uses ##OTP## only. Extra vars are omitted unless the

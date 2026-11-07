@@ -132,6 +132,14 @@ export class DemoBootstrapService implements OnModuleInit {
     }
     if (
       process.env.NODE_ENV === 'production' &&
+      process.env.AUTH_STRICT_OTP !== 'true'
+    ) {
+      this.logger.error(
+        'Production OTP is unlocked (AUTH_STRICT_OTP!=true). Set AUTH_STRICT_OTP=true so demo/fixed OTP cannot bypass MSG91 DLT SMS.',
+      );
+    }
+    if (
+      process.env.NODE_ENV === 'production' &&
       !this.configService.get<string>('otp.msg91.authKey')
     ) {
       this.logger.error(
