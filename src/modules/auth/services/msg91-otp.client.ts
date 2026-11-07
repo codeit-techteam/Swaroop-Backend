@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import {
+  classifyMsg91Failure,
+  maskPhoneForLog,
+  Msg91ProviderError,
+  type Msg91FailureReason,
+} from './msg91-otp.errors.js';
 
 export type Msg91SendResult = {
   requestId: string;
@@ -8,6 +14,7 @@ export type Msg91SendResult = {
 export type Msg91VerifyResult = {
   verified: boolean;
   message: string;
+  reason?: Msg91FailureReason;
 };
 
 export type Msg91ResendResult = {
@@ -29,6 +36,11 @@ export const MSG91_CHALLENGE_PREFIX = 'msg91:req:';
  * @see https://docs.msg91.com/otp
  *
  * Never log auth keys or OTP values.
+ *
+ * Sender ID note: MSG91 OTP v5 templates are mapped to a DLT sender/header in
+ * the MSG91 panel. Only pass `sender` when MSG91_SENDER_ID is explicitly set.
+ * Do NOT fall back to MSG91_HEADER (e.g. VELPLY) — a mismatched sender query
+ * param is a common cause of API-accepted SMS that never reaches the handset.
  */
 @Injectable()
 export class Msg91OtpClient {
@@ -53,7 +65,10 @@ export class Msg91OtpClient {
   toMsg91Mobile(e164Phone: string): string {
     const digits = e164Phone.replace(/\D/g, '');
     if (!digits) {
-      throw new Error('Invalid mobile number for MSG91');
+      throw new Msg91ProviderError(
+        'Invalid mobile number for MSG91',
+        'INVALID_MOBILE',
+      );
     }
     return digits;
   }
@@ -68,15 +83,19 @@ export class Msg91OtpClient {
      * against the HMAC hash — never returned to clients or logged.
      */
     otp?: string;
+    /** Propagated into structured logs for frontend ↔ backend ↔ MSG91 tracing. */
+    correlationId?: string;
   }): Promise<Msg91SendResult> {
     const authKey = this.requireAuthKey();
     const templateId = this.requireTemplateId();
     const mobile = this.toMsg91Mobile(params.e164Phone);
+    const masked = maskPhoneForLog(params.e164Phone);
     const otpExpiryMinutes = Math.max(
       1,
       Math.ceil(params.expiresInSeconds / 60),
     );
     const otpLength = Math.min(9, Math.max(4, params.otpLength));
+    const correlationId = params.correlationId ?? 'n/a';
 
     const url = new URL(MSG91_OTP_BASE);
     url.searchParams.set('mobile', mobile);
@@ -86,47 +105,91 @@ export class Msg91OtpClient {
     url.searchParams.set('realTimeResponse', '1');
     url.searchParams.set('unicode', '0');
 
-    // Pass server-generated OTP so the approved template can inject ##OTP##.
+    // Pass server-generated OTP for ##OTP## substitution (query) and for the
+    // MSG91 Template Code body variable `OTP` shown on OTP_Template1.
     // Never log this value.
     if (params.otp) {
       url.searchParams.set('otp', params.otp);
     }
 
-    // Prefer explicit Sender ID; otherwise use DLT-registered header (VELPLY)
-    // when configured. Mapping must match the approved MSG91 template.
+    // Only send sender when explicitly configured. OTP_Template1 in MSG91 is
+    // mapped to route Sender ID AIR0993093271; Airtel DLT header is VELPLY.
+    // Do NOT send sender=VELPLY — that is the DLT header, not the MSG91 sender.
     const senderId = (
       this.configService.get<string>('otp.msg91.senderId') ?? ''
     ).trim();
-    const dltHeader = (
-      this.configService.get<string>('otp.msg91.header') ?? ''
-    ).trim();
-    const sender = senderId || dltHeader;
-    if (sender) {
-      url.searchParams.set('sender', sender);
+    if (senderId) {
+      url.searchParams.set('sender', senderId);
     }
 
-    // Approved template uses ##OTP## only. Extra vars are omitted unless the
-    // dashboard template defines them.
+    // Matches MSG91 panel "Template Code" for OTP_Template1:
+    // body: JSON.stringify({ OTP: "..." })
     const body: Record<string, string> = {};
+    if (params.otp) {
+      body.OTP = params.otp;
+    }
 
-    const response = await this.requestJson('POST', url, authKey, body);
+    this.logger.log({
+      event: 'msg91.otp.send.request',
+      correlationId,
+      mobile: masked,
+      templateIdSuffix: templateId.slice(-6),
+      templateConfigured: true,
+      senderParam: senderId ? 'explicit' : 'omitted_use_template_mapping',
+      bodyKeys: Object.keys(body),
+      otpExpiryMinutes,
+      otpLength,
+    });
+
+    let response: Msg91Json;
+    try {
+      response = await this.requestJson('POST', url, authKey, body);
+    } catch (error) {
+      if (error instanceof Msg91ProviderError) throw error;
+      const aborted =
+        error instanceof Error && error.name === 'AbortError';
+      const reason: Msg91FailureReason = aborted ? 'TIMEOUT' : 'UNAVAILABLE';
+      throw new Msg91ProviderError(
+        aborted
+          ? 'MSG91 OTP request timed out'
+          : error instanceof Error
+            ? error.message
+            : 'MSG91 OTP request failed',
+        reason,
+      );
+    }
+
     if (!this.isSuccess(response)) {
-      this.logger.warn(
-        `MSG91 send OTP failed type=${response.type ?? 'unknown'} code=${String(response.code ?? '')} msg=${this.safeMessage(response.message)}`,
-      );
-      throw new Error(
-        this.safeMessage(response.message) || 'MSG91 OTP send failed',
-      );
+      const reason = classifyMsg91Failure(response.message, response.code);
+      const safeMsg =
+        this.safeMessage(response.message) || 'MSG91 OTP send failed';
+      this.logger.warn({
+        event: 'msg91.otp.send.rejected',
+        correlationId,
+        mobile: masked,
+        reason,
+        providerType: response.type ?? 'unknown',
+        providerCode: response.code != null ? String(response.code) : undefined,
+        providerMessage: safeMsg,
+      });
+      throw new Msg91ProviderError(safeMsg, reason, String(response.code ?? ''));
     }
 
     const requestId = (response.request_id ?? '').trim();
     if (!requestId) {
-      this.logger.warn('MSG91 send OTP succeeded without request_id');
+      this.logger.warn({
+        event: 'msg91.otp.send.missing_request_id',
+        correlationId,
+        mobile: masked,
+      });
     }
 
-    this.logger.log(
-      `MSG91 OTP sent mobile_suffix=${mobile.slice(-4)} request_id=${requestId || 'n/a'}`,
-    );
+    this.logger.log({
+      event: 'msg91.otp.send.accepted',
+      correlationId,
+      mobile: masked,
+      providerRequestId: requestId || 'n/a',
+    });
 
     return { requestId: requestId || `local-${Date.now()}` };
   }
@@ -134,9 +197,12 @@ export class Msg91OtpClient {
   async verifyOtp(params: {
     e164Phone: string;
     otp: string;
+    correlationId?: string;
   }): Promise<Msg91VerifyResult> {
     const authKey = this.requireAuthKey();
     const mobile = this.toMsg91Mobile(params.e164Phone);
+    const masked = maskPhoneForLog(params.e164Phone);
+    const correlationId = params.correlationId ?? 'n/a';
 
     const url = new URL(`${MSG91_OTP_BASE}/verify`);
     url.searchParams.set('mobile', mobile);
@@ -144,25 +210,36 @@ export class Msg91OtpClient {
 
     const response = await this.requestJson('GET', url, authKey);
     if (!this.isSuccess(response)) {
-      const message = this.safeMessage(response.message) || 'OTP verification failed';
-      this.logger.warn(
-        `MSG91 verify failed mobile_suffix=${mobile.slice(-4)} msg=${message}`,
-      );
-      return { verified: false, message };
+      const message =
+        this.safeMessage(response.message) || 'OTP verification failed';
+      const reason = classifyMsg91Failure(response.message, response.code);
+      this.logger.warn({
+        event: 'msg91.otp.verify.failed',
+        correlationId,
+        mobile: masked,
+        reason,
+        providerMessage: message,
+      });
+      return { verified: false, message, reason };
     }
 
-    this.logger.log(
-      `MSG91 OTP verified mobile_suffix=${mobile.slice(-4)}`,
-    );
+    this.logger.log({
+      event: 'msg91.otp.verify.ok',
+      correlationId,
+      mobile: masked,
+    });
     return { verified: true, message: 'OTP verified success' };
   }
 
   async resendOtp(params: {
     e164Phone: string;
     retryType?: 'text' | 'voice';
+    correlationId?: string;
   }): Promise<Msg91ResendResult> {
     const authKey = this.requireAuthKey();
     const mobile = this.toMsg91Mobile(params.e164Phone);
+    const masked = maskPhoneForLog(params.e164Phone);
+    const correlationId = params.correlationId ?? 'n/a';
 
     const url = new URL(`${MSG91_OTP_BASE}/retry`);
     url.searchParams.set('mobile', mobile);
@@ -170,12 +247,17 @@ export class Msg91OtpClient {
 
     const response = await this.requestJson('GET', url, authKey);
     if (!this.isSuccess(response)) {
-      this.logger.warn(
-        `MSG91 resend failed mobile_suffix=${mobile.slice(-4)} msg=${this.safeMessage(response.message)}`,
-      );
-      throw new Error(
-        this.safeMessage(response.message) || 'MSG91 OTP resend failed',
-      );
+      const reason = classifyMsg91Failure(response.message, response.code);
+      const safeMsg =
+        this.safeMessage(response.message) || 'MSG91 OTP resend failed';
+      this.logger.warn({
+        event: 'msg91.otp.resend.rejected',
+        correlationId,
+        mobile: masked,
+        reason,
+        providerMessage: safeMsg,
+      });
+      throw new Msg91ProviderError(safeMsg, reason, String(response.code ?? ''));
     }
 
     return { requestId: response.request_id };
@@ -192,7 +274,10 @@ export class Msg91OtpClient {
   private requireAuthKey(): string {
     const authKey = this.configService.get<string>('otp.msg91.authKey') ?? '';
     if (!authKey) {
-      throw new Error('MSG91_AUTH_KEY is not configured');
+      throw new Msg91ProviderError(
+        'MSG91_AUTH_KEY is not configured',
+        'INVALID_AUTHKEY',
+      );
     }
     return authKey;
   }
@@ -201,7 +286,10 @@ export class Msg91OtpClient {
     const templateId =
       this.configService.get<string>('otp.msg91.templateId') ?? '';
     if (!templateId) {
-      throw new Error('MSG91_OTP_TEMPLATE_ID is not configured');
+      throw new Msg91ProviderError(
+        'MSG91_OTP_TEMPLATE_ID is not configured',
+        'INVALID_TEMPLATE',
+      );
     }
     return templateId;
   }
@@ -260,14 +348,14 @@ export class Msg91OtpClient {
 
       return json;
     } catch (error) {
-      const aborted =
-        error instanceof Error && error.name === 'AbortError';
-      throw new Error(
+      const aborted = error instanceof Error && error.name === 'AbortError';
+      throw new Msg91ProviderError(
         aborted
           ? 'MSG91 OTP request timed out'
           : error instanceof Error
             ? error.message
             : 'MSG91 OTP request failed',
+        aborted ? 'TIMEOUT' : 'UNAVAILABLE',
       );
     } finally {
       clearTimeout(timer);

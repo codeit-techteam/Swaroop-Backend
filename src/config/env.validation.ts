@@ -270,6 +270,27 @@ export const envSchema = z
       });
     }
 
+    if (data.NODE_ENV === 'production' && !data.AUTH_STRICT_OTP) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['AUTH_STRICT_OTP'],
+        message:
+          'AUTH_STRICT_OTP must be true in production so demo/fixed OTP cannot bypass MSG91 SMS',
+      });
+    }
+
+    if (
+      data.NODE_ENV === 'production' &&
+      data.OTP_PROVIDER === 'msg91' &&
+      !(data.MSG91_AUTH_KEY ?? '').trim()
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['MSG91_AUTH_KEY'],
+        message: 'MSG91_AUTH_KEY is required in production when OTP_PROVIDER=msg91',
+      });
+    }
+
     if (data.NODE_ENV === 'production') {
       const requiredInProduction: Array<keyof typeof data> = [
         'DATABASE_URL',

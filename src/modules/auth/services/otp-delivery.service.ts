@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Msg91OtpClient } from './msg91-otp.client.js';
+import { maskPhoneForLog, Msg91ProviderError } from './msg91-otp.errors.js';
 
 export interface OtpDeliveryPayload {
   identifier: string;
@@ -15,6 +16,8 @@ export interface OtpDeliveryPayload {
    * Force the local/no-SMS stub (demo fixed OTP). Never call MSG91.
    */
   forceLocal?: boolean;
+  /** Frontend ↔ backend ↔ MSG91 correlation. */
+  correlationId?: string;
 }
 
 export type OtpDeliveryResult = {
@@ -49,6 +52,7 @@ export class OtpDeliveryService {
 
   async send(payload: OtpDeliveryPayload): Promise<OtpDeliveryResult> {
     const env = this.configService.get<string>('app.env');
+    const correlationId = payload.correlationId ?? 'n/a';
     const useMsg91 =
       payload.identifierType === 'PHONE' &&
       this.msg91.isConfigured() &&
@@ -65,6 +69,7 @@ export class OtpDeliveryService {
         otpLength,
         expiresInSeconds: expiresIn,
         otp: payload.otp,
+        correlationId,
       });
 
       return {
@@ -80,19 +85,33 @@ export class OtpDeliveryService {
         this.configService.get<boolean>('security.authStrictOtp') === true;
 
       if (requireProvider) {
-        this.logger.error(
-          'Phone OTP delivery refused: MSG91 is not configured while strict/production OTP is required',
-        );
-        throw new Error(
+        this.logger.error({
+          event: 'otp.delivery.refused',
+          correlationId,
+          reason: 'MSG91_NOT_CONFIGURED',
+          purpose: payload.purpose,
+        });
+        throw new Msg91ProviderError(
           'OTP SMS provider is not configured. Set MSG91_AUTH_KEY and MSG91_OTP_TEMPLATE_ID.',
+          'INVALID_AUTHKEY',
         );
       }
     }
 
-    // Local / email stub — never log OTP values.
-    this.logger.log(
-      `OTP queued for ${payload.identifierType} ${payload.identifier} purpose=${payload.purpose} env=${env} provider=local`,
-    );
+    // Local / email stub — never log OTP values or full phone numbers.
+    const maskedIdentifier =
+      payload.identifierType === 'PHONE'
+        ? maskPhoneForLog(payload.identifier)
+        : '[email]';
+    this.logger.log({
+      event: 'otp.delivery.local_stub',
+      correlationId,
+      identifierType: payload.identifierType,
+      identifier: maskedIdentifier,
+      purpose: payload.purpose,
+      env,
+      provider: 'local',
+    });
 
     return { provider: 'local' };
   }
@@ -100,11 +119,16 @@ export class OtpDeliveryService {
   async verifyPhoneWithProvider(
     e164Phone: string,
     otp: string,
+    correlationId?: string,
   ): Promise<{ verified: boolean; message: string }> {
     if (!this.msg91.isConfigured()) {
       return { verified: false, message: 'MSG91 is not configured' };
     }
-    return this.msg91.verifyOtp({ e164Phone, otp });
+    return this.msg91.verifyOtp({
+      e164Phone,
+      otp,
+      correlationId,
+    });
   }
 
   encodeMsg91Challenge(requestId: string): string {
@@ -115,11 +139,17 @@ export class OtpDeliveryService {
     return this.msg91.isProviderChallenge(otpHash);
   }
 
-  async resendPhone(e164Phone: string): Promise<OtpDeliveryResult> {
+  async resendPhone(
+    e164Phone: string,
+    correlationId?: string,
+  ): Promise<OtpDeliveryResult> {
     if (!this.msg91.isConfigured()) {
-      throw new Error('MSG91 is not configured for resend');
+      throw new Msg91ProviderError(
+        'MSG91 is not configured for resend',
+        'INVALID_AUTHKEY',
+      );
     }
-    const result = await this.msg91.resendOtp({ e164Phone });
+    const result = await this.msg91.resendOtp({ e164Phone, correlationId });
     return {
       provider: 'msg91',
       providerRequestId: result.requestId,

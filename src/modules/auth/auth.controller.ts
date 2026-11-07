@@ -177,9 +177,17 @@ export class AuthController {
     const forwarded = req.headers['x-forwarded-for'];
     const ip =
       typeof forwarded === 'string' ? forwarded.split(',')[0]?.trim() : req.ip;
+    const requestIdHeader = req.headers['x-request-id'];
+    const requestId =
+      typeof requestIdHeader === 'string' && requestIdHeader.trim()
+        ? requestIdHeader.trim()
+        : typeof (req as Request & { id?: string }).id === 'string'
+          ? (req as Request & { id?: string }).id
+          : undefined;
     return {
       ipAddress: ip,
       userAgent: req.headers['user-agent'],
+      requestId,
     };
   }
 }

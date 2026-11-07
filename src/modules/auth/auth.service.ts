@@ -23,6 +23,10 @@ import {
 } from './services/demo-bootstrap.service.js';
 import { OtpDeliveryService } from './services/otp-delivery.service.js';
 import {
+  maskPhoneForLog,
+  Msg91ProviderError,
+} from './services/msg91-otp.errors.js';
+import {
   AuthErrorCode,
   type AuthenticatedUser,
   type AuthTokens,
@@ -44,6 +48,8 @@ type RequestMeta = {
   userAgent?: string;
   deviceId?: string;
   deviceName?: string;
+  /** X-Request-Id / pino request id for OTP ↔ MSG91 correlation. */
+  requestId?: string;
 };
 
 type DbClient = Prisma.TransactionClient | PrismaService;
@@ -160,7 +166,9 @@ export class AuthService {
       : this.crypto.generateOtp(otpLength);
     const otpHash = this.crypto.hashOtp(localOtp);
 
+    const correlationId = meta.requestId ?? randomUUID();
     let provider: 'msg91' | 'local' = 'local';
+    let providerRequestId: string | undefined;
     try {
       const delivery = await this.otpDelivery.send({
         identifier,
@@ -168,17 +176,30 @@ export class AuthService {
         purpose,
         otp: localOtp,
         forceLocal: fixedDevForThisPhone,
+        correlationId,
       });
       provider = delivery.provider === 'msg91' ? 'msg91' : 'local';
+      providerRequestId = delivery.providerRequestId;
     } catch (error) {
-      this.logger.error(
-        `OTP delivery failed for ${identifierType} phone_suffix=${identifierType === OtpIdentifierType.PHONE ? identifier.slice(-4) : 'n/a'}`,
-        error instanceof Error ? error.message : error,
-      );
+      const reason =
+        error instanceof Msg91ProviderError ? error.reason : 'UNKNOWN';
+      this.logger.error({
+        event: 'auth.otp.delivery_failed',
+        correlationId,
+        identifierType,
+        mobile:
+          identifierType === OtpIdentifierType.PHONE
+            ? maskPhoneForLog(identifier)
+            : undefined,
+        purpose,
+        reason,
+        message: error instanceof Error ? error.message : String(error),
+      });
       throw new AuthException(
         AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
         'Unable to send OTP right now. Please try again shortly.',
         HttpStatus.SERVICE_UNAVAILABLE,
+        { reason, correlationId },
       );
     }
 
@@ -200,12 +221,21 @@ export class AuthService {
       !useMsg91 &&
       Boolean(localOtp);
 
+    const smsDispatched = provider === 'msg91';
+
     this.logger.log({
       event: 'auth.otp.sent',
+      correlationId,
       identifierType,
+      mobile:
+        identifierType === OtpIdentifierType.PHONE
+          ? maskPhoneForLog(identifier)
+          : undefined,
       purpose,
       challengeId: challenge.id,
       provider,
+      providerRequestId: providerRequestId ?? 'n/a',
+      smsDispatched,
     });
 
     return {
@@ -213,6 +243,9 @@ export class AuthService {
       challengeId: challenge.id,
       expiresInSeconds: expiresIn,
       resendCooldownSeconds: cooldown,
+      /** True only when MSG91 accepted the SMS request (never for local stub). */
+      smsDispatched,
+      correlationId,
       ...(expose ? { devOtp: localOtp } : {}),
     };
   }

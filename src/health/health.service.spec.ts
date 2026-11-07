@@ -22,6 +22,12 @@ describe('HealthService', () => {
                   token: 'secret-token',
                 };
               }
+              if (key === 'otp.provider') return 'msg91';
+              if (key === 'otp.msg91.authKey') return 'test-auth-key';
+              if (key === 'otp.msg91.templateId') return '6ae081288c342f46e203bb12';
+              if (key === 'otp.msg91.senderId') return '';
+              if (key === 'otp.msg91.header') return 'VELPLY';
+              if (key === 'security.authStrictOtp') return true;
               return undefined;
             }),
           },
@@ -49,6 +55,15 @@ describe('HealthService', () => {
     expect(result.database).toBe('connected');
     expect(result.storage).toBe('not_configured');
     expect(result.surepass).toBe('configured');
+    expect(result.otp).toEqual({
+      provider: 'msg91',
+      msg91Configured: true,
+      authStrictOtp: true,
+      templateConfigured: true,
+      senderIdConfigured: false,
+      headerConfigured: true,
+    });
     expect(JSON.stringify(result)).not.toContain('secret-token');
+    expect(JSON.stringify(result)).not.toContain('test-auth-key');
   });
 });

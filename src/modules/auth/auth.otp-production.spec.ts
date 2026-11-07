@@ -37,14 +37,15 @@ describe('Production OTP security', () => {
     ).toThrow(/AUTH_DEV_EXPOSE_OTP/);
   });
 
-  it('allows development-phase boot in production without AUTH_STRICT_OTP', () => {
-    const env = validateEnv({
-      ...baseEnv,
-      AUTH_DEV_FIXED_OTP: 'true',
-      AUTH_DEV_EXPOSE_OTP: 'false',
-      AUTH_STRICT_OTP: 'false',
-    });
-    expect(env.AUTH_STRICT_OTP).toBe(false);
+  it('rejects production boot when AUTH_STRICT_OTP is not enabled', () => {
+    expect(() =>
+      validateEnv({
+        ...baseEnv,
+        AUTH_DEV_FIXED_OTP: 'true',
+        AUTH_DEV_EXPOSE_OTP: 'false',
+        AUTH_STRICT_OTP: 'false',
+      }),
+    ).toThrow(/AUTH_STRICT_OTP/);
   });
 
   it('allows production boot when AUTH_STRICT_OTP is enabled', () => {
@@ -364,6 +365,8 @@ describe('AuthService.sendOtp abuse controls', () => {
       }),
     );
     expect(result).not.toHaveProperty('devOtp');
+    expect(result.smsDispatched).toBe(true);
+    expect(result.correlationId).toBeTruthy();
     expect(JSON.stringify(result)).not.toMatch(/\b\d{6}\b/);
   });
 });

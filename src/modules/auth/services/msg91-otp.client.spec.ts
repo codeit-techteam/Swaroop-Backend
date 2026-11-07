@@ -70,9 +70,11 @@ describe('Msg91OtpClient', () => {
     expect((init.headers as Record<string, string>).authkey).toBe(
       'test-auth-key',
     );
+    // MSG91 Template Code for OTP_Template1 uses body variable OTP.
+    expect(JSON.parse(String(init.body))).toEqual({ OTP: '482913' });
   });
 
-  it('falls back to DLT header when senderId is empty', async () => {
+  it('omits sender when MSG91_SENDER_ID is empty (use template mapping)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -86,6 +88,31 @@ describe('Msg91OtpClient', () => {
     await makeClient({
       'otp.msg91.senderId': '',
       'otp.msg91.header': 'VELPLY',
+    }).sendOtp({
+      e164Phone: '+918240890242',
+      otpLength: 6,
+      expiresInSeconds: 300,
+      otp: '123456',
+    });
+
+    const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // DLT header VELPLY must NOT be forced as sender — template mapping owns it.
+    expect(url).not.toContain('sender=');
+  });
+
+  it('passes explicit MSG91_SENDER_ID when configured', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        type: 'success',
+        request_id: 'req-sender',
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await makeClient({
+      'otp.msg91.senderId': 'VELPLY',
     }).sendOtp({
       e164Phone: '+918240890242',
       otpLength: 6,

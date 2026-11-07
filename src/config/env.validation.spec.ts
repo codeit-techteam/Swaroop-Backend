@@ -28,6 +28,7 @@ describe('validateEnv', () => {
         JWT_SECRET: 'change-me',
         CORS_ORIGINS: 'https://app.example.com',
         STORAGE_PROVIDER: 'none',
+        AUTH_STRICT_OTP: 'true',
       }),
     ).toThrow(/Environment validation failed/);
   });
@@ -41,6 +42,7 @@ describe('validateEnv', () => {
       CORS_ORIGINS: 'https://app.example.com',
       STORAGE_PROVIDER: 'none',
       AUTH_DEV_EXPOSE_OTP: 'false',
+      AUTH_STRICT_OTP: 'true',
     });
     expect(result.STORAGE_PROVIDER).toBe('none');
   });
@@ -55,6 +57,7 @@ describe('validateEnv', () => {
         CORS_ORIGINS: 'https://app.example.com',
         STORAGE_PROVIDER: 'r2',
         AUTH_DEV_EXPOSE_OTP: 'false',
+        AUTH_STRICT_OTP: 'true',
       }),
     ).toThrow(/R2_ACCOUNT_ID/);
   });
