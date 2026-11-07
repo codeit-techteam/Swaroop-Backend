@@ -246,6 +246,10 @@ export class AuthService {
       /** True only when MSG91 accepted the SMS request (never for local stub). */
       smsDispatched,
       correlationId,
+      /** MSG91 request_id for SendOTP → Logs delivery lookup (not a secret). */
+      ...(providerRequestId && !providerRequestId.startsWith('local-')
+        ? { providerRequestId }
+        : {}),
       ...(expose ? { devOtp: localOtp } : {}),
     };
   }

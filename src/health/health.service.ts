@@ -99,7 +99,11 @@ export class HealthService {
 
     const status: HealthStatus['status'] =
       database === 'disconnected' ||
-      (provider === 'msg91' && !msg91Configured)
+      (provider === 'msg91' && !msg91Configured) ||
+      (provider === 'msg91' &&
+        msg91Configured &&
+        this.configService.get<string>('app.env') === 'production' &&
+        !senderId.length)
         ? 'degraded'
         : 'ok';
 

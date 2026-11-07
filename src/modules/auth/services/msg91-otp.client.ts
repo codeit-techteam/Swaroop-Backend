@@ -112,14 +112,29 @@ export class Msg91OtpClient {
       url.searchParams.set('otp', params.otp);
     }
 
-    // Only send sender when explicitly configured. OTP_Template1 in MSG91 is
-    // mapped to route Sender ID AIR0993093271; Airtel DLT header is VELPLY.
-    // Do NOT send sender=VELPLY — that is the DLT header, not the MSG91 sender.
-    const senderId = (
+    // MSG91 panel Sender ID for OTP_Template1 is AIR0993093271 (DLT header is
+    // VELPLY — never send VELPLY as `sender`). Prefer explicit env; fall back to
+    // the known production route sender so DLT mapping is not left to chance.
+    const configuredSender = (
       this.configService.get<string>('otp.msg91.senderId') ?? ''
     ).trim();
+    const senderId =
+      configuredSender ||
+      (templateId === '6ae081288c342f46e203bb12' ? 'AIR0993093271' : '');
     if (senderId) {
       url.searchParams.set('sender', senderId);
+    }
+    if (senderId.toUpperCase() === 'VELPLY') {
+      this.logger.error({
+        event: 'msg91.otp.send.invalid_sender',
+        correlationId,
+        message:
+          'MSG91_SENDER_ID must be the MSG91 route sender (AIR0993093271), not DLT header VELPLY',
+      });
+      throw new Msg91ProviderError(
+        'Invalid MSG91 sender configuration',
+        'INVALID_SENDER',
+      );
     }
 
     // Matches MSG91 panel "Template Code" for OTP_Template1:
