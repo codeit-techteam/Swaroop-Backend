@@ -62,6 +62,12 @@ export class Msg91OtpClient {
     e164Phone: string;
     otpLength: number;
     expiresInSeconds: number;
+    /**
+     * Backend-generated OTP. When set, MSG91 delivers this value into the
+     * approved ##OTP## template placeholder. Verification is done locally
+     * against the HMAC hash — never returned to clients or logged.
+     */
+    otp?: string;
   }): Promise<Msg91SendResult> {
     const authKey = this.requireAuthKey();
     const templateId = this.requireTemplateId();
@@ -80,14 +86,20 @@ export class Msg91OtpClient {
     url.searchParams.set('realTimeResponse', '1');
     url.searchParams.set('unicode', '0');
 
+    // Pass server-generated OTP so the approved template can inject ##OTP##.
+    // Never log this value.
+    if (params.otp) {
+      url.searchParams.set('otp', params.otp);
+    }
+
     const senderId = this.configService.get<string>('otp.msg91.senderId');
     if (senderId) {
       url.searchParams.set('sender', senderId);
     }
 
+    // Approved template uses ##OTP## only. Extra vars are omitted unless the
+    // dashboard template defines them.
     const body: Record<string, string> = {};
-    // Approved template uses ##OTP## only — MSG91 injects the OTP.
-    // Extra vars are omitted unless the dashboard template defines them.
 
     const response = await this.requestJson('POST', url, authKey, body);
     if (!this.isSuccess(response)) {

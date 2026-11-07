@@ -46,8 +46,24 @@ export class AuthController {
     description:
       'OTP sent. Production MSG91 responses never include the OTP. Non-production may include devOtp only when AUTH_DEV_EXPOSE_OTP=true.',
   })
-  async sendOtp(@Body() dto: SendOtpDto) {
-    const data = await this.authService.sendOtp(dto);
+  async sendOtp(@Body() dto: SendOtpDto, @Req() req: Request) {
+    const data = await this.authService.sendOtp(dto, this.meta(req));
+    return successResponse(data, data.message);
+  }
+
+  @Public()
+  @Post('otp/resend')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Resend OTP — generates a fresh OTP, invalidates the previous challenge, and delivers via MSG91',
+  })
+  @ApiOkResponse({
+    description:
+      'Fresh OTP sent. Previous OTP is immediately invalid. Never returns the OTP value.',
+  })
+  async resendOtp(@Body() dto: SendOtpDto, @Req() req: Request) {
+    const data = await this.authService.resendOtp(dto, this.meta(req));
     return successResponse(data, data.message);
   }
 

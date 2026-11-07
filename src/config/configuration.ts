@@ -43,11 +43,14 @@ export type AppConfig = {
     otpResendCooldownSeconds: number;
     /** Max OTP sends per identifier+purpose per rolling hour (DB-backed). */
     otpMaxSendsPerHour: number;
+    /** Max OTP send/resend requests per client IP per window (in-memory). */
+    otpIpMaxRequests: number;
+    /** Window for OTP IP rate limit, in seconds. */
+    otpIpWindowSeconds: number;
     authDevExposeOtp: boolean;
     /**
-     * Demo phone +918240890242 accepts OTP 123456 during development.
-     * Off when AUTH_STRICT_OTP=true or AUTH_DEV_FIXED_OTP=false.
-     * See `resolveFixedDevOtp`.
+     * Demo phone +918240890242 accepts OTP 123456 when explicitly opted in.
+     * Off by default; always off when AUTH_STRICT_OTP=true. See `resolveFixedDevOtp`.
      */
     authDevFixedOtp: boolean;
     /**
@@ -198,23 +201,20 @@ const clientOrigins = (
 /**
  * Whether the fixed demo OTP (123456 for +918240890242 only) is accepted.
  *
- * The product is still in development. The DigitalOcean test server runs
- * NODE_ENV=production, and a failing MSG91 send is rewritten by the edge
- * from 502 into an HTML 504, which blocks login. Until AUTH_STRICT_OTP=true,
- * the demo phone keeps 123456 and does not call MSG91.
+ * Fail-closed / opt-in only:
+ * - AUTH_STRICT_OTP=true → always off (production SMS lock)
+ * - AUTH_DEV_FIXED_OTP must be explicitly true/1/yes/on to enable
+ * - Default when unset → off (never invent a live bypass)
  *
- * Turn the bypass off with AUTH_STRICT_OTP=true (production SMS lock) or
- * AUTH_DEV_FIXED_OTP=false. Other phone numbers still use MSG91.
+ * Use AUTH_DEV_FIXED_OTP=true only on non-production or temporary staging
+ * while MSG91/DLT is being validated. Production must set AUTH_STRICT_OTP=true.
  */
 export const resolveFixedDevOtp = (
   env: Record<string, string | undefined>,
 ): boolean => {
   if ((env.AUTH_STRICT_OTP ?? '').trim().toLowerCase() === 'true') return false;
   const flag = (env.AUTH_DEV_FIXED_OTP ?? '').trim().toLowerCase();
-  if (flag === 'false' || flag === '0' || flag === 'no' || flag === 'off') {
-    return false;
-  }
-  return true;
+  return flag === 'true' || flag === '1' || flag === 'yes' || flag === 'on';
 };
 
 /**
@@ -320,6 +320,8 @@ export default (): AppConfig => {
         process.env.OTP_RESEND_COOLDOWN_SECONDS ?? 60,
       ),
       otpMaxSendsPerHour: Number(process.env.OTP_MAX_SENDS_PER_HOUR ?? 5),
+      otpIpMaxRequests: Number(process.env.OTP_IP_MAX_REQUESTS ?? 20),
+      otpIpWindowSeconds: Number(process.env.OTP_IP_WINDOW_SECONDS ?? 3600),
       authDevExposeOtp: process.env.AUTH_DEV_EXPOSE_OTP === 'true',
       authStrictOtp: process.env.AUTH_STRICT_OTP === 'true',
       authDevFixedOtp: resolveFixedDevOtp(process.env),
@@ -483,7 +485,7 @@ export default (): AppConfig => {
         supportUrl: resolvePublicPath(process.env.PUBLIC_SUPPORT_URL, '/contact'),
         // Prefer env; fall back to client-approved contacts (4 Nov 2026).
         supportEmail:
-          trim(process.env.PUBLIC_SUPPORT_EMAIL) || 'it@polystorex.com',
+          trim(process.env.PUBLIC_SUPPORT_EMAIL) || 'connect@polystorex.com',
         supportPhone:
           trim(process.env.PUBLIC_SUPPORT_PHONE) || '+91 99626 20101',
         supportWhatsapp:

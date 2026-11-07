@@ -93,18 +93,17 @@ describe('AuthService.isFixedDevOtpEnabled', () => {
 });
 
 /**
- * Demo OTP 123456 stays on during development, including the DigitalOcean
- * test server (NODE_ENV=production). AUTH_STRICT_OTP=true is the lock.
+ * Fixed demo OTP is fail-closed / opt-in. AUTH_STRICT_OTP=true always wins.
  */
 describe('resolveFixedDevOtp (configuration)', () => {
-  it('is ON by default so the demo phone can log in during development', async () => {
-    expect(resolveFixedDevOtp({ NODE_ENV: 'production' })).toBe(true);
-    expect(resolveFixedDevOtp({ NODE_ENV: 'development' })).toBe(true);
-    expect(resolveFixedDevOtp({})).toBe(true);
+  it('is OFF by default (fail-closed)', async () => {
+    expect(resolveFixedDevOtp({ NODE_ENV: 'production' })).toBe(false);
+    expect(resolveFixedDevOtp({ NODE_ENV: 'development' })).toBe(false);
+    expect(resolveFixedDevOtp({})).toBe(false);
   });
 
-  it('stays on in production until the SMS lock is set', async () => {
-    for (const NODE_ENV of ['production', 'staging', 'PRODUCTION']) {
+  it('is ON only when AUTH_DEV_FIXED_OTP is explicitly true', async () => {
+    for (const NODE_ENV of ['production', 'staging', 'development']) {
       expect(
         resolveFixedDevOtp({ NODE_ENV, AUTH_DEV_FIXED_OTP: 'true' }),
       ).toBe(true);
@@ -139,7 +138,7 @@ describe('resolveFixedDevOtp (configuration)', () => {
     ).toBe(false);
   });
 
-  it('keeps the demo bypass when MSG91 credentials are present', async () => {
+  it('allows opted-in bypass even when MSG91 credentials are present', async () => {
     expect(
       resolveFixedDevOtp({
         NODE_ENV: 'production',
@@ -309,11 +308,25 @@ describe('AuthService.sendOtp abuse controls', () => {
       'security.otpMaxAttempts': 5,
       'security.otpLength': 6,
       'security.otpMaxSendsPerHour': 5,
+      'security.otpIpMaxRequests': 100,
+      'security.otpIpWindowSeconds': 3600,
+      'security.authStrictOtp': true,
+      'security.authDevFixedOtp': false,
+      'security.authDevExposeOtp': false,
+      'app.env': 'test',
     };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const service = Object.create(AuthService.prototype) as any;
     service.prisma = prisma;
     service.otpDelivery = otpDelivery;
+    service.otpIpLimiter = null;
+    service.crypto = {
+      generateOtp: vi.fn(() => '482913'),
+      hashOtp: vi.fn((v: string) => `hash:${v}`),
+      verifyOtpHash: vi.fn(
+        (otp: string, hash: string) => hash === `hash:${otp}`,
+      ),
+    };
     service.configService = { get: (k: string) => config[k] };
     service.logger = { log: vi.fn(), error: vi.fn() };
     service.resolveIdentifier = () => ({
@@ -344,6 +357,12 @@ describe('AuthService.sendOtp abuse controls', () => {
     const { service, otpDelivery } = build({ sentLastHour: 2 });
     const result = await service.sendOtp({ phone: PHONE });
     expect(otpDelivery.send).toHaveBeenCalledTimes(1);
+    expect(otpDelivery.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        otp: '482913',
+        forceLocal: false,
+      }),
+    );
     expect(result).not.toHaveProperty('devOtp');
     expect(JSON.stringify(result)).not.toMatch(/\b\d{6}\b/);
   });
@@ -363,17 +382,17 @@ describe('OtpDeliveryService production fail-closed', () => {
     };
     const msg91 = { isConfigured: () => false, sendOtp: vi.fn() };
     const svc = new OtpDeliveryService(config as never, msg91 as never);
-    // No local otp → production must refuse without a provider.
     await expect(
       svc.send({
         identifier: '+919999900001',
         identifierType: 'PHONE',
         purpose: 'LOGIN',
+        otp: '482913',
       }),
     ).rejects.toThrow(/not configured/i);
   });
 
-  it('does not call MSG91 when a local demo OTP is already provided', async () => {
+  it('does not call MSG91 when forceLocal is set (demo fixed OTP)', async () => {
     const { OtpDeliveryService } = await import(
       './services/otp-delivery.service.js'
     );
@@ -394,8 +413,36 @@ describe('OtpDeliveryService production fail-closed', () => {
       identifierType: 'PHONE',
       purpose: 'LOGIN',
       otp: '123456',
+      forceLocal: true,
     });
     expect(sendOtp).not.toHaveBeenCalled();
     expect(result.provider).toBe('local');
+  });
+
+  it('passes backend-generated OTP to MSG91 for delivery', async () => {
+    const { OtpDeliveryService } = await import(
+      './services/otp-delivery.service.js'
+    );
+    const sendOtp = vi.fn().mockResolvedValue({ requestId: 'req-1' });
+    const config = {
+      get: (key: string) =>
+        ({
+          'app.env': 'production',
+          'security.otpLength': 6,
+          'security.otpExpiresInSeconds': 300,
+        })[key],
+    };
+    const msg91 = { isConfigured: () => true, sendOtp };
+    const svc = new OtpDeliveryService(config as never, msg91 as never);
+    const result = await svc.send({
+      identifier: '+919999900001',
+      identifierType: 'PHONE',
+      purpose: 'LOGIN',
+      otp: '482913',
+    });
+    expect(sendOtp).toHaveBeenCalledWith(
+      expect.objectContaining({ otp: '482913' }),
+    );
+    expect(result.provider).toBe('msg91');
   });
 });

@@ -6,20 +6,30 @@ export interface OtpDeliveryPayload {
   identifier: string;
   identifierType: 'PHONE' | 'EMAIL';
   purpose: string;
-  /** Present only for local/dev OTP delivery — never for MSG91 provider flow. */
-  otp?: string;
+  /**
+   * Backend-generated OTP to deliver. Never logged. When MSG91 is active this
+   * is passed to the provider for ##OTP## template substitution.
+   */
+  otp: string;
+  /**
+   * Force the local/no-SMS stub (demo fixed OTP). Never call MSG91.
+   */
+  forceLocal?: boolean;
 }
 
 export type OtpDeliveryResult = {
   provider: 'msg91' | 'local' | 'none';
-  /** MSG91 request_id when provider is msg91. */
+  /** MSG91 request_id when provider is msg91 (audit only — not used for verify). */
   providerRequestId?: string;
 };
 
 /**
  * Provider abstraction for SMS/email OTP delivery.
- * Production phone OTP uses MSG91 when OTP_PROVIDER=msg91 and credentials are set.
- * Development logs intentionally omit OTP values.
+ *
+ * Production phone OTP: backend generates the OTP, stores only an HMAC hash,
+ * and MSG91 delivers the plaintext via the approved DLT template (##OTP##).
+ * Verification is local against the hash — MSG91 Verify is kept for legacy
+ * challenges that still store a `msg91:req:` reference.
  */
 @Injectable()
 export class OtpDeliveryService {
@@ -31,7 +41,7 @@ export class OtpDeliveryService {
   ) {}
 
   /**
-   * True when phone OTPs must be sent and verified through MSG91.
+   * True when phone OTPs must be delivered through MSG91.
    */
   isMsg91PhoneProvider(): boolean {
     return this.msg91.isConfigured();
@@ -39,16 +49,12 @@ export class OtpDeliveryService {
 
   async send(payload: OtpDeliveryPayload): Promise<OtpDeliveryResult> {
     const env = this.configService.get<string>('app.env');
-
-    // Local/dev OTP is passed in explicitly (demo phone 123456). Never forward
-    // that challenge to MSG91 — a provider failure would still block login.
-    const useLocalOtp = Boolean(payload.otp);
-
-    if (
+    const useMsg91 =
       payload.identifierType === 'PHONE' &&
       this.msg91.isConfigured() &&
-      !useLocalOtp
-    ) {
+      !payload.forceLocal;
+
+    if (useMsg91) {
       const otpLength =
         this.configService.get<number>('security.otpLength') ?? 6;
       const expiresIn =
@@ -58,6 +64,7 @@ export class OtpDeliveryService {
         e164Phone: payload.identifier,
         otpLength,
         expiresInSeconds: expiresIn,
+        otp: payload.otp,
       });
 
       return {
@@ -66,7 +73,7 @@ export class OtpDeliveryService {
       };
     }
 
-    if (payload.identifierType === 'PHONE' && !useLocalOtp) {
+    if (payload.identifierType === 'PHONE' && !payload.forceLocal) {
       const requireProvider =
         this.configService.get<boolean>('otp.requireProviderInProduction') ===
           true ||
@@ -87,7 +94,7 @@ export class OtpDeliveryService {
       `OTP queued for ${payload.identifierType} ${payload.identifier} purpose=${payload.purpose} env=${env} provider=local`,
     );
 
-    return { provider: payload.otp ? 'local' : 'none' };
+    return { provider: 'local' };
   }
 
   async verifyPhoneWithProvider(

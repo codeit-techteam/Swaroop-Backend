@@ -50,10 +50,16 @@ async function bootstrap(): Promise<void> {
     }
     try {
       const { hostname } = new URL(origin);
+      // Platform preview hosts + first-party PolyStoreX production domains.
+      // Custom domains are NOT covered by *.vercel.app — without this, browsers
+      // on customer.polystorex.com get a CORS failure that Axios reports as
+      // "Network Error" when loading the public marketplace catalogue.
       return (
         hostname.endsWith('.ondigitalocean.app') ||
         hostname.endsWith('.ondigitalocean.com') ||
-        hostname.endsWith('.vercel.app')
+        hostname.endsWith('.vercel.app') ||
+        hostname === 'polystorex.com' ||
+        hostname.endsWith('.polystorex.com')
       );
     } catch {
       return false;

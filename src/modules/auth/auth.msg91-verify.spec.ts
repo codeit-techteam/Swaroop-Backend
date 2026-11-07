@@ -33,6 +33,7 @@ describe('AuthService MSG91 verify path', () => {
       otpVerification: {
         findFirst: vi.fn().mockResolvedValue(record),
         update: vi.fn().mockResolvedValue(record),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
       $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
         fn(prisma),
@@ -65,7 +66,10 @@ describe('AuthService MSG91 verify path', () => {
     service.prisma = prisma;
     service.otpDelivery = otpDelivery;
     service.configService = configService;
-    service.crypto = { hashOtp: (v: string) => `hash:${v}` };
+    service.crypto = {
+      hashOtp: (v: string) => `hash:${v}`,
+      verifyOtpHash: (otp: string, hash: string) => hash === `hash:${otp}`,
+    };
     service.logger = { log: vi.fn(), error: vi.fn() };
     service.issueSessionForIdentifier = vi.fn().mockResolvedValue({
       user: { id: 'u1' },
@@ -129,6 +133,48 @@ describe('AuthService MSG91 verify path', () => {
     );
     expect(prisma.$transaction).toHaveBeenCalled();
     expect(result.user.id).toBe('u1');
+  });
+
+  it('verifies hash-based challenges locally without calling MSG91', async () => {
+    const { service, otpDelivery, prisma } = buildService({
+      fixedDevOtp: false,
+      challengeHash: 'hash:482913',
+    });
+
+    const result = await service.verifyOtp({
+      phone: DEMO_PHONE,
+      otp: '482913',
+      purpose: 'LOGIN' as never,
+    });
+
+    expect(otpDelivery.verifyPhoneWithProvider).not.toHaveBeenCalled();
+    expect(prisma.otpVerification.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          id: 'challenge-1',
+          consumedAt: null,
+        }),
+      }),
+    );
+    expect(result.user.id).toBe('u1');
+  });
+
+  it('rejects concurrent reuse when atomic consume loses the race', async () => {
+    const { service, prisma } = buildService({
+      fixedDevOtp: false,
+      challengeHash: 'hash:482913',
+    });
+    prisma.otpVerification.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      service.verifyOtp({
+        phone: DEMO_PHONE,
+        otp: '482913',
+        purpose: 'LOGIN' as never,
+      }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: AuthErrorCode.AUTH_INVALID_OTP }),
+    });
   });
 
   it('does not create a session when MSG91 times out / errors', async () => {

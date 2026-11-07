@@ -38,7 +38,7 @@ describe('Msg91OtpClient', () => {
     expect(client.toMsg91Mobile('+918240890242')).toBe('918240890242');
   });
 
-  it('sendOtp posts to MSG91 and returns request_id without logging OTP', async () => {
+  it('sendOtp posts to MSG91 with backend-generated OTP for ##OTP## delivery', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -54,6 +54,7 @@ describe('Msg91OtpClient', () => {
       e164Phone: '+918240890242',
       otpLength: 6,
       expiresInSeconds: 300,
+      otp: '482913',
     });
 
     expect(result.requestId).toBe('req-abc-123');
@@ -64,12 +65,11 @@ describe('Msg91OtpClient', () => {
     expect(url).toContain('template_id=6ae081288c342f46e203bb12');
     expect(url).toContain('otp_length=6');
     expect(url).toContain('otp_expiry=5');
+    expect(url).toContain('otp=482913');
     expect(init.method).toBe('POST');
     expect((init.headers as Record<string, string>).authkey).toBe(
       'test-auth-key',
     );
-    // Provider generates OTP — we must not send a custom otp query param.
-    expect(url).not.toContain('otp=');
   });
 
   it('treats HTTP 200 error payload as send failure', async () => {

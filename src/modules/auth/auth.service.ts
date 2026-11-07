@@ -14,6 +14,7 @@ import { SELLER_OWNER_PERMISSIONS } from '../sellers/managers/seller-access.js';
 import { resolveSellerActor } from '../sellers/common/resolve-seller-actor.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { RoleCode } from '../../common/enums/domain.enums.js';
+import { KeyedRateLimiter } from '../locations/ttl-cache.js';
 import { AuthException } from './exceptions/auth.exception.js';
 import { CryptoService } from './services/crypto.service.js';
 import {
@@ -59,6 +60,7 @@ const REFRESH_REUSE_GRACE_MS = 60_000;
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
+  private otpIpLimiter: KeyedRateLimiter | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -69,7 +71,13 @@ export class AuthService {
     private readonly demoBootstrap: DemoBootstrapService,
   ) {}
 
-  async sendOtp(dto: SendOtpDto) {
+  /**
+   * Send a fresh OTP. Always generates server-side, stores HMAC only, and
+   * delivers via MSG91 when configured (except the explicit demo-phone bypass).
+   */
+  async sendOtp(dto: SendOtpDto, meta: RequestMeta = {}) {
+    this.assertOtpIpAllowed(meta.ipAddress);
+
     const { identifier, identifierType } = this.resolveIdentifier(dto);
     const purpose = (dto.purpose ?? OtpPurpose.LOGIN) as OtpPurpose;
     const cooldown =
@@ -84,7 +92,6 @@ export class AuthService {
       identifierType === OtpIdentifierType.PHONE &&
       identifier === DEMO_PHONE_E164;
     // Demo phone stays on local OTP 123456 and must not wait on MSG91.
-    // A provider 502 is rewritten by the DigitalOcean edge into an HTML 504.
     const useMsg91 =
       identifierType === OtpIdentifierType.PHONE &&
       this.otpDelivery.isMsg91PhoneProvider() &&
@@ -135,6 +142,7 @@ export class AuthService {
       );
     }
 
+    // Invalidate any previous open challenge immediately (resend-safe).
     await this.prisma.otpVerification.updateMany({
       where: {
         identifier,
@@ -147,61 +155,31 @@ export class AuthService {
 
     const user = await this.findUserByIdentifier(identifier, identifierType);
 
-    let otpHash: string;
-    let localOtp: string | undefined;
+    const localOtp = fixedDevForThisPhone
+      ? DEMO_OTP
+      : this.crypto.generateOtp(otpLength);
+    const otpHash = this.crypto.hashOtp(localOtp);
 
-    if (useMsg91) {
-      let delivery;
-      try {
-        delivery = await this.otpDelivery.send({
-          identifier,
-          identifierType,
-          purpose,
-        });
-      } catch (error) {
-        this.logger.error(
-          `OTP provider send failed for phone_suffix=${identifier.slice(-4)}`,
-          error instanceof Error ? error.message : error,
-        );
-        throw new AuthException(
-          AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
-          'Unable to send OTP right now. Please try again shortly.',
-          HttpStatus.SERVICE_UNAVAILABLE,
-        );
-      }
-
-      otpHash = this.otpDelivery.encodeMsg91Challenge(
-        delivery.providerRequestId ?? `unknown-${Date.now()}`,
+    let provider: 'msg91' | 'local' = 'local';
+    try {
+      const delivery = await this.otpDelivery.send({
+        identifier,
+        identifierType,
+        purpose,
+        otp: localOtp,
+        forceLocal: fixedDevForThisPhone,
+      });
+      provider = delivery.provider === 'msg91' ? 'msg91' : 'local';
+    } catch (error) {
+      this.logger.error(
+        `OTP delivery failed for ${identifierType} phone_suffix=${identifierType === OtpIdentifierType.PHONE ? identifier.slice(-4) : 'n/a'}`,
+        error instanceof Error ? error.message : error,
       );
-    } else {
-      const useFixedDevOtp =
-        this.isFixedDevOtpEnabled() &&
-        identifierType === OtpIdentifierType.PHONE &&
-        identifier === DEMO_PHONE_E164;
-
-      localOtp = useFixedDevOtp
-        ? DEMO_OTP
-        : this.crypto.generateOtp(otpLength);
-      otpHash = this.crypto.hashOtp(localOtp);
-
-      try {
-        await this.otpDelivery.send({
-          identifier,
-          identifierType,
-          purpose,
-          otp: localOtp,
-        });
-      } catch (error) {
-        this.logger.error(
-          `OTP delivery failed for ${identifierType}`,
-          error instanceof Error ? error.message : error,
-        );
-        throw new AuthException(
-          AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
-          'Unable to send OTP right now. Please try again shortly.',
-          HttpStatus.SERVICE_UNAVAILABLE,
-        );
-      }
+      throw new AuthException(
+        AuthErrorCode.AUTH_OTP_PROVIDER_ERROR,
+        'Unable to send OTP right now. Please try again shortly.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
     }
 
     const challenge = await this.prisma.otpVerification.create({
@@ -227,7 +205,7 @@ export class AuthService {
       identifierType,
       purpose,
       challengeId: challenge.id,
-      provider: useMsg91 ? 'msg91' : 'local',
+      provider,
     });
 
     return {
@@ -239,11 +217,19 @@ export class AuthService {
     };
   }
 
+  /**
+   * Resend = generate a fresh OTP, invalidate the previous challenge, deliver
+   * via MSG91. Same abuse controls as send (cooldown + hourly + IP caps).
+   */
+  async resendOtp(dto: SendOtpDto, meta: RequestMeta = {}) {
+    return this.sendOtp(dto, meta);
+  }
+
   async verifyOtp(dto: VerifyOtpDto, meta: RequestMeta = {}) {
     const { identifier, identifierType } = this.resolveIdentifier(dto);
 
-    // Dev/demo shortcut only when fixed OTP mode is explicitly enabled
-    // (disabled whenever AUTH_STRICT_OTP=true or MSG91 provider is active).
+    // Dev/demo shortcut only when fixed OTP mode is explicitly opted in
+    // (disabled whenever AUTH_STRICT_OTP=true).
     if (
       this.isFixedDevOtpEnabled() &&
       identifierType === OtpIdentifierType.PHONE &&
@@ -295,9 +281,13 @@ export class AuthService {
       );
     }
 
-    const isMsg91Challenge = this.otpDelivery.isMsg91Challenge(record.otpHash);
+    // Legacy in-flight challenges stored MSG91 request ids before hash-based
+    // delivery. Keep provider verify for those rows only.
+    const isLegacyMsg91Challenge = this.otpDelivery.isMsg91Challenge(
+      record.otpHash,
+    );
 
-    if (isMsg91Challenge) {
+    if (isLegacyMsg91Challenge) {
       let providerResult;
       try {
         providerResult = await this.otpDelivery.verifyPhoneWithProvider(
@@ -334,7 +324,7 @@ export class AuthService {
         );
       }
     } else {
-      const matches = record.otpHash === this.crypto.hashOtp(dto.otp);
+      const matches = this.crypto.verifyOtpHash(dto.otp, record.otpHash);
       if (!matches) {
         await this.prisma.otpVerification.update({
           where: { id: record.id },
@@ -348,14 +338,27 @@ export class AuthService {
       }
     }
 
+    // Atomic consume — only one concurrent verify may claim the challenge.
     const result = await this.prisma.$transaction(async (tx: DbClient) => {
-      await tx.otpVerification.update({
-        where: { id: record.id },
+      const claimed = await tx.otpVerification.updateMany({
+        where: {
+          id: record.id,
+          consumedAt: null,
+          verifiedAt: null,
+        },
         data: {
           verifiedAt: new Date(),
           consumedAt: new Date(),
         },
       });
+
+      if (claimed.count !== 1) {
+        throw new AuthException(
+          AuthErrorCode.AUTH_INVALID_OTP,
+          'Invalid or expired OTP',
+          HttpStatus.BAD_REQUEST,
+        );
+      }
 
       return this.completeOtpLogin(tx, identifier, identifierType, dto, meta);
     });
@@ -365,7 +368,7 @@ export class AuthService {
       identifierType,
       purpose: dto.purpose,
       userId: result.user.id,
-      provider: isMsg91Challenge ? 'msg91' : 'local',
+      provider: isLegacyMsg91Challenge ? 'msg91-legacy' : 'hash',
     });
 
     await this.bootstrapDemoIfNeeded(result.user.id);
@@ -763,7 +766,7 @@ export class AuthService {
   }
 
   /**
-   * Fixed demo OTP (123456 for demo phone) during the development phase.
+   * Fixed demo OTP (123456 for demo phone) — opt-in only.
    * Disabled when AUTH_STRICT_OTP=true (real SMS production lock).
    */
   private isFixedDevOtpEnabled(): boolean {
@@ -771,6 +774,29 @@ export class AuthService {
       return false;
     }
     return this.configService.get<boolean>('security.authDevFixedOtp') === true;
+  }
+
+  /** Per-IP send/resend cap (in-memory, per instance). */
+  private assertOtpIpAllowed(ipAddress?: string) {
+    const limit =
+      this.configService.get<number>('security.otpIpMaxRequests') ?? 20;
+    const windowSeconds =
+      this.configService.get<number>('security.otpIpWindowSeconds') ?? 3600;
+    if (limit <= 0) return;
+
+    if (!this.otpIpLimiter) {
+      this.otpIpLimiter = new KeyedRateLimiter(limit, windowSeconds * 1000);
+    }
+
+    const key = (ipAddress ?? 'unknown').trim() || 'unknown';
+    if (!this.otpIpLimiter.tryConsume(key)) {
+      throw new AuthException(
+        AuthErrorCode.AUTH_OTP_RATE_LIMITED,
+        'Too many OTP requests from this network. Please try again later.',
+        HttpStatus.TOO_MANY_REQUESTS,
+        { retryAfterSeconds: windowSeconds },
+      );
+    }
   }
 
   private async issueSessionForIdentifier(
@@ -923,13 +949,19 @@ export class AuthService {
     return { user: publicUser, ...tokens };
   }
 
-  private resolveIdentifier(dto: { phone?: string; email?: string }): {
+  private resolveIdentifier(dto: {
+    phone?: string;
+    email?: string;
+    mobile?: string;
+    countryCode?: string;
+  }): {
     identifier: string;
     identifierType: OtpIdentifierType;
   } {
-    if (dto.phone) {
+    const phoneRaw = dto.phone ?? this.composeMobile(dto.mobile, dto.countryCode);
+    if (phoneRaw) {
       return {
-        identifier: this.normalizePhoneE164(dto.phone),
+        identifier: this.normalizePhoneE164(phoneRaw),
         identifierType: OtpIdentifierType.PHONE,
       };
     }
@@ -944,6 +976,19 @@ export class AuthService {
       'phone or email is required',
       HttpStatus.BAD_REQUEST,
     );
+  }
+
+  /** Build E.164-ish input from optional `mobile` + `countryCode` aliases. */
+  private composeMobile(
+    mobile?: string,
+    countryCode?: string,
+  ): string | undefined {
+    if (!mobile?.trim()) return undefined;
+    const digits = mobile.replace(/\D/g, '');
+    if (!digits) return undefined;
+    if (mobile.trim().startsWith('+')) return mobile.trim();
+    const cc = (countryCode ?? '+91').trim().replace(/^\+/, '') || '91';
+    return `+${cc}${digits}`;
   }
 
   /**

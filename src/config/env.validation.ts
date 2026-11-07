@@ -62,6 +62,8 @@ export const envSchema = z
     OTP_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
     OTP_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
     OTP_MAX_SENDS_PER_HOUR: z.coerce.number().int().min(1).max(30).default(5),
+    OTP_IP_MAX_REQUESTS: z.coerce.number().int().min(0).max(500).default(20),
+    OTP_IP_WINDOW_SECONDS: z.coerce.number().int().positive().default(3600),
     OTP_PROVIDER: z.enum(['msg91', 'local', 'none']).optional().default('local'),
     OTP_ENVIRONMENT: z
       .enum(['production', 'development'])
@@ -78,10 +80,10 @@ export const envSchema = z
     MSG91_TIMEOUT_MS: z.coerce.number().int().positive().default(15_000),
     AUTH_DEV_EXPOSE_OTP: booleanFromString.optional().default(false),
     /**
-     * Set false to disable demo-phone OTP 123456. Defaults to on until
-     * AUTH_STRICT_OTP=true. See `resolveFixedDevOtp`.
+     * Opt-in ONLY. When true, demo phone accepts fixed OTP 123456.
+     * Default off. Always ignored when AUTH_STRICT_OTP=true. See `resolveFixedDevOtp`.
      */
-    AUTH_DEV_FIXED_OTP: booleanFromString.optional(),
+    AUTH_DEV_FIXED_OTP: booleanFromString.optional().default(false),
     /**
      * When true, fixed demo OTP is forbidden (real SMS production lock).
      */

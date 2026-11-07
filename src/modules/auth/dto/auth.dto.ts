@@ -20,15 +20,32 @@ export enum AuthOtpPurpose {
 
 export class SendOtpDto {
   @ApiPropertyOptional({ example: '+919876543210' })
-  @ValidateIf((o: SendOtpDto) => !o.email)
+  @ValidateIf((o: SendOtpDto) => !o.email && !o.mobile)
   @IsString()
   @Matches(/^\+[1-9]\d{7,14}$/, {
     message: 'phone must be in E.164 format, e.g. +919876543210',
   })
   phone?: string;
 
+  /** Alias for phone without country code (combined with countryCode). */
+  @ApiPropertyOptional({ example: '9876543210' })
+  @ValidateIf((o: SendOtpDto) => !o.email && !o.phone)
+  @IsString()
+  @Matches(/^[6-9]\d{9}$/, {
+    message: 'mobile must be a 10-digit Indian mobile number',
+  })
+  mobile?: string;
+
+  @ApiPropertyOptional({ example: '+91', default: '+91' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+?[1-9]\d{0,3}$/, {
+    message: 'countryCode must be a valid dial code, e.g. +91',
+  })
+  countryCode?: string;
+
   @ApiPropertyOptional({ example: 'user@example.com' })
-  @ValidateIf((o: SendOtpDto) => !o.phone)
+  @ValidateIf((o: SendOtpDto) => !o.phone && !o.mobile)
   @IsEmail()
   email?: string;
 
@@ -40,13 +57,27 @@ export class SendOtpDto {
 
 export class VerifyOtpDto {
   @ApiPropertyOptional({ example: '+919876543210' })
-  @ValidateIf((o: VerifyOtpDto) => !o.email)
+  @ValidateIf((o: VerifyOtpDto) => !o.email && !o.mobile)
   @IsString()
   @Matches(/^\+[1-9]\d{7,14}$/)
   phone?: string;
 
+  @ApiPropertyOptional({ example: '9876543210' })
+  @ValidateIf((o: VerifyOtpDto) => !o.email && !o.phone)
+  @IsString()
+  @Matches(/^[6-9]\d{9}$/, {
+    message: 'mobile must be a 10-digit Indian mobile number',
+  })
+  mobile?: string;
+
+  @ApiPropertyOptional({ example: '+91', default: '+91' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\+?[1-9]\d{0,3}$/)
+  countryCode?: string;
+
   @ApiPropertyOptional({ example: 'user@example.com' })
-  @ValidateIf((o: VerifyOtpDto) => !o.phone)
+  @ValidateIf((o: VerifyOtpDto) => !o.phone && !o.mobile)
   @IsEmail()
   email?: string;
 
@@ -54,6 +85,7 @@ export class VerifyOtpDto {
   @IsString()
   @MinLength(4)
   @MaxLength(8)
+  @Matches(/^\d{4,8}$/, { message: 'otp must be 4–8 digits' })
   otp!: string;
 
   @ApiProperty({ enum: AuthOtpPurpose, example: AuthOtpPurpose.LOGIN })

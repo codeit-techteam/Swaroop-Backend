@@ -9,6 +9,7 @@ describe('CryptoService', () => {
   const crypto = new CryptoService({
     get: (key: string) => {
       if (key === 'security.bcryptSaltRounds') return 10;
+      if (key === 'security.jwtAccessSecret') return 'test-otp-hmac-secret';
       return undefined;
     },
   } as ConfigService);
@@ -32,6 +33,12 @@ describe('CryptoService', () => {
     expect(hash).toHaveLength(64);
     expect(hash).toBe(crypto.hashOtp('123456'));
     expect(hash).not.toBe('123456');
+  });
+
+  it('verifies OTP hashes in constant time', () => {
+    const hash = crypto.hashOtp('482913');
+    expect(crypto.verifyOtpHash('482913', hash)).toBe(true);
+    expect(crypto.verifyOtpHash('000000', hash)).toBe(false);
   });
 });
 
