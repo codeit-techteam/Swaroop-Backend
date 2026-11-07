@@ -1,96 +1,88 @@
-# PolyStoreX OTP — what to do next (production)
+# PolyStoreX OTP — production SMS not arriving
 
-MSG91 panel (confirmed):
+## Root cause (confirmed)
 
-| Field | Value |
+| Layer | Status |
 |-------|--------|
-| Template | `OTP_Template1` |
-| Status | **Approved by MSG91** |
-| Template ID | `6ae081288c342f46e203bb12` |
-| Sender ID | **`VELPLY`** |
-| Placeholder | `##OTP##` |
+| Customer/Seller UI | OK — reaches Verify OTP |
+| Backend health | OK — `msg91Configured`, `senderIdConfigured`, `authStrictOtp` all `true` |
+| Backend send API | OK — returns `smsDispatched: true` (MSG91 **accepted** the request) |
+| Handset / Test DLT | **FAIL** — SMS never delivered |
 
-Backend: `https://swaroop-backend-xzwkz.ondigitalocean.app`
+So this is **not** an app bug. Delivery dies in **MSG91 ↔ Airtel DLT scrubbing**.
+
+MSG91 can approve an API call and still drop the SMS when DLT content does not match.
 
 ---
 
-## Do these 5 steps in order
+## Critical mismatch to fix in MSG91 panel (do this first)
 
-### 1. DigitalOcean App env (backend)
+Open **Update Template** for `OTP_Template1`. Current content shows:
 
-Set / update:
+```text
+Your PolyStoreX OTP verification code is ##OTP##. This OTP s valid for 10 minutes. Do not share the OTP with anyone.
+```
+
+Note the typo: **`OTP s valid`** (missing **`is`**).
+
+### Required action
+
+1. Open **Airtel DLT → SMS Templates → Registered → OTP Template 1** (`1077252360053463958`).
+2. Copy the **exact** approved content character-by-character.
+3. In MSG91 → Update Template:
+   - **Sender ID:** `VELPLY`
+   - **DLT Template ID:** `1077252360053463958`
+   - **OTP Content:** paste the **exact** Airtel text, using `##OTP##` for the code placeholder  
+     (almost certainly: `This OTP is valid` — not `OTP s valid`)
+4. Save → wait for **Approved by MSG91** (not Failed by DLT).
+5. Click **Test DLT** → send to `8240890242`.
+6. Confirm SMS arrives from **VELPLY**.
+
+Until **Test DLT** works, Customer Web / Seller Web / Expo cannot receive SMS either.
+
+---
+
+## Also check in MSG91
+
+1. **SendOTP → Logs** after any send / Test DLT — open the row and read the failure reason  
+   (common: `DLT Scrubbing Failed`, `SMS not Matched with DLT Template`, `Header not Associated`).
+2. **Authkey IP whitelist** includes DigitalOcean egress:
+   - `168.144.127.250`
+   - `143.110.253.127`
+3. Account has SMS **balance**.
+4. Entity / PE ID on MSG91 matches your Airtel DLT entity.
+
+---
+
+## Why mobile shows “Dev: OTP 123456” then Invalid OTP
+
+Expo Metro (`npx expo start`) still pointed at the **production** API.
+
+Production has `AUTH_STRICT_OTP=true`, so demo OTP `123456` is **rejected** (correct).
+
+The Dev hint is now hidden whenever the API host is production (`ondigitalocean.app` / `polystorex.com`).
+
+Reload Metro after pulling the Expo fix. Enter only the OTP from the real SMS (once Test DLT works).
+
+---
+
+## Backend / DO env (already correct when health shows senderIdConfigured: true)
 
 | Variable | Value |
 |----------|--------|
 | `OTP_PROVIDER` | `msg91` |
 | `AUTH_STRICT_OTP` | `true` |
-| `AUTH_DEV_FIXED_OTP` | `false` |
-| `AUTH_DEV_EXPOSE_OTP` | `false` |
-| `MSG91_AUTH_KEY` | your live key |
 | `MSG91_OTP_TEMPLATE_ID` | `6ae081288c342f46e203bb12` |
-| `MSG91_SENDER_ID` | **`VELPLY`** |
+| `MSG91_SENDER_ID` | `VELPLY` |
 | `MSG91_HEADER` | `VELPLY` |
 | `MSG91_DLT_TEMPLATE_ID` | `1077252360053463958` |
-| `OTP_EXPIRES_IN_SECONDS` | `600` (matches template “10 minute”) |
-| `OTP_LENGTH` | `6` |
-
-Save → **Force rebuild and deploy**.
-
-Verify:
-
-```bash
-curl -s https://swaroop-backend-xzwkz.ondigitalocean.app/api/v1/health | python3 -m json.tool
-```
-
-Expect:
-
-```json
-"otp": {
-  "msg91Configured": true,
-  "authStrictOtp": true,
-  "templateConfigured": true,
-  "senderIdConfigured": true,
-  "headerConfigured": true
-}
-```
-
-### 2. MSG91 Authkey IP whitelist
-
-Add both DO egress IPs:
-
-- `168.144.127.250`
-- `143.110.253.127`
-
-### 3. MSG91 Test DLT (must pass before blaming the app)
-
-1. MSG91 → OTP → Templates → `OTP_Template1`
-2. Click **Test DLT**
-3. Send to `8240890242`
-4. Confirm SMS arrives as sender **VELPLY**
-
-If Test DLT fails → open **SendOTP → Logs**, fix the DLT reason with MSG91/Airtel support. App cannot override a DLT reject.
-
-### 4. Live app test
-
-1. `https://customer.polystorex.com/login` → Send OTP  
-2. `https://seller.polystorex.com/login` → Send OTP  
-3. SMS should arrive → enter code → login  
-
-API success body includes `smsDispatched`, `correlationId`, `providerRequestId` (use `providerRequestId` in MSG91 Logs).
-
-### 5. If still no SMS after Test DLT works
-
-1. MSG91 → SendOTP → **Logs** → find the request  
-2. Note failure reason (DLT scrubbing / header / balance)  
-3. Confirm Authkey has balance and IP whitelist includes both egress IPs  
+| `OTP_EXPIRES_IN_SECONDS` | `600` |
 
 ---
 
-## ID map (current)
+## Success criteria
 
-```
-MSG91 OTP_Template1 (6ae081288c…)
-  └─ Sender ID: VELPLY  ← MSG91_SENDER_ID
-       └─ Airtel DLT header: VELPLY
-            └─ Airtel content template: 1077252360053463958
-```
+1. MSG91 **Test DLT** SMS arrives on the handset as **VELPLY**.
+2. `customer.polystorex.com` / `seller.polystorex.com` Send OTP → same SMS.
+3. Enter that 6-digit code → login succeeds.
+4. Expo no longer shows fake `123456` against production API.
