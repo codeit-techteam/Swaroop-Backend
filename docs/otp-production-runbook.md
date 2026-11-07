@@ -1,27 +1,24 @@
-# PolyStoreX OTP production runbook (MSG91)
+# PolyStoreX OTP — what to do next (production)
 
-Central OTP endpoints (all platforms):
+MSG91 panel (confirmed):
 
-- `POST /api/v1/auth/otp/send`
-- `POST /api/v1/auth/otp/resend`
-- `POST /api/v1/auth/otp/verify`
+| Field | Value |
+|-------|--------|
+| Template | `OTP_Template1` |
+| Status | **Approved by MSG91** |
+| Template ID | `6ae081288c342f46e203bb12` |
+| Sender ID | **`VELPLY`** |
+| Placeholder | `##OTP##` |
 
 Backend: `https://swaroop-backend-xzwkz.ondigitalocean.app`
 
 ---
 
-## Current production diagnosis (2026-11-07)
+## Do these 5 steps in order
 
-| Check | Result |
-|-------|--------|
-| Backend health `otp.msg91Configured` | `true` |
-| Backend `smsDispatched` on send | `true` (MSG91 **accepted** the API call) |
-| Handset SMS | Often missing |
-| MSG91 template status | Was **Failed by DLT and Approved by MSG91** → after Re-verify: **Approved by MSG91** |
+### 1. DigitalOcean App env (backend)
 
-**Meaning:** This is primarily a **DLT delivery** problem, not a missing Authkey. MSG91 can return success while the operator drops the SMS when DLT mapping/scrubbing fails.
-
-### Immediate DigitalOcean env (set exactly)
+Set / update:
 
 | Variable | Value |
 |----------|--------|
@@ -29,78 +26,26 @@ Backend: `https://swaroop-backend-xzwkz.ondigitalocean.app`
 | `AUTH_STRICT_OTP` | `true` |
 | `AUTH_DEV_FIXED_OTP` | `false` |
 | `AUTH_DEV_EXPOSE_OTP` | `false` |
-| `MSG91_AUTH_KEY` | live Veylorn key |
+| `MSG91_AUTH_KEY` | your live key |
 | `MSG91_OTP_TEMPLATE_ID` | `6ae081288c342f46e203bb12` |
-| `MSG91_SENDER_ID` | **`AIR0993093271`** (MSG91 Sender ID column — required) |
-| `MSG91_HEADER` | `VELPLY` (DLT header docs only) |
+| `MSG91_SENDER_ID` | **`VELPLY`** |
+| `MSG91_HEADER` | `VELPLY` |
 | `MSG91_DLT_TEMPLATE_ID` | `1077252360053463958` |
+| `OTP_EXPIRES_IN_SECONDS` | `600` (matches template “10 minute”) |
+| `OTP_LENGTH` | `6` |
 
-Then **Force rebuild and deploy** the backend.
+Save → **Force rebuild and deploy**.
 
-After deploy, health should show `senderIdConfigured: true`.
+Verify:
 
-### MSG91 panel — fix "Failed by DLT"
-
-1. Open [OTP Templates](https://control.msg91.com/app/m/l/otp/templates).
-2. If status is **Failed by DLT and Approved by MSG91**, click **Re-verify Template**.
-3. Wait until status is only **Approved by MSG91** (green).
-4. Confirm:
-   - Template ID `6ae081288c342f46e203bb12`
-   - Sender ID **`AIR0993093271`**
-   - Content uses `##OTP##`
-5. Click **Test DLT** → send to your handset (`+918240890242`).
-   - If Test DLT also fails → DLT mapping is still wrong (Airtel / MSG91 support). Backend cannot fix that alone.
-   - If Test DLT succeeds → retry Customer/Seller login Send OTP.
-
-### Airtel DLT cross-check
-
-| Item | Value |
-|------|--------|
-| Header | `VELPLY` (Header DLT Id `1005742923759773867`) |
-| Content template | `OTP Template 1` / Template DLT Id `1077252360053463958` |
-| Header on that template | must be **VELPLY** |
-
-Content after OTP substitution must match the Airtel-registered text character-for-character (except the OTP digits).
-
-### MSG91 SendOTP → Logs
-
-After any send from the app:
-
-1. Open MSG91 → OTP → SendOTP → **Logs**
-2. Find the row for mobile `…0242` / `providerRequestId` from API response
-3. Read delivery reason (e.g. `DLT Scrubbing Failed`, `Header not Associated with Template`)
-
-API response now includes `providerRequestId` + `correlationId` when MSG91 accepts the send.
-
-### Authkey IP whitelist
-
-Add both DigitalOcean dedicated egress IPs:
-
-- `168.144.127.250`
-- `143.110.253.127`
-
----
-
-## How IDs relate
-
-```
-MSG91 OTP_Template1 (6ae081288c…)
-    └─ MSG91 Sender ID: AIR0993093271   ← set MSG91_SENDER_ID to this
-           └─ DLT header shown to user: VELPLY
-                  └─ Airtel template 1077252360053463958
+```bash
+curl -s https://swaroop-backend-xzwkz.ondigitalocean.app/api/v1/health | python3 -m json.tool
 ```
 
-Never set `MSG91_SENDER_ID=VELPLY`.
-
----
-
-## Health check
-
-`GET /api/v1/health` (or `/health` if routed):
+Expect:
 
 ```json
 "otp": {
-  "provider": "msg91",
   "msg91Configured": true,
   "authStrictOtp": true,
   "templateConfigured": true,
@@ -109,4 +54,43 @@ Never set `MSG91_SENDER_ID=VELPLY`.
 }
 ```
 
-Production is SMS-ready only when `msg91Configured`, `authStrictOtp`, and `senderIdConfigured` are all `true`, **and** MSG91 template is Approved (not Failed by DLT), **and** Test DLT delivers to a real handset.
+### 2. MSG91 Authkey IP whitelist
+
+Add both DO egress IPs:
+
+- `168.144.127.250`
+- `143.110.253.127`
+
+### 3. MSG91 Test DLT (must pass before blaming the app)
+
+1. MSG91 → OTP → Templates → `OTP_Template1`
+2. Click **Test DLT**
+3. Send to `8240890242`
+4. Confirm SMS arrives as sender **VELPLY**
+
+If Test DLT fails → open **SendOTP → Logs**, fix the DLT reason with MSG91/Airtel support. App cannot override a DLT reject.
+
+### 4. Live app test
+
+1. `https://customer.polystorex.com/login` → Send OTP  
+2. `https://seller.polystorex.com/login` → Send OTP  
+3. SMS should arrive → enter code → login  
+
+API success body includes `smsDispatched`, `correlationId`, `providerRequestId` (use `providerRequestId` in MSG91 Logs).
+
+### 5. If still no SMS after Test DLT works
+
+1. MSG91 → SendOTP → **Logs** → find the request  
+2. Note failure reason (DLT scrubbing / header / balance)  
+3. Confirm Authkey has balance and IP whitelist includes both egress IPs  
+
+---
+
+## ID map (current)
+
+```
+MSG91 OTP_Template1 (6ae081288c…)
+  └─ Sender ID: VELPLY  ← MSG91_SENDER_ID
+       └─ Airtel DLT header: VELPLY
+            └─ Airtel content template: 1077252360053463958
+```

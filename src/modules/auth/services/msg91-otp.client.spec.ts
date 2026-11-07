@@ -14,7 +14,7 @@ describe('Msg91OtpClient', () => {
       'otp.provider': 'msg91',
       'otp.msg91.authKey': 'test-auth-key',
       'otp.msg91.templateId': '6ae081288c342f46e203bb12',
-      'otp.msg91.senderId': 'AIR0993093271',
+      'otp.msg91.senderId': 'VELPLY',
       'otp.msg91.timeoutMs': 5_000,
       ...overrides,
     };
@@ -74,7 +74,7 @@ describe('Msg91OtpClient', () => {
     expect(JSON.parse(String(init.body))).toEqual({ OTP: '482913' });
   });
 
-  it('falls back to AIR0993093271 for the approved OTP_Template1 id', async () => {
+  it('falls back to MSG91_HEADER VELPLY when senderId is empty', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -96,8 +96,7 @@ describe('Msg91OtpClient', () => {
     });
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('sender=AIR0993093271');
-    expect(url).not.toContain('sender=VELPLY');
+    expect(url).toContain('sender=VELPLY');
   });
 
   it('passes explicit MSG91_SENDER_ID when configured', async () => {
@@ -112,7 +111,7 @@ describe('Msg91OtpClient', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await makeClient({
-      'otp.msg91.senderId': 'AIR0993093271',
+      'otp.msg91.senderId': 'VELPLY',
     }).sendOtp({
       e164Phone: '+918240890242',
       otpLength: 6,
@@ -121,20 +120,7 @@ describe('Msg91OtpClient', () => {
     });
 
     const [url] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('sender=AIR0993093271');
-  });
-
-  it('rejects VELPLY as MSG91_SENDER_ID (DLT header is not the route sender)', async () => {
-    await expect(
-      makeClient({
-        'otp.msg91.senderId': 'VELPLY',
-      }).sendOtp({
-        e164Phone: '+918240890242',
-        otpLength: 6,
-        expiresInSeconds: 300,
-        otp: '123456',
-      }),
-    ).rejects.toThrow(/Invalid MSG91 sender/);
+    expect(url).toContain('sender=VELPLY');
   });
 
   it('treats HTTP 200 error payload as send failure', async () => {
