@@ -1,98 +1,105 @@
 # PolyStoreX OTP — production SMS not arriving
 
-## Which MSG91 API do we use?
+## Which MSG91 API?
 
-| Product | Used by PolyStoreX? |
-|---------|---------------------|
-| **OTP / SendOTP v5** `POST https://control.msg91.com/api/v5/otp` | **YES** — this is the live path |
-| SMS / Flow (`/api/v5/flow`) | **NO** — ignore SMS Templates for app OTP |
+**SendOTP (OTP product)** — not SMS Flow.
 
-Proof: failures appear under **MSG91 → OTP → Logs** (not SMS Logs), with Flow ID = `6ae081288c342f46e203bb12` (`OTP_Template1`).
+- Endpoint: `POST https://control.msg91.com/api/v5/otp`
+- MSG91 template: `OTP_Template1` → `6ae081288c342f46e203bb12`
+- Evidence: failures appear under **OTP → Logs**
 
-SMS Templates (`PolyStoreX_OTP_Template`) is a separate MSG91 product. App OTP does **not** call it.
-
----
-
-## Exact failure reason (from your MSG91 log)
-
-**Failure Reason: `Invalid DLT Entity Id`**
-
-That is **not** a frontend bug and **not** the wrong API product.
-
-| Id type | Example | Role |
-|---------|---------|------|
-| MSG91 OTP template id (hex) | `6ae081288c342f46e203bb12` | SendOTP `template_id` |
-| Airtel **Content** Template Id | `1077252360053463958` | `DLT_TE_ID` / `MSG91_DLT_TEMPLATE_ID` |
-| Airtel **Header** DLT Id | `1005742923759773867` (VELPLY) | Header registration — **not** Entity Id |
-| Airtel **PE / Entity Id** | 19-digit, Airtel usually starts with `100` | `PE_ID` / `MSG91_DLT_ENTITY_ID` |
-
-`Invalid DLT Entity Id` means the **PE / Entity Id** is missing or wrong on MSG91 (or in `MSG91_DLT_ENTITY_ID`).
-
-Do **not** put Content Template Id or Header DLT Id into `MSG91_DLT_ENTITY_ID`.
+Ignore **SMS → Templates** (`PolyStoreX_OTP_Template`) for app OTP. That SMS template showing “Template not matched on DLT” is a separate product path.
 
 ---
 
-## Fix (manual — required for handset delivery)
+## Current failure reasons (your logs)
 
-### 1. Copy the real PE / Entity Id from Airtel
+| Time | Template-OTP | Failure |
+|------|--------------|---------|
+| 12:57 | `-` | Template Not Found (panel Test DLT / unbound send) |
+| 12:06 | `-` | Invalid DLT Template ID |
+| 10:10 | `6ae08128…` | Invalid DLT Template ID / previously Invalid DLT Entity Id |
 
-1. Open [Airtel DLT home](https://www.airtel.in/business/commercial-communication/home).
-2. Copy the **Entity / Registration / PE Id** from the dashboard (19 digits).
-3. It is **not** Header DLT Id `1005742923759773867` and **not** Template Id `1077252360053463958`.
+Root cause of handset failure: **MSG91 message text does not match Airtel DLT**, plus **PE Entity Id** must be mapped.
 
-### 2. Map Entity Id on MSG91
-
-1. MSG91 → **SMS → Sender Id** (or OTP template Sender mapping).
-2. For **VELPLY**, set the DLT **Entity / PE Id** to the Airtel value from step 1.
-3. OTP → Templates → `OTP_Template1` → DLT Template Id = `1077252360053463958`, Sender = `VELPLY`.
-4. Click **Re-verify** / **Test DLT** until SMS arrives on the handset.
-
-### 3. Set DigitalOcean env
+### Exact Airtel registered content (must match)
 
 ```text
-OTP_PROVIDER=msg91
+Your PolyStoreX OTP verification code is {#numeric#}. This OTP is valid for 10 minutes. Do not share the OTP with anyone.
+```
+
+### What MSG91 currently has (WRONG — typo)
+
+```text
+Your PolyStoreX OTP verification code is ##OTP##. This OTP s valid for 10 minutes. Do not share the OTP with anyone.
+```
+
+Missing **`is`** → DLT rejects → **Invalid DLT Template ID** / **Template not matched on DLT**.
+
+---
+
+## Fix now (in order)
+
+### A. Fix MSG91 OTP template text (critical)
+
+1. OTP → Templates → `OTP_Template1` → edit (Update Template modal you already have open).
+2. Replace content with **exactly**:
+
+```text
+Your PolyStoreX OTP verification code is ##OTP##. This OTP is valid for 10 minutes. Do not share the OTP with anyone.
+```
+
+3. Keep:
+   - Sender ID: `VELPLY`
+   - DLT Template ID: `1077252360053463958`
+4. Click **Update** → wait for **Approved by MSG91**.
+5. Click **Test DLT** → confirm 6-digit (or panel test length) SMS arrives.
+
+### B. Map PE Id to sender VELPLY
+
+1. MSG91 → **SMS** → **Sender Id**
+2. Edit **VELPLY**
+3. Paste PE Id into the Entity/PE field (UI may say “DLT Template ID”):
+
+```text
+1001399554249028657
+```
+
+4. Update / Save
+
+### C. DigitalOcean App Platform env
+
+```text
+MSG91_DLT_ENTITY_ID=1001399554249028657
+MSG91_DLT_TEMPLATE_ID=1077252360053463958
 MSG91_OTP_TEMPLATE_ID=6ae081288c342f46e203bb12
 MSG91_SENDER_ID=VELPLY
 MSG91_HEADER=VELPLY
-MSG91_DLT_TEMPLATE_ID=1077252360053463958
-MSG91_DLT_ENTITY_ID=<paste Airtel PE Id here>
+OTP_LENGTH=6
 OTP_EXPIRES_IN_SECONDS=600
 AUTH_STRICT_OTP=true
+AUTH_DEV_FIXED_OTP=false
+AUTH_DEV_EXPOSE_OTP=false
 ```
 
-Redeploy after saving. Health must show:
+Redeploy. Confirm `/api/v1/health` → `otp.dltEntityConfigured: true`.
 
-- `dltTemplateConfigured: true`
-- `dltEntityConfigured: true`
+### D. Ignore for app OTP
 
-### 4. Fix template text typo (if Airtel has “is”)
+- SMS template `PolyStoreX_OTP_Template` “Template not matched on DLT” — not used by the app.
+- Log rows with Template-OTP `-` + “Template Not Found” — usually panel Test DLT without a bound OTP template.
 
-MSG91 currently shows:
+---
+
+## ID cheat sheet
 
 ```text
-This OTP s valid for 10 minutes
+PE Id (Entity):     1001399554249028657   → MSG91_DLT_ENTITY_ID + Sender Id mapping
+Content Template:   1077252360053463958   → MSG91_DLT_TEMPLATE_ID + OTP template “DLT Template ID”
+MSG91 OTP template: 6ae081288c342f46e203bb12 → MSG91_OTP_TEMPLATE_ID
+Sender/Header:      VELPLY                → MSG91_SENDER_ID / MSG91_HEADER
 ```
 
-Airtel registered content must match **character-for-character**. If Airtel has `This OTP is valid`, edit MSG91 OTP_Template1 to match, then Re-verify.
+## Backend note
 
----
-
-## Backend request shape (SendOTP v5)
-
-```http
-POST /api/v5/otp?template_id=6ae081288c342f46e203bb12&mobile=91…&otp=…&sender=VELPLY&DLT_TE_ID=1077252360053463958&PE_ID=<entity>&otp_expiry=10
-Content-Type: application/json
-authkey: <MSG91_AUTH_KEY>
-
-{ "OTP": "<code>" }
-```
-
-Body is **only** `OTP`. DLT ids stay in query params (never in JSON/`extra_param`).
-
----
-
-## Success criteria
-
-1. MSG91 OTP Log → status **Delivered** (not Failed / Invalid DLT Entity Id).
-2. Handset receives SMS from **VELPLY**.
-3. `customer.polystorex.com` / `seller.polystorex.com` verify with that code.
+Pushed `01fe417`: SendOTP body is `{OTP}` only; `DLT_TE_ID` + `PE_ID` go as query params. After you set `MSG91_DLT_ENTITY_ID` and fix the typo, Test DLT + Customer WebApp should deliver 6-digit OTPs.
