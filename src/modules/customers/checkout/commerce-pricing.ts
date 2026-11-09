@@ -13,6 +13,17 @@ export type CommercePricingConfig = {
   advanceDiscountBps: number;
   quoteTtlMs: number;
   quantityIncrement: string;
+  /**
+   * Optional admin-configured absolute floor (₹/MT). When set, prices below
+   * this value are flagged for review even if freight is lower.
+   * Empty / unset = no absolute floor (freight comparison still applies).
+   */
+  minMaterialPricePerMt: string | null;
+  /**
+   * Optional admin-configured ceiling (₹/MT). When set, prices above this
+   * value are flagged for review. Empty / unset = no ceiling.
+   */
+  maxMaterialPricePerMt: string | null;
 };
 
 export const DEFAULT_COMMERCE_PRICING: CommercePricingConfig = {
@@ -24,6 +35,12 @@ export const DEFAULT_COMMERCE_PRICING: CommercePricingConfig = {
   advanceDiscountBps: Number(process.env.COMMERCE_ADVANCE_DISCOUNT_BPS ?? 500),
   quoteTtlMs: Number(process.env.COMMERCE_QUOTE_TTL_MS ?? 10 * 60 * 1000),
   quantityIncrement: process.env.COMMERCE_QTY_INCREMENT ?? '1',
+  minMaterialPricePerMt: process.env.COMMERCE_MIN_MATERIAL_PRICE_PER_MT?.trim()
+    ? process.env.COMMERCE_MIN_MATERIAL_PRICE_PER_MT
+    : null,
+  maxMaterialPricePerMt: process.env.COMMERCE_MAX_MATERIAL_PRICE_PER_MT?.trim()
+    ? process.env.COMMERCE_MAX_MATERIAL_PRICE_PER_MT
+    : null,
 };
 
 export type QuoteLineInput = {
@@ -203,9 +220,11 @@ export function assertSellableUnitPrice(
 }
 
 /**
- * Soft commercial review flag — does not block listing or checkout.
+ * Soft commercial review flag — does not block checkout math, but offerings
+ * that need review must not go ACTIVE / Best Value on the customer marketplace.
  * Material priced below platform freight/MT is commercially suspicious for
- * polymers and should be verified by admin (e.g. ₹10/MT with ₹1,250 freight).
+ * polymers (e.g. ₹10/MT with ₹1,250 freight). Optional admin min/max floors
+ * also apply when COMMERCE_MIN/MAX_MATERIAL_PRICE_PER_MT are configured.
  */
 export function assessMaterialPriceReview(
   materialPricePerMt: Prisma.Decimal | number | string,
@@ -222,6 +241,24 @@ export function assessMaterialPriceReview(
       reason: 'Material price is missing or not positive',
     };
   }
+  if (config.minMaterialPricePerMt) {
+    const min = toDecimal(config.minMaterialPricePerMt);
+    if (min.gt(0) && price.lt(min)) {
+      return {
+        needsPriceReview: true,
+        reason: `Material price (₹${moneyString(price)}/MT) is below the configured minimum (₹${moneyString(min)}/MT)`,
+      };
+    }
+  }
+  if (config.maxMaterialPricePerMt) {
+    const max = toDecimal(config.maxMaterialPricePerMt);
+    if (max.gt(0) && price.gt(max)) {
+      return {
+        needsPriceReview: true,
+        reason: `Material price (₹${moneyString(price)}/MT) is above the configured maximum (₹${moneyString(max)}/MT)`,
+      };
+    }
+  }
   if (freight.gt(0) && price.lt(freight)) {
     return {
       needsPriceReview: true,
@@ -229,6 +266,39 @@ export function assessMaterialPriceReview(
     };
   }
   return { needsPriceReview: false, reason: null };
+}
+
+/**
+ * Buyer-facing marketplace eligibility: positive price that does not need review.
+ * Used to hide suspicious / test offers from live listings and Best Value.
+ */
+export function isMarketplaceEligibleMaterialPrice(
+  materialPricePerMt: Prisma.Decimal | number | string | null | undefined,
+  config: CommercePricingConfig = DEFAULT_COMMERCE_PRICING,
+): boolean {
+  if (materialPricePerMt == null || materialPricePerMt === '') return false;
+  try {
+    const price = assertSellableUnitPrice(materialPricePerMt);
+    return !assessMaterialPriceReview(price, config).needsPriceReview;
+  } catch {
+    return false;
+  }
+}
+
+/** Minimum ₹/MT a live marketplace offer may show (freight floor, or admin min). */
+export function marketplaceMinSellablePricePerMt(
+  config: CommercePricingConfig = DEFAULT_COMMERCE_PRICING,
+): Prisma.Decimal {
+  const freight = toDecimal(config.freightPerMt);
+  const configured = config.minMaterialPricePerMt
+    ? toDecimal(config.minMaterialPricePerMt)
+    : new Prisma.Decimal(0);
+  if (configured.gt(0) && freight.gt(0)) {
+    return configured.gt(freight) ? configured : freight;
+  }
+  if (configured.gt(0)) return configured;
+  if (freight.gt(0)) return freight;
+  return new Prisma.Decimal('0.01');
 }
 
 export type CommercePricingBreakdown = {

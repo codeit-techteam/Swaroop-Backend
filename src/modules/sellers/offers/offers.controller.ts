@@ -60,9 +60,12 @@ export class OffersController {
     summary:
       'Offer KPI summary (active, draft, pending PRs, expiring soon, sold out)',
   })
-  async summary(@CurrentUser() user: AuthenticatedUser) {
+  async summary(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query('warehouseId') warehouseId?: string,
+  ) {
     return successResponse(
-      await this.offersService.summary(user.id),
+      await this.offersService.summary(user.id, warehouseId),
       'Offer summary retrieved',
     );
   }

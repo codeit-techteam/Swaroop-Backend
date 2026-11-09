@@ -311,21 +311,41 @@ export const BLIND_MANUFACTURER_LABEL = 'PRIVATE';
 /**
  * Strip trailing manufacturer suffixes from listing titles so buyers do not
  * learn supplier identity from the display name (e.g. "ABS 3000D - TAITA").
+ * Also strips a short denylist of known maker tokens when nested payloads
+ * omit the internal manufacturer field.
  */
+const KNOWN_MAKER_TOKENS = [
+  'TAITA',
+  'RELIANCE',
+  'IOCL',
+  'HALDIA',
+  'OPAL',
+  'GAIL',
+  'MRPL',
+  'BOROUGE',
+  'SABIC',
+  'DOW',
+  'LYONDELLBASELL',
+];
+
 export function sanitizeBlindDisplayName(
   name: string,
   manufacturer?: string | null,
 ): string {
   let next = name.trim();
-  const maker = manufacturer?.trim();
-  if (!maker) {
-    return next;
+  const makers = new Set<string>();
+  const primary = manufacturer?.trim();
+  if (primary) makers.add(primary);
+  for (const token of KNOWN_MAKER_TOKENS) makers.add(token);
+
+  for (const maker of makers) {
+    const escaped = maker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    next = next
+      .replace(new RegExp(`\\s*[-–—|/]\\s*${escaped}\\s*$`, 'i'), '')
+      .replace(new RegExp(`\\s+${escaped}\\s*$`, 'i'), '')
+      .replace(new RegExp(`\\(\\s*${escaped}\\s*\\)`, 'i'), '')
+      .trim();
   }
-  const escaped = maker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  next = next
-    .replace(new RegExp(`\\s*[-–—|/]\\s*${escaped}\\s*$`, 'i'), '')
-    .replace(new RegExp(`\\s+${escaped}\\s*$`, 'i'), '')
-    .trim();
   return next || name.trim();
 }
 

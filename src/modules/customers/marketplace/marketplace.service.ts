@@ -25,6 +25,10 @@ import {
   parseGradeSearch,
   rankGradeCandidates,
 } from '../../master-data/grades/grade-search.js';
+import {
+  DEFAULT_COMMERCE_PRICING,
+  marketplaceMinSellablePricePerMt,
+} from '../checkout/commerce-pricing.js';
 import type {
   MarketplaceGradeQueryDto,
   MarketplaceHomeQueryDto,
@@ -37,6 +41,18 @@ const customerGradeWhere: Prisma.GradeWhereInput = {
   customerVisible: true,
 };
 
+/**
+ * Live marketplace offers must clear the commercial price floor so test /
+ * invalid prices (e.g. ₹10/MT) never appear as Best Value to buyers.
+ */
+function marketplaceEligiblePriceWhere(): Prisma.OfferWhereInput {
+  return {
+    basePrice: {
+      gte: marketplaceMinSellablePricePerMt(DEFAULT_COMMERCE_PRICING),
+    },
+  };
+}
+
 function activeMarketplaceOfferWhere(now = new Date()): Prisma.OfferWhereInput {
   return {
     deletedAt: null,
@@ -45,6 +61,7 @@ function activeMarketplaceOfferWhere(now = new Date()): Prisma.OfferWhereInput {
     AND: [
       { OR: [{ validUntil: null }, { validUntil: { gte: now } }] },
       { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
+      marketplaceEligiblePriceWhere(),
     ],
     product: {
       deletedAt: null,
@@ -65,6 +82,7 @@ function liveMarketplaceOfferNestedWhere(
     AND: [
       { OR: [{ validUntil: null }, { validUntil: { gte: now } }] },
       { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
+      marketplaceEligiblePriceWhere(),
     ],
   };
 }

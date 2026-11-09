@@ -33,7 +33,9 @@ import {
   isSellerCreditPriceTier,
   sanitizeSellerPaymentTerms,
 } from '../../payments/common/platform-credit.js';
-import { assessMaterialPriceReview } from '../../customers/checkout/commerce-pricing.js';
+import {
+  assessMaterialPriceReview,
+} from '../../customers/checkout/commerce-pricing.js';
 import {
   assertNonOverlappingPriceTiers,
   resolveOfferValidityWindow,
@@ -391,14 +393,18 @@ export class OffersService {
     return { items, meta: paginationMeta(page, limit, total) };
   }
 
-  async summary(userId: string) {
+  async summary(userId: string, warehouseId?: string) {
     const ctx = await this.ctx(userId);
     const orgId = ctx.organizationId;
     const now = new Date();
     const expiringUntil = new Date(
       now.getTime() + EXPIRING_SOON_HOURS * 60 * 60 * 1000,
     );
-    const base = { organizationId: orgId, deletedAt: null };
+    const base = {
+      organizationId: orgId,
+      deletedAt: null,
+      ...(warehouseId ? { warehouseId } : {}),
+    };
 
     const [
       active,
@@ -770,6 +776,47 @@ export class OffersService {
       throw new BadRequestException('Cannot activate an expired offer');
     }
 
+    const priceReview = assessMaterialPriceReview(offer.basePrice);
+    if (priceReview.needsPriceReview) {
+      // Hold at PENDING_REVIEW — never publish suspicious / test prices live.
+      const held = await this.prisma.offer.update({
+        where: { id: offer.id },
+        data: {
+          status: OfferStatus.PENDING_REVIEW,
+          validFrom: offer.validFrom ?? new Date(),
+          version: { increment: 1 },
+          metadata: {
+            ...((offer.metadata &&
+            typeof offer.metadata === 'object' &&
+            !Array.isArray(offer.metadata)
+              ? offer.metadata
+              : {}) as Record<string, unknown>),
+            needsPriceReview: true,
+            priceReviewReason: priceReview.reason,
+            pricingUnit: 'MT',
+          } as Prisma.InputJsonValue,
+        },
+        include: offerInclude,
+      });
+      await this.audit.log({
+        action: 'OFFER_PRICE_REVIEW_REQUIRED',
+        actorUserId: userId,
+        organizationId: ctx.organizationId,
+        entityType: EntityOwnerType.OFFER,
+        entityId: offer.id,
+        previousData: { status: offer.status },
+        newData: {
+          status: held.status,
+          reason: priceReview.reason,
+          basePrice: offer.basePrice.toString(),
+        },
+      });
+      throw new BadRequestException(
+        priceReview.reason ??
+          'Offer price requires PolyStoreX commercial review before it can go live',
+      );
+    }
+
     const updated = await this.prisma.$transaction(async (tx) => {
       let current = offer;
       if (current.status === OfferStatus.DRAFT) {
@@ -831,6 +878,14 @@ export class OffersService {
     if (offer.validUntil && offer.validUntil < new Date()) {
       throw new BadRequestException(
         'Cannot resume an expired offer. Duplicate it and publish a new offer instead.',
+      );
+    }
+
+    const priceReview = assessMaterialPriceReview(offer.basePrice);
+    if (priceReview.needsPriceReview) {
+      throw new BadRequestException(
+        priceReview.reason ??
+          'Offer price requires PolyStoreX commercial review before it can go live',
       );
     }
 

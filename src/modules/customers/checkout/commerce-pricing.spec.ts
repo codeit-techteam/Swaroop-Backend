@@ -8,6 +8,7 @@ import {
   buildListingPricingPreview,
   buildPricingVersion,
   calculateQuoteAmounts,
+  isMarketplaceEligibleMaterialPrice,
   platformDiscountBps,
   pricePerKgFromMt,
   pricePerMtFromKg,
@@ -192,6 +193,26 @@ describe('commerce pricing', () => {
     expect(() => assertSellableUnitPrice(0)).toThrow();
     expect(() => assertSellableUnitPrice(null)).toThrow();
     expect(assertSellableUnitPrice('10').toFixed(4)).toBe('10.0000');
+  });
+
+  it('honours configured min/max material thresholds and marketplace eligibility', () => {
+    const strict = {
+      gstBps: 1800,
+      freightPerMt: '1250',
+      platformFee: '0',
+      insuranceAmount: '0',
+      advanceDiscountBps: 500,
+      quoteTtlMs: 600_000,
+      quantityIncrement: '1',
+      minMaterialPricePerMt: '50000',
+      maxMaterialPricePerMt: '250000',
+    };
+    expect(assessMaterialPriceReview('40000', strict).needsPriceReview).toBe(true);
+    expect(assessMaterialPriceReview('148000', strict).needsPriceReview).toBe(false);
+    expect(assessMaterialPriceReview('300000', strict).needsPriceReview).toBe(true);
+    expect(isMarketplaceEligibleMaterialPrice('148000', strict)).toBe(true);
+    expect(isMarketplaceEligibleMaterialPrice('10', strict)).toBe(false);
+    expect(isMarketplaceEligibleMaterialPrice('40000', strict)).toBe(false);
   });
 
   it('builds listing pricing preview at MOQ without inventing material price', () => {

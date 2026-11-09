@@ -223,8 +223,14 @@ export function buildSellerProfileSummary(
           verificationStatus: bankSource.verificationStatus,
         }
       : null,
-    gstVerified: Boolean(verification?.gstVerified),
-    panVerified: Boolean(verification?.panVerified),
+    // Verified requires both the persistence flag AND a non-empty identifier.
+    // Empty GSTIN/PAN must never surface as "Verified" on seller profile screens.
+    gstVerified:
+      Boolean(verification?.gstVerified) &&
+      Boolean(text(org.gstin, gst.gstin)),
+    panVerified:
+      Boolean(verification?.panVerified) &&
+      Boolean(text(org.pan, pan.pan, gst.pan)),
     bankVerified:
       Boolean(verification?.bankVerified) ||
       bankSource?.verificationStatus === 'APPROVED',

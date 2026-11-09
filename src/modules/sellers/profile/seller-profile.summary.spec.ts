@@ -65,6 +65,21 @@ describe('buildSellerProfileSummary', () => {
     expect(summary.paymentTerms).toBe('Advance');
   });
 
+  it('does not mark GST verified when gstin is blank even if gstVerified is true', () => {
+    const profile = baseProfile();
+    profile.organization.gstin = null;
+    profile.onboarding!.gstData = {};
+    profile.verification = {
+      gstVerified: true,
+      panVerified: true,
+      bankVerified: false,
+      overallStatus: 'APPROVED',
+    };
+    const summary = buildSellerProfileSummary(profile);
+    expect(summary.gstin).toBeNull();
+    expect(summary.gstVerified).toBe(false);
+  });
+
   it('falls back to onboarding data while the organization is still a placeholder', () => {
     const profile = baseProfile();
     profile.organization.name = 'Seller Organization';
@@ -95,6 +110,25 @@ describe('buildSellerProfileSummary', () => {
     expect(summary.bank?.accountNumberMasked.endsWith('6789')).toBe(true);
     expect(JSON.stringify(summary)).not.toContain('50100123456789');
     expect(summary.bankVerified).toBe(true);
+  });
+
+  it('never marks GST/PAN verified when the identifier is blank', () => {
+    const profile = baseProfile();
+    profile.organization.gstin = null;
+    profile.organization.pan = null;
+    profile.onboarding!.gstData = { state: 'West Bengal' };
+    profile.onboarding!.panData = {};
+    profile.verification = {
+      gstVerified: true,
+      panVerified: true,
+      bankVerified: false,
+      overallStatus: 'APPROVED',
+    };
+    const summary = buildSellerProfileSummary(profile);
+    expect(summary.gstin).toBeNull();
+    expect(summary.pan).toBeNull();
+    expect(summary.gstVerified).toBe(false);
+    expect(summary.panVerified).toBe(false);
   });
 
   it('helpers', () => {
