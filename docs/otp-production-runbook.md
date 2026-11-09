@@ -53,7 +53,7 @@ Your PolyStoreX OTP verification code is ##OTP##. This OTP is valid for 10 minut
    - Sender ID: `VELPLY`
    - DLT Template ID: `1077252360053463958`
 4. Click **Update** → wait for **Approved by MSG91**.
-5. Click **Test DLT** → confirm 6-digit (or panel test length) SMS arrives.
+5. Click **Test DLT** → confirm SMS arrives.
 
 ### B. Map PE Id to sender VELPLY
 
