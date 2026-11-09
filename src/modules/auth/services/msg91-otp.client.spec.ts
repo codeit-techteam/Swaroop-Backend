@@ -118,6 +118,7 @@ describe('Msg91OtpClient', () => {
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).not.toContain('DLT_TE_ID=');
     expect(JSON.parse(String(init.body))).toEqual({ OTP: '111222' });
+    expect(url).not.toContain('PE_ID=');
   });
 
   it('falls back to MSG91_HEADER VELPLY when senderId is empty', async () => {
