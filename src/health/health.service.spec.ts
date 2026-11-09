@@ -28,6 +28,7 @@ describe('HealthService', () => {
               if (key === 'otp.msg91.senderId') return '';
               if (key === 'otp.msg91.header') return 'VELPLY';
               if (key === 'otp.msg91.dltTemplateId') return '1077252360053463958';
+              if (key === 'otp.msg91.dltEntityId') return '1001111222233334444';
               if (key === 'security.authStrictOtp') return true;
               return undefined;
             }),
@@ -64,6 +65,7 @@ describe('HealthService', () => {
       senderIdConfigured: false,
       headerConfigured: true,
       dltTemplateConfigured: true,
+      dltEntityConfigured: true,
     });
     // Non-production env: missing sender does not degrade health.
     expect(result.status).toBe('ok');
@@ -91,6 +93,7 @@ describe('HealthService', () => {
               if (key === 'otp.msg91.senderId') return '';
               if (key === 'otp.msg91.header') return 'VELPLY';
               if (key === 'otp.msg91.dltTemplateId') return '1077252360053463958';
+              if (key === 'otp.msg91.dltEntityId') return '1001111222233334444';
               if (key === 'security.authStrictOtp') return true;
               return undefined;
             }),
@@ -132,6 +135,7 @@ describe('HealthService', () => {
               if (key === 'otp.msg91.senderId') return 'VELPLY';
               if (key === 'otp.msg91.header') return 'VELPLY';
               if (key === 'otp.msg91.dltTemplateId') return '';
+              if (key === 'otp.msg91.dltEntityId') return '1001111222233334444';
               if (key === 'security.authStrictOtp') return true;
               return undefined;
             }),
@@ -151,5 +155,47 @@ describe('HealthService', () => {
     const result = await moduleRef.get(HealthService).check();
     expect(result.status).toBe('degraded');
     expect(result.otp.dltTemplateConfigured).toBe(false);
+  });
+
+  it('degrades production health when MSG91_DLT_ENTITY_ID is missing', async () => {
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        HealthService,
+        {
+          provide: ConfigService,
+          useValue: {
+            get: vi.fn((key: string) => {
+              if (key === 'app.name') return 'swaroop-backend';
+              if (key === 'app.env') return 'production';
+              if (key === 'app.skipDbConnectOnBoot') return false;
+              if (key === 'kyc.surepass') {
+                return { baseUrl: 'https://kyc-api.surepass.app', token: 'x' };
+              }
+              if (key === 'otp.provider') return 'msg91';
+              if (key === 'otp.msg91.authKey') return 'test-auth-key';
+              if (key === 'otp.msg91.templateId') return '6ae081288c342f46e203bb12';
+              if (key === 'otp.msg91.senderId') return 'VELPLY';
+              if (key === 'otp.msg91.header') return 'VELPLY';
+              if (key === 'otp.msg91.dltTemplateId') return '1077252360053463958';
+              if (key === 'otp.msg91.dltEntityId') return '';
+              if (key === 'security.authStrictOtp') return true;
+              return undefined;
+            }),
+          },
+        },
+        {
+          provide: PrismaService,
+          useValue: { isHealthy: vi.fn().mockResolvedValue(true) },
+        },
+        {
+          provide: StorageService,
+          useValue: { isConfigured: vi.fn().mockReturnValue(true) },
+        },
+      ],
+    }).compile();
+
+    const result = await moduleRef.get(HealthService).check();
+    expect(result.status).toBe('degraded');
+    expect(result.otp.dltEntityConfigured).toBe(false);
   });
 });

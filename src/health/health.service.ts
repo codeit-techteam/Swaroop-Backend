@@ -16,6 +16,11 @@ export type OtpHealthStatus = {
   headerConfigured: boolean;
   /** Airtel/TRAI DLT numeric template id (MSG91_DLT_TEMPLATE_ID / DLT_TE_ID). */
   dltTemplateConfigured: boolean;
+  /**
+   * Airtel PE / Entity Id present and distinct from content template id
+   * (MSG91_DLT_ENTITY_ID / PE_ID). Required to clear "Invalid DLT Entity Id".
+   */
+  dltEntityConfigured: boolean;
 };
 
 export type HealthStatus = {
@@ -89,6 +94,11 @@ export class HealthService {
     const dltTemplateId = (
       this.configService.get<string>('otp.msg91.dltTemplateId') ?? ''
     ).trim();
+    const dltEntityId = (
+      this.configService.get<string>('otp.msg91.dltEntityId') ?? ''
+    ).trim();
+    const dltEntityConfigured =
+      dltEntityId.length > 0 && dltEntityId !== dltTemplateId;
     const msg91Configured =
       provider === 'msg91' && authKey.length > 0 && templateId.length > 0;
     const isProduction =
@@ -103,6 +113,7 @@ export class HealthService {
       senderIdConfigured: senderId.length > 0,
       headerConfigured: header.length > 0,
       dltTemplateConfigured: dltTemplateId.length > 0,
+      dltEntityConfigured,
     };
 
     const status: HealthStatus['status'] =
@@ -115,7 +126,11 @@ export class HealthService {
       (provider === 'msg91' &&
         msg91Configured &&
         isProduction &&
-        !dltTemplateId.length)
+        !dltTemplateId.length) ||
+      (provider === 'msg91' &&
+        msg91Configured &&
+        isProduction &&
+        !dltEntityConfigured)
         ? 'degraded'
         : 'ok';
 

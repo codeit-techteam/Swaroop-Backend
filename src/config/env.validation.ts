@@ -260,7 +260,7 @@ export const envSchema = z
             'MSG91_OTP_TEMPLATE_ID is required when OTP_PROVIDER=msg91',
         });
       }
-      // India DLT: numeric Airtel template id — distinct from MSG91 hex template_id.
+      // India DLT: content template id + PE/entity id — both distinct from MSG91 hex template_id.
       if (
         data.NODE_ENV === 'production' &&
         !(data.MSG91_DLT_TEMPLATE_ID ?? '').trim()
@@ -269,7 +269,28 @@ export const envSchema = z
           code: 'custom',
           path: ['MSG91_DLT_TEMPLATE_ID'],
           message:
-            'MSG91_DLT_TEMPLATE_ID (Airtel DLT numeric id) is required in production when OTP_PROVIDER=msg91',
+            'MSG91_DLT_TEMPLATE_ID (Airtel Content Template Id) is required in production when OTP_PROVIDER=msg91',
+        });
+      }
+      if (
+        data.NODE_ENV === 'production' &&
+        !(data.MSG91_DLT_ENTITY_ID ?? '').trim()
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MSG91_DLT_ENTITY_ID'],
+          message:
+            'MSG91_DLT_ENTITY_ID (Airtel PE/Entity Id) is required in production — MSG91 fails with "Invalid DLT Entity Id" without it',
+        });
+      }
+      const entity = (data.MSG91_DLT_ENTITY_ID ?? '').trim();
+      const teId = (data.MSG91_DLT_TEMPLATE_ID ?? '').trim();
+      if (entity && teId && entity === teId) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MSG91_DLT_ENTITY_ID'],
+          message:
+            'MSG91_DLT_ENTITY_ID must be the Airtel PE/Entity Id, not the same value as MSG91_DLT_TEMPLATE_ID',
         });
       }
     }

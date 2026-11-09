@@ -127,9 +127,15 @@ export class Msg91OtpClient {
       url.searchParams.set('sender', senderId);
     }
 
-    // Airtel/TRAI DLT content template id (numeric). Required for India
-    // delivery scrubbing — Error 211 when missing/invalid. Distinct from
-    // MSG91_OTP_TEMPLATE_ID (hex flow/template id in the SendOTP API).
+    // India DLT ids — NEVER put these in the JSON body. MSG91 Template Code
+    // for OTP_Template1 is only `{ "OTP": "..." }`. Stuffing DLT_TE_ID into
+    // the body lands in `extra_param` and can confuse DLT scrubbing.
+    //
+    // DLT_TE_ID  = Airtel Content Template Id (MSG91_DLT_TEMPLATE_ID)
+    // PE_ID      = Airtel Principal Entity / Registration Id (MSG91_DLT_ENTITY_ID)
+    //              — NOT Header DLT Id, NOT Content Template Id
+    // Failure "Invalid DLT Entity Id" means PE_ID is blank/wrong on the request
+    // or on the MSG91 Sender Id mapping for VELPLY.
     const dltTemplateId = (
       this.configService.get<string>('otp.msg91.dltTemplateId') ?? ''
     ).trim();
@@ -140,30 +146,34 @@ export class Msg91OtpClient {
     const dltEntityId = (
       this.configService.get<string>('otp.msg91.dltEntityId') ?? ''
     ).trim();
-    if (dltEntityId) {
+    if (dltEntityId && dltEntityId !== dltTemplateId) {
       url.searchParams.set('PE_ID', dltEntityId);
+    } else if (dltEntityId && dltEntityId === dltTemplateId) {
+      this.logger.error({
+        event: 'msg91.otp.send.entity_id_equals_template_id',
+        correlationId,
+        mobile: masked,
+        hint: 'MSG91_DLT_ENTITY_ID must be the Airtel PE/Entity Id (dashboard), not the Content Template Id',
+      });
     }
 
+    // Official Template Code body — OTP variable only.
     const body: Record<string, string> = {};
     if (params.otp) {
       body.OTP = params.otp;
-    }
-    // Mirror DLT ids in body for MSG91 routes that read JSON instead of query.
-    if (dltTemplateId) {
-      body.DLT_TE_ID = dltTemplateId;
-    }
-    if (dltEntityId) {
-      body.PE_ID = dltEntityId;
     }
 
     this.logger.log({
       event: 'msg91.otp.send.request',
       correlationId,
       mobile: masked,
+      api: 'sendotp_v5',
       templateId,
       senderId: senderId || 'n/a',
       dltTemplateId: dltTemplateId || 'missing',
-      dltEntityConfigured: Boolean(dltEntityId),
+      dltEntityConfigured: Boolean(
+        dltEntityId && dltEntityId !== dltTemplateId,
+      ),
       otpExpiryMinutes,
       otpLength,
       hasBodyOtp: Boolean(body.OTP),
@@ -175,7 +185,15 @@ export class Msg91OtpClient {
         event: 'msg91.otp.send.missing_dlt_template_id',
         correlationId,
         mobile: masked,
-        hint: 'Set MSG91_DLT_TEMPLATE_ID (Airtel DLT numeric id) — India SMS may Fail with Error 211',
+        hint: 'Set MSG91_DLT_TEMPLATE_ID (Airtel Content Template Id 1077…)',
+      });
+    }
+    if (!dltEntityId) {
+      this.logger.warn({
+        event: 'msg91.otp.send.missing_dlt_entity_id',
+        correlationId,
+        mobile: masked,
+        hint: 'Set MSG91_DLT_ENTITY_ID to Airtel PE Id (19-digit, usually starts with 100). MSG91 Logs show "Invalid DLT Entity Id" without this / panel mapping.',
       });
     }
 
