@@ -13,7 +13,10 @@ import {
   skipTake,
 } from '../../master-data/common/pagination.js';
 import {
+  blindManufacturerLabel,
   dedupeBlindProducts,
+  sanitizeBlindCode,
+  sanitizeBlindDisplayName,
   toBlindOffer,
   toBlindProduct,
 } from '../common/blind-marketplace.mapper.js';
@@ -129,16 +132,21 @@ function toCustomerGrade(
   g: Prisma.GradeGetPayload<{ select: typeof gradeSelect }>,
   liveOfferCount?: number,
 ) {
+  const rawName = g.name ?? '';
+  const rawDisplay = g.displayName ?? g.name ?? '';
+  const maker = g.manufacturer;
   return {
     id: g.id,
-    code: g.code,
-    name: g.name,
-    displayName: g.displayName ?? g.name,
+    code: sanitizeBlindCode(g.code, maker) ?? g.code,
+    name: sanitizeBlindDisplayName(rawName, maker),
+    displayName: sanitizeBlindDisplayName(rawDisplay, maker),
     description: g.description,
     gradeGroup: g.gradeGroup,
     gradeNo: g.gradeNo,
-    manufacturer: g.manufacturer,
-    fullGradeName: g.fullGradeName,
+    manufacturer: blindManufacturerLabel(),
+    fullGradeName: g.fullGradeName
+      ? sanitizeBlindDisplayName(g.fullGradeName, maker)
+      : g.fullGradeName,
     inTodaysDelhiPriceList: g.inTodaysDelhiPriceList,
     category: g.category
       ? {
