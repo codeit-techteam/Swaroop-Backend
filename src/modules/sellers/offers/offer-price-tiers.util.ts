@@ -42,6 +42,30 @@ export function assertNonOverlappingPriceTiers(
 }
 
 /**
+ * Reject bulk tiers that start below the offer MOQ (e.g. 0–11 MT when MOQ is 12).
+ * Quantities are compared in the offer's commercial unit (MT).
+ */
+export function assertPriceTiersRespectMoq(
+  tiers: OfferPriceTierRange[],
+  moq?: number | null,
+): void {
+  if (!tiers.length) return;
+  const floor = moq != null && Number.isFinite(Number(moq)) ? Number(moq) : null;
+  if (floor == null || !(floor > 0)) {
+    assertNonOverlappingPriceTiers(tiers);
+    return;
+  }
+  for (const tier of tiers) {
+    if (tier.minQty < floor) {
+      throw new Error(
+        `INVALID_BULK_PRICE_RANGE: tier minQuantity (${tier.minQty}) is below offer MOQ (${floor})`,
+      );
+    }
+  }
+  assertNonOverlappingPriceTiers(tiers);
+}
+
+/**
  * Server-authoritative validity window from hours.
  */
 export function resolveOfferValidityWindow(input: {

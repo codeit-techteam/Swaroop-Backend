@@ -30,7 +30,9 @@ export class RateLimitGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const ttlMs =
       this.configService.get<number>('security.throttleTtlMs') ?? 60_000;
-    const request = context.switchToHttp().getRequest<Request>();
+    const http = context.switchToHttp();
+    const request = http.getRequest<Request>();
+    const response = http.getResponse<{ setHeader?: (k: string, v: string) => void }>();
     const limit = this.resolveLimit(request);
     const key = this.resolveKey(request);
     const now = Date.now();
@@ -42,12 +44,18 @@ export class RateLimitGuard implements CanActivate {
     }
 
     if (existing.count >= limit) {
+      const retryAfterSec = Math.max(
+        1,
+        Math.ceil((existing.resetAt - now) / 1000),
+      );
+      response?.setHeader?.('Retry-After', String(retryAfterSec));
       throw new HttpException(
         {
           success: false,
           statusCode: HttpStatus.TOO_MANY_REQUESTS,
           message: 'Too many requests',
           error: 'Too Many Requests',
+          retryAfter: retryAfterSec,
         },
         HttpStatus.TOO_MANY_REQUESTS,
       );

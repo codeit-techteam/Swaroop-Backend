@@ -38,8 +38,10 @@ import {
 } from '../../customers/checkout/commerce-pricing.js';
 import {
   assertNonOverlappingPriceTiers,
+  assertPriceTiersRespectMoq,
   resolveOfferValidityWindow,
 } from './offer-price-tiers.util.js';
+import { bumpMarketplaceCache } from '../../customers/marketplace/marketplace-cache.js';
 
 /** Business window for "expiring soon" KPI (hours). */
 const EXPIRING_SOON_HOURS = 48;
@@ -199,6 +201,7 @@ export class OffersService {
 
   private commercialPriceTiers(
     tiers?: CreateOfferDto['priceTiers'],
+    moq?: number | null,
   ): NonNullable<CreateOfferDto['priceTiers']> | undefined {
     if (!tiers?.length) return undefined;
     const commercial = tiers.filter(
@@ -210,7 +213,7 @@ export class OffersService {
       );
     }
     try {
-      assertNonOverlappingPriceTiers(commercial);
+      assertPriceTiersRespectMoq(commercial, moq);
     } catch (error) {
       throw new BadRequestException(
         error instanceof Error
@@ -262,7 +265,7 @@ export class OffersService {
       await this.assertWarehouseOwnership(ctx, warehouseId);
     }
 
-    const priceTiers = this.commercialPriceTiers(dto.priceTiers);
+    const priceTiers = this.commercialPriceTiers(dto.priceTiers, dto.moq);
     if (hasSellerCreditPricing(dto.paymentTerms)) {
       throw new BadRequestException(
         'Seller cannot submit credit pricing. CREDIT is owned by PolyStoreX Credit Management.',
@@ -608,7 +611,7 @@ export class OffersService {
     }
 
     if (dto.priceTiers) {
-      this.commercialPriceTiers(dto.priceTiers);
+      this.commercialPriceTiers(dto.priceTiers, nextMoq);
     }
     if (hasSellerCreditPricing(dto.paymentTerms)) {
       throw new BadRequestException(
@@ -857,6 +860,7 @@ export class OffersService {
       newData: { status: updated.status },
     });
 
+    bumpMarketplaceCache();
     return updated;
   }
 
@@ -906,6 +910,7 @@ export class OffersService {
       metadata: { via: 'resume' },
     });
 
+    bumpMarketplaceCache();
     return updated;
   }
 
@@ -940,6 +945,7 @@ export class OffersService {
       newData: { status: updated.status },
     });
 
+    bumpMarketplaceCache();
     return updated;
   }
 
@@ -968,6 +974,7 @@ export class OffersService {
       newData: { status: updated.status },
     });
 
+    bumpMarketplaceCache();
     return updated;
   }
 

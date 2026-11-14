@@ -38,6 +38,10 @@ import type {
   MarketplaceListQueryDto,
 } from './marketplace.dto.js';
 import { excludedTestProductWhere } from './excluded-test-products.js';
+import {
+  marketplaceCacheKey,
+  marketplaceReadCache,
+} from './marketplace-cache.js';
 
 const customerGradeWhere: Prisma.GradeWhereInput = {
   deletedAt: null,
@@ -305,10 +309,23 @@ export class MarketplaceService {
     query: MarketplaceHomeQueryDto,
   ) {
     await this.ctx(userId);
-    const now = new Date();
     const featuredLimit = query.featuredLimit ?? 8;
     const offersLimit = query.offersLimit ?? 8;
     const gradesLimit = query.gradesLimit ?? 12;
+    // Guest home payloads are identical — cache briefly to cut DB load.
+    const cacheKey = marketplaceCacheKey([
+      'home',
+      String(featuredLimit),
+      String(offersLimit),
+      String(gradesLimit),
+      userId ? 'auth' : 'guest',
+    ]);
+    if (!userId) {
+      const cached = marketplaceReadCache.get(cacheKey);
+      if (cached) return cached as Awaited<ReturnType<MarketplaceService['home']>>;
+    }
+
+    const now = new Date();
     const offerWhere = activeMarketplaceOfferWhere(now);
 
     const [
@@ -365,7 +382,7 @@ export class MarketplaceService {
       this.prisma.offer.count({ where: offerWhere }),
     ]);
 
-    return {
+    const payload = {
       categories: categories.map((c) => ({
         id: c.id,
         code: c.code,
@@ -375,7 +392,9 @@ export class MarketplaceService {
         sortOrder: c.sortOrder,
         gradeCount: c._count.grades,
       })),
-      popularGrades: dedupeGradesById(popularGrades).map((g) => toCustomerGrade(g)),
+      popularGrades: dedupeGradesById(popularGrades).map((g) =>
+        toCustomerGrade(g),
+      ),
       featuredProducts: dedupeBlindProducts(
         featuredProducts.map((p) => toBlindProduct(p)),
       ),
@@ -387,10 +406,20 @@ export class MarketplaceService {
         categories: categories.length,
       },
     };
+    if (!userId) marketplaceReadCache.set(cacheKey, payload);
+    return payload;
   }
 
   async listCategories(userId?: string | null) {
     await this.ctx(userId);
+    const cacheKey = marketplaceCacheKey([
+      'categories',
+      userId ? 'auth' : 'guest',
+    ]);
+    if (!userId) {
+      const cached = marketplaceReadCache.get(cacheKey);
+      if (cached) return cached as Awaited<ReturnType<MarketplaceService['listCategories']>>;
+    }
     const categories = await this.prisma.gradeCategory.findMany({
       where: {
         deletedAt: null,
@@ -411,7 +440,7 @@ export class MarketplaceService {
         },
       },
     });
-    return categories.map((c) => ({
+    const payload = categories.map((c) => ({
       id: c.id,
       code: c.code,
       name: c.name,
@@ -420,6 +449,8 @@ export class MarketplaceService {
       sortOrder: c.sortOrder,
       gradeCount: c._count.grades,
     }));
+    if (!userId) marketplaceReadCache.set(cacheKey, payload);
+    return payload;
   }
 
   async listGrades(

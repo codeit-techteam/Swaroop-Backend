@@ -272,6 +272,8 @@ export default (): AppConfig => {
       website: clientOrigins(
         'WEBSITE_ORIGINS',
         [
+          'https://polystorex.com',
+          'https://www.polystorex.com',
           'https://swaroop-website.vercel.app',
           'https://swaroop-website-*.vercel.app',
         ],
@@ -280,6 +282,7 @@ export default (): AppConfig => {
       customerWeb: clientOrigins(
         'CUSTOMER_WEB_ORIGINS',
         [
+          'https://customer.polystorex.com',
           'https://swaroop-customer-webapp.vercel.app',
           'https://swaroop-customer-webapp-*.vercel.app',
         ],
@@ -288,6 +291,7 @@ export default (): AppConfig => {
       sellerWeb: clientOrigins(
         'SELLER_WEB_ORIGINS',
         [
+          'https://seller.polystorex.com',
           'https://swaroop-seller-webapp.vercel.app',
           'https://swaroop-seller-webapp-*.vercel.app',
         ],
@@ -296,6 +300,7 @@ export default (): AppConfig => {
       adminWeb: clientOrigins(
         'ADMIN_WEB_ORIGINS',
         [
+          'https://admin.polystorex.com',
           'https://swaroop-admin-pi.vercel.app',
           'https://swaroop-admin-*.vercel.app',
         ],

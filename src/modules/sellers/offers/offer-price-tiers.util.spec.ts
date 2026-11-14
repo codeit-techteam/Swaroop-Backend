@@ -1,5 +1,6 @@
 import {
   assertNonOverlappingPriceTiers,
+  assertPriceTiersRespectMoq,
   resolveOfferValidityWindow,
 } from './offer-price-tiers.util.js';
 
@@ -33,6 +34,35 @@ describe('assertNonOverlappingPriceTiers', () => {
     expect(() =>
       assertNonOverlappingPriceTiers([{ minQty: 10, maxQty: 20, price: 0 }]),
     ).toThrow(/price/i);
+  });
+});
+
+describe('assertPriceTiersRespectMoq', () => {
+  it('rejects tiers that start below MOQ', () => {
+    expect(() =>
+      assertPriceTiersRespectMoq(
+        [{ minQty: 0, maxQty: 11, price: 96000 }],
+        12,
+      ),
+    ).toThrow(/below offer MOQ/i);
+    expect(() =>
+      assertPriceTiersRespectMoq(
+        [{ minQty: 5, maxQty: 11, price: 96000 }],
+        12,
+      ),
+    ).toThrow(/below offer MOQ/i);
+  });
+
+  it('accepts tiers at or above MOQ', () => {
+    expect(() =>
+      assertPriceTiersRespectMoq(
+        [
+          { minQty: 12, maxQty: 24, price: 96000 },
+          { minQty: 25, maxQty: null, price: 94000 },
+        ],
+        12,
+      ),
+    ).not.toThrow();
   });
 });
 

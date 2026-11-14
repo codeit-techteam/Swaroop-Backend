@@ -35,7 +35,13 @@
     "import:tds": "tsx scripts/import-tds-library.ts",
     "sync:tds-storage": "tsx scripts/sync-tds-from-storage.ts",
     "postinstall": "prisma generate",
-    "catalogue:dry-run": "node scripts/dry-run-catalogue-cleanup.mjs"
+    "catalogue:dry-run": "node scripts/dry-run-catalogue-cleanup.mjs",
+    "catalogue:phase2-report": "node scripts/phase2-catalogue-reconciliation.mjs",
+    "catalogue:grade-code-dry-run": "node scripts/dry-run-grade-code-migration.mjs",
+    "catalogue:normalize-audit": "node scripts/phase2-data-normalization-audit.mjs",
+    "catalogue:integrity-remediate": "node scripts/phase2-data-integrity-remediation.mjs",
+    "catalogue:pause-suspicious": "node scripts/pause-suspicious-marketplace-offers.mjs",
+    "catalogue:review": "tsx scripts/report-catalog-review.ts"
   },
   "engines": {
     "node": ">=20.19.0"

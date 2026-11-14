@@ -347,13 +347,18 @@ export async function importSourceOneGrades(
           const current = existing.get(grade.sourceKey);
 
           if (!current) {
+            const junkCategory = /^(SUBSCRIPTION|DISABLED)$/i.test(
+              grade.categoryCode ?? '',
+            );
             toCreate.push({
               ...columns,
               code: grade.code,
               name: grade.gradeNo,
               displayName: grade.displayName,
               status: GradeStatus.ACTIVE,
-              customerVisible: true,
+              // Junk Source.One categories stay in catalogue for Admin but
+              // must not appear in the customer Grade Directory by default.
+              customerVisible: !junkCategory,
               sellerVisible: true,
               source: SOURCE_ONE,
               sourceKey: grade.sourceKey,

@@ -2244,6 +2244,8 @@ model Offer {
   @@index([warehouseId])
   @@index([status, validUntil])
   @@index([status, validFrom, validUntil])
+  /// Marketplace live listing filter: ACTIVE + MARKETPLACE visibility + price floor scans.
+  @@index([status, visibility, deletedAt, basePrice])
   @@index([referenceNumber])
   @@map("offers")
 }

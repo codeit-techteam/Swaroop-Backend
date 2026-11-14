@@ -940,7 +940,8 @@ export class DemoBootstrapService implements OnModuleInit {
     if (!tierCount) {
       await this.prisma.offerPriceTier.createMany({
         data: [
-          { offerId: offer.id, minQty: 0, maxQty: 11, price: 96000 },
+          // Tiers must start at/above MOQ — never advertise a 0–11 slab under a 12 MT MOQ.
+          { offerId: offer.id, minQty: 12, maxQty: 24, price: 96000 },
           { offerId: offer.id, minQty: 12, maxQty: 49, price: 94500 },
           { offerId: offer.id, minQty: 50, maxQty: null, price: 93000 },
         ],
