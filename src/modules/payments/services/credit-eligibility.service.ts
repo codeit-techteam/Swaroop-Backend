@@ -163,7 +163,7 @@ export class CreditEligibilityService {
     if (!credit) {
       throw new FinanceException(
         'CREDIT_NOT_AVAILABLE',
-        'No PetroTrade credit account found for customer organization',
+        'No PolyStoreX credit account found for customer organization',
       );
     }
 

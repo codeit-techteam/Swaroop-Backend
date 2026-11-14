@@ -36,7 +36,7 @@ export type KycVerificationView = {
 
 const MANUAL_REVIEW_MESSAGES: Record<string, string> = {
   PROVIDER_NOT_CONFIGURED:
-    'Saved. The PetroTrade compliance team will verify it during review.',
+    'Saved. The PolyStoreX compliance team will verify it during review.',
   ABANDONED: 'Verification was interrupted. Please verify again.',
 };
 
@@ -45,7 +45,7 @@ function messageFor(row: KycVerification): string {
   switch (row.status) {
     case KycVerificationStatus.VERIFIED:
       return row.reviewedById
-        ? `${label} verified by the PetroTrade compliance team.`
+        ? `${label} verified by the PolyStoreX compliance team.`
         : `${label} verified.`;
     case KycVerificationStatus.VERIFYING:
       return `Verifying ${label}…`;

@@ -52,7 +52,7 @@ export class CustomerCreditController {
   ) {}
 
   @Get('account')
-  @ApiOperation({ summary: 'Own PetroTrade credit account' })
+  @ApiOperation({ summary: 'Own PolyStoreX credit account' })
   async account(@CurrentUser() user: AuthenticatedUser) {
     return successResponse(
       await this.credit.getAccount(user.id),
@@ -90,7 +90,7 @@ export class CustomerCreditController {
   @Get('eligibility')
   @ApiOperation({
     summary:
-      'PetroTrade credit eligibility for checkout (no underwriting details)',
+      'PolyStoreX credit eligibility for checkout (no underwriting details)',
   })
   async eligibility(@CurrentUser() user: AuthenticatedUser) {
     return successResponse(
@@ -114,7 +114,7 @@ export class CustomerCreditController {
   @UserRateLimit(APPLICATION_SUBMIT_LIMIT)
   @ApiOperation({
     summary:
-      'Apply for PetroTrade managed credit in one step (submits immediately)',
+      'Apply for PolyStoreX managed credit in one step (submits immediately)',
   })
   async apply(
     @CurrentUser() user: AuthenticatedUser,

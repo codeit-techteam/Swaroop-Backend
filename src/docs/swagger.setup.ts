@@ -10,7 +10,7 @@ export function setupSwagger(app: INestApplication): void {
     .setTitle('SWAROOP Centralized Backend API')
     .setDescription(
       [
-        'Single source of truth REST API for the SWAROOP / PetroTrade B2B marketplace.',
+        'Single source of truth REST API for the SWAROOP / PolyStoreX B2B marketplace.',
         '',
         'Consumed by:',
         '- Customer Mobile App',

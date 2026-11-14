@@ -51,7 +51,7 @@ export class AdminCreditController {
   constructor(private readonly credit: AdminCreditService) {}
 
   @Get('summary')
-  @ApiOperation({ summary: 'PetroTrade credit management summary' })
+  @ApiOperation({ summary: 'PolyStoreX credit management summary' })
   async summary() {
     return successResponse(await this.credit.summary(), 'Credit summary');
   }
@@ -173,7 +173,7 @@ export class AdminCreditController {
 
   @Post('applications/:id/approve')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Approve PetroTrade credit application' })
+  @ApiOperation({ summary: 'Approve PolyStoreX credit application' })
   async approve(
     @CurrentUser() user: AuthenticatedUser,
     @Param('id', ParseUUIDPipe) id: string,
@@ -284,7 +284,7 @@ export class AdminCreditController {
   }
 
   @Get('accounts')
-  @ApiOperation({ summary: 'List PetroTrade credit accounts' })
+  @ApiOperation({ summary: 'List PolyStoreX credit accounts' })
   async listAccounts(@Query() query: AdminCreditAccountsQueryDto) {
     const { items, meta } = await this.credit.listAccounts(query);
     return successResponse(items, 'Credit accounts retrieved', meta);

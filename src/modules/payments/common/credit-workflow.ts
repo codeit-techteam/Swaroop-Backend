@@ -286,7 +286,7 @@ export function creditNextStep(
     case CreditApplicationStatus.DRAFT:
       return 'Upload the required documents and submit your application.';
     case CreditApplicationStatus.PENDING:
-      return 'Your application is queued for review by PetroTrade Credit Management.';
+      return 'Your application is queued for review by PolyStoreX Credit Management.';
     case CreditApplicationStatus.DOCUMENTS_UNDER_REVIEW:
       return 'Your documents are being verified.';
     case CreditApplicationStatus.UNDER_REVIEW:

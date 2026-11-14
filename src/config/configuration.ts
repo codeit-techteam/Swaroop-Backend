@@ -428,8 +428,9 @@ export default (): AppConfig => {
         process.env.KYC_VERIFY_ATTEMPTS_PER_HOUR || 10,
       ),
       uploadsPerHour: Number(process.env.KYC_UPLOADS_PER_HOUR || 30),
-      enforceForTrading: ['true', '1', 'yes', 'on'].includes(
-        (process.env.KYC_ENFORCE_FOR_TRADING ?? 'false').trim().toLowerCase(),
+      // Phase 1: trading actions require approved KYC unless explicitly disabled.
+      enforceForTrading: !['false', '0', 'no', 'off'].includes(
+        (process.env.KYC_ENFORCE_FOR_TRADING ?? 'true').trim().toLowerCase(),
       ),
     },
     legal: (() => {

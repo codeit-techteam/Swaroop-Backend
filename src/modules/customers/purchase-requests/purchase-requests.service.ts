@@ -412,7 +412,7 @@ export class PurchaseRequestsService {
           if (blocked) {
             throw new MarketplaceException(
               'CREDIT_NOT_ELIGIBLE',
-              'This grade does not support PetroTrade credit payment terms. Choose another payment method.',
+              'This grade does not support PolyStoreX credit payment terms. Choose another payment method.',
             );
           }
           const eligibility = await this.creditEligibility.assertEligible(

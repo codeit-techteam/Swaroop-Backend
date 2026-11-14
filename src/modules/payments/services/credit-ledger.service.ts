@@ -225,7 +225,7 @@ export class CreditLedgerService {
     if (!credit || credit.status !== CreditStatus.APPROVED) {
       throw new FinanceException(
         'CREDIT_NOT_AVAILABLE',
-        'Approved PetroTrade credit account is required',
+        'Approved PolyStoreX credit account is required',
       );
     }
     if (credit.accountStatus !== CreditAccountStatus.ACTIVE) {

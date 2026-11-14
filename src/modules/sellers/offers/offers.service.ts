@@ -206,7 +206,7 @@ export class OffersService {
     );
     if (commercial.length !== tiers.length) {
       throw new BadRequestException(
-        'Seller cannot submit credit pricing. CREDIT is a PetroTrade platform payment option.',
+        'Seller cannot submit credit pricing. CREDIT is a PolyStoreX platform payment option.',
       );
     }
     try {
@@ -265,7 +265,7 @@ export class OffersService {
     const priceTiers = this.commercialPriceTiers(dto.priceTiers);
     if (hasSellerCreditPricing(dto.paymentTerms)) {
       throw new BadRequestException(
-        'Seller cannot submit credit pricing. CREDIT is owned by PetroTrade Credit Management.',
+        'Seller cannot submit credit pricing. CREDIT is owned by PolyStoreX Credit Management.',
       );
     }
 
@@ -612,7 +612,7 @@ export class OffersService {
     }
     if (hasSellerCreditPricing(dto.paymentTerms)) {
       throw new BadRequestException(
-        'Seller cannot submit credit pricing. CREDIT is owned by PetroTrade Credit Management.',
+        'Seller cannot submit credit pricing. CREDIT is owned by PolyStoreX Credit Management.',
       );
     }
 

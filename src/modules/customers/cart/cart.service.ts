@@ -10,6 +10,8 @@ import {
   assertMarketplaceOffer,
   MarketplaceException,
   resolveOfferUnitPrice,
+  sanitizeBlindCode,
+  sanitizeBlindDisplayName,
   toBlindOffer,
 } from '../common/blind-marketplace.mapper.js';
 import { assertSellableUnitPrice } from '../checkout/commerce-pricing.js';
@@ -126,9 +128,12 @@ export class CartService {
       grade: item.grade
         ? {
             id: item.grade.id,
-            code: item.grade.code,
-            name: item.grade.name,
-            displayName: item.grade.displayName ?? item.grade.name,
+            code:
+              sanitizeBlindCode(item.grade.code) ?? item.grade.code,
+            name: sanitizeBlindDisplayName(item.grade.name),
+            displayName: sanitizeBlindDisplayName(
+              item.grade.displayName ?? item.grade.name,
+            ),
           }
         : null,
       offer: toBlindOffer(item.offer),

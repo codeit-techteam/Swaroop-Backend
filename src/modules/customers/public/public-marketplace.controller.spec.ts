@@ -42,5 +42,7 @@ describe('PublicMarketplaceController guest authorization', () => {
         status: 'ACTIVE',
       }),
     });
+    // Confirmed test SKUs must stay out of public catalogue responses.
+    expect(where.NOT).toBeTruthy();
   });
 });

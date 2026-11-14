@@ -21,6 +21,11 @@ import {
   matchGradeFromIndex,
 } from './tds-grade-matcher.js';
 import {
+  blindManufacturerLabel,
+  sanitizeBlindCode,
+  sanitizeBlindDisplayName,
+} from '../customers/common/blind-marketplace.mapper.js';
+import {
   buildGradeTdsObjectKey,
   buildImportKey,
   isAllowedTdsMime,
@@ -59,13 +64,21 @@ export class GradeTdsService {
       approvedAt: Date | null;
     },
     displayTitle?: string | null,
+    options?: { blindManufacturer?: boolean },
   ) {
     const mime = doc.mimeType ?? 'application/octet-stream';
     const isImage = mime.startsWith('image/');
+    const blind = options?.blindManufacturer !== false;
+    const producerLabel = blind
+      ? blindManufacturerLabel()
+      : doc.producerName;
+    const gradeCode = blind
+      ? sanitizeBlindCode(doc.gradeCode, doc.producerName) ?? doc.gradeCode
+      : doc.gradeCode;
     const syncedTitle =
       displayTitle?.trim() ||
       doc.documentTitle ||
-      `${doc.gradeCode} – ${doc.producerName}`;
+      `${gradeCode} – ${producerLabel}`;
     return {
       id: doc.id,
       type: doc.documentType,
@@ -74,8 +87,8 @@ export class GradeTdsService {
       mimeType: mime,
       fileSizeBytes:
         doc.fileSizeBytes != null ? Number(doc.fileSizeBytes) : null,
-      manufacturer: doc.producerName,
-      gradeCode: doc.gradeCode,
+      manufacturer: producerLabel,
+      gradeCode,
       categoryCode: doc.categoryCode,
       revision: doc.revision,
       verificationStatus: doc.verificationStatus,
@@ -89,23 +102,32 @@ export class GradeTdsService {
     };
   }
 
-  private gradeDisplayName(grade: {
-    displayName?: string | null;
-    fullGradeName?: string | null;
-    name: string;
-    gradeNo?: string | null;
-    manufacturer?: string | null;
-  }): string {
+  private gradeDisplayName(
+    grade: {
+      displayName?: string | null;
+      fullGradeName?: string | null;
+      name: string;
+      gradeNo?: string | null;
+      manufacturer?: string | null;
+    },
+    options?: { blindManufacturer?: boolean },
+  ): string {
     const base =
       grade.fullGradeName?.trim() ||
       grade.displayName?.trim() ||
       grade.name?.trim() ||
       grade.gradeNo?.trim() ||
       'Grade';
-    if (grade.manufacturer?.trim() && !base.toUpperCase().includes(grade.manufacturer.trim().toUpperCase())) {
-      return `${base} – ${grade.manufacturer.trim()}`;
+    if (options?.blindManufacturer === false) {
+      if (
+        grade.manufacturer?.trim() &&
+        !base.toUpperCase().includes(grade.manufacturer.trim().toUpperCase())
+      ) {
+        return `${base} – ${grade.manufacturer.trim()}`;
+      }
+      return base;
     }
-    return base;
+    return sanitizeBlindDisplayName(base, grade.manufacturer);
   }
 
   /**
@@ -141,8 +163,10 @@ export class GradeTdsService {
     });
     if (!grade) throw new NotFoundException('Grade not found');
 
+    const blindManufacturer = audience === 'customer';
     const displayTitle =
-      options?.productDisplayName?.trim() || this.gradeDisplayName(grade);
+      options?.productDisplayName?.trim() ||
+      this.gradeDisplayName(grade, { blindManufacturer });
 
     const docs = await this.prisma.gradeTdsDocument.findMany({
       where: {
@@ -155,7 +179,9 @@ export class GradeTdsService {
       orderBy: [{ revision: 'desc' }, { approvedAt: 'desc' }, { createdAt: 'desc' }],
     });
 
-    const items = docs.map((d) => this.mapCustomerDoc(d, displayTitle));
+    const items = docs.map((d) =>
+      this.mapCustomerDoc(d, displayTitle, { blindManufacturer }),
+    );
 
     const missing = await this.prisma.gradeTdsDocument.findFirst({
       where: {
@@ -169,10 +195,14 @@ export class GradeTdsService {
     return {
       grade: {
         id: grade.id,
-        code: grade.code,
+        code: blindManufacturer
+          ? sanitizeBlindCode(grade.code, grade.manufacturer) ?? grade.code
+          : grade.code,
         name: displayTitle,
         gradeNo: grade.gradeNo,
-        manufacturer: grade.manufacturer,
+        manufacturer: blindManufacturer
+          ? blindManufacturerLabel()
+          : grade.manufacturer,
       },
       available: items.length > 0,
       message:

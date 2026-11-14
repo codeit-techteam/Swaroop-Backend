@@ -37,6 +37,7 @@ import type {
   MarketplaceHomeQueryDto,
   MarketplaceListQueryDto,
 } from './marketplace.dto.js';
+import { excludedTestProductWhere } from './excluded-test-products.js';
 
 const customerGradeWhere: Prisma.GradeWhereInput = {
   deletedAt: null,
@@ -70,6 +71,7 @@ function activeMarketplaceOfferWhere(now = new Date()): Prisma.OfferWhereInput {
       deletedAt: null,
       status: ProductStatus.ACTIVE,
       grade: customerGradeWhere,
+      ...excludedTestProductWhere(),
     },
   };
 }
@@ -99,6 +101,7 @@ function buyableMarketplaceProductWhere(
     status: ProductStatus.ACTIVE,
     grade: customerGradeWhere,
     offers: { some: liveMarketplaceOfferNestedWhere(now) },
+    ...excludedTestProductWhere(),
   };
 }
 

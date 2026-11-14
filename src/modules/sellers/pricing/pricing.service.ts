@@ -111,7 +111,7 @@ export class PricingService {
     if (!offer) throw new NotFoundException('Offer not found');
     if (isSellerCreditPriceTier(dto.paymentMethod)) {
       throw new BadRequestException(
-        'Seller cannot set credit-specific prices. CREDIT is a PetroTrade platform payment option.',
+        'Seller cannot set credit-specific prices. CREDIT is a PolyStoreX platform payment option.',
       );
     }
 
@@ -144,7 +144,7 @@ export class PricingService {
     const existing = await this.assertOwnedTier(ctx, id);
     if (isSellerCreditPriceTier(dto.paymentMethod)) {
       throw new BadRequestException(
-        'Seller cannot set credit-specific prices. CREDIT is a PetroTrade platform payment option.',
+        'Seller cannot set credit-specific prices. CREDIT is a PolyStoreX platform payment option.',
       );
     }
     const offerIsActive = existing.offer.status === OfferStatus.ACTIVE;

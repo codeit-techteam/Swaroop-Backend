@@ -45,7 +45,7 @@ describe('getOrderProgress', () => {
     expect(result.customerStatus).toBe('READY_FOR_DISPATCH');
   });
 
-  it('treats PetroTrade credit approval as clearance without marking paid', () => {
+  it('treats PolyStoreX credit approval as clearance without marking paid', () => {
     const result = getOrderProgress({
       poStatus: PurchaseOrderStatus.CONFIRMED,
       paymentMethod: PaymentMethod.CREDIT_15,
@@ -82,7 +82,7 @@ describe('paymentOptionLabel', () => {
     );
   });
 
-  it('labels CREDIT as PetroTrade credit', () => {
+  it('labels CREDIT as PolyStoreX credit', () => {
     expect(paymentOptionLabel(PaymentMethod.CREDIT)).toBe('PETROTRADE CREDIT');
   });
 });

@@ -86,9 +86,9 @@ const PAYMENT_LABELS: Record<string, string> = {
   ADVANCE: 'Advance',
   ON_LOADING: 'On Loading',
   ON_DELIVERY: 'On Delivery',
-  CREDIT: 'PetroTrade Credit',
-  CREDIT_15: 'PetroTrade Credit — 15 Days',
-  CREDIT_30: 'PetroTrade Credit — 30 Days',
+  CREDIT: 'PolyStoreX Credit',
+  CREDIT_15: 'PolyStoreX Credit — 15 Days',
+  CREDIT_30: 'PolyStoreX Credit — 30 Days',
   BEFORE_DISPATCH: 'Before Dispatch',
 };
 
@@ -229,7 +229,7 @@ export class CheckoutService {
     if (!productAllowsCreditTenure(productCredit, paymentMethod)) {
       throw new CheckoutException(
         'CREDIT_NOT_ELIGIBLE',
-        'This grade does not support PetroTrade credit payment terms. Choose another payment method.',
+        'This grade does not support PolyStoreX credit payment terms. Choose another payment method.',
         { reason: 'PRODUCT_CREDIT_UNAVAILABLE', productCredit },
       );
     }
@@ -291,7 +291,7 @@ export class CheckoutService {
                   ? 'Your approved credit terms have expired. Choose another payment method.'
                   : eligibility.reason === 'CREDIT_BLOCKED'
                     ? 'Your business credit account is on hold. Choose another payment method.'
-                    : 'PetroTrade credit is not available for this purchase. Choose another payment method.',
+                    : 'PolyStoreX credit is not available for this purchase. Choose another payment method.',
           {
             reason: eligibility.reason,
             availableLimit: eligibility.availableLimit,

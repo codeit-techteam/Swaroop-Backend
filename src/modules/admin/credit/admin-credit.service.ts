@@ -656,7 +656,7 @@ export class AdminCreditService {
       title: 'Credit documents required',
       body:
         dto.message?.trim() ||
-        'PetroTrade Credit Management requested additional documents for your credit application.',
+        'PolyStoreX Credit Management requested additional documents for your credit application.',
       entityType: EntityOwnerType.CREDIT,
       entityId: id,
       metadata: { documentTypes: dto.documentTypes ?? [] },
@@ -812,8 +812,8 @@ export class AdminCreditService {
       userId: application.customerProfile.userId,
       organizationId: application.customerProfile.organizationId,
       title: partial
-        ? 'PetroTrade credit partially approved'
-        : 'PetroTrade credit approved',
+        ? 'PolyStoreX credit partially approved'
+        : 'PolyStoreX credit approved',
       body: customerBody,
       entityType: EntityOwnerType.CREDIT,
       entityId: id,
@@ -1259,7 +1259,7 @@ export class AdminCreditService {
         id: po.id,
         referenceNumber: po.referenceNumber,
         paymentMethod: po.paymentMethod,
-        paymentMethodLabel: 'Credit — PetroTrade Managed',
+        paymentMethodLabel: 'Credit — PolyStoreX Managed',
         totalAmount: toDecimal(po.totalAmount).toFixed(2),
         status: po.status,
         createdAt: po.createdAt,
@@ -1741,7 +1741,7 @@ export class AdminCreditService {
       title: 'Credit document requested',
       body:
         dto.notes?.trim() ||
-        `Please upload ${dto.category} for PetroTrade credit review.`,
+        `Please upload ${dto.category} for PolyStoreX credit review.`,
       entityType: EntityOwnerType.CREDIT,
       entityId: accountId,
     });

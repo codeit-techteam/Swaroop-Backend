@@ -52,7 +52,11 @@ export class CartController {
   }
 
   @Post('items')
-  @ApiOperation({ summary: 'Add offer to cart' })
+  @UseGuards(CustomerKycApprovedGuard)
+  @ApiOperation({
+    summary:
+      'Add offer to cart. Requires approved KYC when KYC_ENFORCE_FOR_TRADING is enabled.',
+  })
   async addItem(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: AddCartItemDto,

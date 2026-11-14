@@ -1042,16 +1042,18 @@ export function toCustomerFacingPr(
       grade: item.grade
         ? {
             id: item.grade.id,
-            code: item.grade.code,
-            name: item.grade.name,
-            displayName: item.grade.displayName ?? item.grade.name,
+            code: sanitizeBlindCode(item.grade.code) ?? item.grade.code,
+            name: sanitizeBlindDisplayName(item.grade.name),
+            displayName: sanitizeBlindDisplayName(
+              item.grade.displayName ?? item.grade.name,
+            ),
           }
         : null,
       product: item.product
         ? {
             id: item.product.id,
-            code: item.product.code,
-            name: item.product.name,
+            code: sanitizeBlindCode(item.product.code) ?? item.product.code,
+            name: sanitizeBlindDisplayName(item.product.name),
           }
         : null,
     })),

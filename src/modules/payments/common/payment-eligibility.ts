@@ -295,7 +295,7 @@ function booleanFlag(value: unknown): boolean | null {
  *
  * Default: marketplace facility is available for Net-15 and Net-30 unless the
  * offer/product opts out. Sellers cannot price credit; this only gates whether
- * PetroTrade platform credit may be offered on the listing.
+ * PolyStoreX platform credit may be offered on the listing.
  */
 export function resolveProductCredit(input: {
   paymentTerms?: unknown;
@@ -529,7 +529,7 @@ export function resolveCreditAccess(input: {
       title: 'Business credit active',
       message:
         tenureOptions.length > 0
-          ? 'Pay later on approved PetroTrade credit terms.'
+          ? 'Pay later on approved PolyStoreX credit terms.'
           : 'Your approved credit term does not match a selectable tenure. Contact support.',
       cta: null,
     };

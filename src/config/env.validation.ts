@@ -167,7 +167,7 @@ export const envSchema = z
       .positive()
       .default(10),
     KYC_UPLOADS_PER_HOUR: z.coerce.number().int().positive().default(30),
-    KYC_ENFORCE_FOR_TRADING: booleanFromString.optional().default(false),
+    KYC_ENFORCE_FOR_TRADING: booleanFromString.optional().default(true),
 
     /** Public marketing site used to derive /terms, /privacy, /contact when overrides are empty. */
     PUBLIC_WEBSITE_URL: z.url().optional().or(z.literal('')).default(''),

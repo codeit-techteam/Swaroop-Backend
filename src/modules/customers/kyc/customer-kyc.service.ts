@@ -523,7 +523,7 @@ export class CustomerKycService {
       userId,
       organizationId: ctx.organizationId,
       title: resubmission ? 'KYC resubmitted' : 'KYC submitted',
-      body: "Your business KYC is under review. We'll notify you as soon as the PetroTrade compliance team has verified it.",
+      body: "Your business KYC is under review. We'll notify you as soon as the PolyStoreX compliance team has verified it.",
       entityType: EntityOwnerType.CUSTOMER,
       entityId: ctx.customerProfileId,
       metadata: { type: 'KYC_SUBMITTED', resubmission },
