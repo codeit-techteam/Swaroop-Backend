@@ -16,6 +16,7 @@ import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
+import { CustomerKycApprovedGuard } from '../kyc/customer-kyc-approved.guard.js';
 import { CreateCheckoutQuoteDto, QuoteFromCartDto } from './checkout.dto.js';
 import { CheckoutService } from './checkout.service.js';
 
@@ -40,7 +41,7 @@ export class CheckoutController {
 
   @Get('payment-options')
   @ApiOperation({
-    summary: 'Platform payment options with PetroTrade credit eligibility',
+    summary: 'Platform payment options with PolyStoreX credit eligibility',
   })
   async paymentOptions(
     @CurrentUser() user: AuthenticatedUser,
@@ -61,9 +62,10 @@ export class CheckoutController {
 
   @Post('quote')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(CustomerKycApprovedGuard)
   @ApiOperation({
     summary:
-      'Create a server-authoritative checkout quote (seller matching + pricing)',
+      'Create a server-authoritative checkout quote (seller matching + pricing). Requires approved KYC when KYC_ENFORCE_FOR_TRADING=true.',
   })
   async quote(
     @CurrentUser() user: AuthenticatedUser,
@@ -77,9 +79,10 @@ export class CheckoutController {
 
   @Post('quote-from-cart')
   @HttpCode(HttpStatus.OK)
+  @UseGuards(CustomerKycApprovedGuard)
   @ApiOperation({
     summary:
-      'Revalidate the customer cart and generate server-authoritative checkout quotes',
+      'Revalidate the customer cart and generate server-authoritative checkout quotes. Requires approved KYC when KYC_ENFORCE_FOR_TRADING=true.',
   })
   async quoteFromCart(
     @CurrentUser() user: AuthenticatedUser,

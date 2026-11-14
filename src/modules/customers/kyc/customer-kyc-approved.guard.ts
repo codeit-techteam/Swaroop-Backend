@@ -50,7 +50,7 @@ export class CustomerKycApprovedGuard implements CanActivate {
       message:
         status === 'SUBMITTED'
           ? 'Your Business KYC is under review. You can trade once it is approved.'
-          : 'Complete Business KYC and get it approved before placing purchase requests.',
+          : 'Complete your KYC to access this feature. Verify PAN/GST and get approval before cart checkout, Buy Now, or purchase requests.',
       error: 'KYC_NOT_APPROVED',
     });
   }

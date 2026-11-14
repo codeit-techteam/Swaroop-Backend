@@ -84,4 +84,33 @@ export class AdminProductsController {
       'Product status updated',
     );
   }
+
+  @Post(':id/archive')
+  @ApiOperation({
+    summary:
+      'Soft-archive product (deletedAt + ARCHIVED) and pause ACTIVE offers. Preserves order/PR history.',
+  })
+  async archive(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return successResponse(
+      await this.products.archive(id, user.id),
+      'Product archived',
+    );
+  }
+
+  @Post(':id/restore')
+  @ApiOperation({
+    summary: 'Restore an archived product (clears deletedAt, sets PAUSED)',
+  })
+  async restore(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return successResponse(
+      await this.products.restore(id, user.id),
+      'Product restored',
+    );
+  }
 }

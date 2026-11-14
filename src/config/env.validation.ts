@@ -55,7 +55,8 @@ export const envSchema = z
       .default('info'),
 
     THROTTLE_TTL_MS: z.coerce.number().int().positive().default(60_000),
-    THROTTLE_LIMIT: z.coerce.number().int().positive().default(100),
+    /** Global per-IP baseline for browsing. Auth OTP uses separate stricter limiters. */
+    THROTTLE_LIMIT: z.coerce.number().int().positive().default(300),
 
     OTP_LENGTH: z.coerce.number().int().min(4).max(8).default(6),
     OTP_EXPIRES_IN_SECONDS: z.coerce.number().int().positive().default(600),

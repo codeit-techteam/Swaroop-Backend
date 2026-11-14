@@ -17,6 +17,7 @@ import { successResponse } from '../../../common/utils/response.util.js';
 import { CurrentUser, Roles } from '../../auth/decorators/auth.decorators.js';
 import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
+import { CustomerKycApprovedGuard } from '../kyc/customer-kyc-approved.guard.js';
 import {
   AddCartItemDto,
   UpdateCartItemDto,
@@ -100,7 +101,11 @@ export class CartController {
 
   @Post('validate')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Validate cart for checkout' })
+  @UseGuards(CustomerKycApprovedGuard)
+  @ApiOperation({
+    summary:
+      'Validate cart for checkout. Requires approved KYC when KYC_ENFORCE_FOR_TRADING=true.',
+  })
   async validate(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: ValidateCartDto,

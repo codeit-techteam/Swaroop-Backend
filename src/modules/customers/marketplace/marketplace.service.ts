@@ -273,6 +273,17 @@ const offerInclude = {
   priceTiers: { orderBy: { minQty: 'asc' as const } },
 } satisfies Prisma.OfferInclude;
 
+function dedupeGradesById<T extends { id: string }>(grades: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const grade of grades) {
+    if (seen.has(grade.id)) continue;
+    seen.add(grade.id);
+    out.push(grade);
+  }
+  return out;
+}
+
 @Injectable()
 export class MarketplaceService {
   constructor(
@@ -361,7 +372,7 @@ export class MarketplaceService {
         sortOrder: c.sortOrder,
         gradeCount: c._count.grades,
       })),
-      popularGrades: popularGrades.map((g) => toCustomerGrade(g)),
+      popularGrades: dedupeGradesById(popularGrades).map((g) => toCustomerGrade(g)),
       featuredProducts: dedupeBlindProducts(
         featuredProducts.map((p) => toBlindProduct(p)),
       ),

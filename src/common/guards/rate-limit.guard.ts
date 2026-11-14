@@ -17,6 +17,9 @@ type HitBucket = {
  * Lightweight in-memory rate-limit foundation.
  * Replaces @nestjs/throttler until it officially supports NestJS 12 peer deps.
  * Can later be swapped for Redis-backed limiting without changing controllers.
+ *
+ * Catalogue browsing and auth/OTP use separate IP buckets so marketplace traffic
+ * cannot starve OTP, and OTP abuse cannot wipe catalogue budget.
  */
 @Injectable()
 export class RateLimitGuard implements CanActivate {
@@ -27,10 +30,8 @@ export class RateLimitGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const ttlMs =
       this.configService.get<number>('security.throttleTtlMs') ?? 60_000;
-    const limit =
-      this.configService.get<number>('security.throttleLimit') ?? 100;
-
     const request = context.switchToHttp().getRequest<Request>();
+    const limit = this.resolveLimit(request);
     const key = this.resolveKey(request);
     const now = Date.now();
     const existing = this.hits.get(key);
@@ -57,6 +58,43 @@ export class RateLimitGuard implements CanActivate {
     return true;
   }
 
+  private resolveLimit(request: Request): number {
+    const defaultLimit =
+      this.configService.get<number>('security.throttleLimit') ?? 300;
+    const marketplaceLimit =
+      this.configService.get<number>('security.throttleMarketplaceLimit') ??
+      Math.max(defaultLimit * 2, 600);
+    const path = (
+      request.originalUrl ||
+      request.url ||
+      request.path ||
+      ''
+    ).toLowerCase();
+    const method = (request.method || 'GET').toUpperCase();
+
+    if (
+      path.includes('/auth/') ||
+      path.includes('/otp') ||
+      path.includes('/login')
+    ) {
+      // Dedicated OTP limiters still apply; keep global auth bucket tight.
+      return Math.min(defaultLimit, 60);
+    }
+
+    if (
+      method === 'GET' &&
+      (path.includes('/public/marketplace') ||
+        path.includes('/customer/marketplace') ||
+        path.includes('/public/offers') ||
+        path.includes('/customer/offers') ||
+        path.includes('/grades'))
+    ) {
+      return marketplaceLimit;
+    }
+
+    return defaultLimit;
+  }
+
   private resolveKey(request: Request): string {
     const forwarded = request.headers['x-forwarded-for'];
     const forwardedIp =
@@ -66,8 +104,15 @@ export class RateLimitGuard implements CanActivate {
           ? forwarded[0]
           : undefined;
 
-    return (
-      forwardedIp || request.ip || request.socket.remoteAddress || 'unknown'
-    );
+    const ip =
+      forwardedIp || request.ip || request.socket.remoteAddress || 'unknown';
+    const path = (request.originalUrl || request.url || '').toLowerCase();
+    const bucket =
+      path.includes('/auth/') || path.includes('/otp')
+        ? 'auth'
+        : path.includes('/marketplace') || path.includes('/grades')
+          ? 'catalogue'
+          : 'general';
+    return `${bucket}:${ip}`;
   }
 }

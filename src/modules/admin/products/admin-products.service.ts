@@ -6,6 +6,7 @@ import {
 import {
   EntityOwnerType,
   GradeStatus,
+  OfferStatus,
   Prisma,
   ProductStatus,
 } from '../../../generated/prisma/client.js';
@@ -217,6 +218,113 @@ export class AdminProductsService {
       entityId: id,
       previousData: { status: existing.status },
       newData: { status: dto.status },
+    });
+
+    return product;
+  }
+
+  /**
+   * Soft-archive a product: set ARCHIVED + deletedAt, pause ACTIVE offers.
+   * Preserves purchase_request / order / cart references. Reversible via restore.
+   */
+  async archive(
+    id: string,
+    actorUserId: string,
+    reason = 'admin_product_archive',
+  ) {
+    const existing = await this.findOne(id);
+
+    const result = await this.prisma.$transaction(async (tx) => {
+      const activeOffers = await tx.offer.findMany({
+        where: {
+          productId: id,
+          deletedAt: null,
+          status: OfferStatus.ACTIVE,
+        },
+        select: { id: true, metadata: true },
+      });
+
+      for (const offer of activeOffers) {
+        const prev =
+          offer.metadata &&
+          typeof offer.metadata === 'object' &&
+          !Array.isArray(offer.metadata)
+            ? (offer.metadata as Record<string, unknown>)
+            : {};
+        await tx.offer.update({
+          where: { id: offer.id },
+          data: {
+            status: OfferStatus.PAUSED,
+            metadata: {
+              ...prev,
+              pausedReason: reason,
+              pausedAt: new Date().toISOString(),
+            },
+          },
+        });
+      }
+
+      const product = await tx.product.update({
+        where: { id },
+        data: {
+          status: ProductStatus.ARCHIVED,
+          deletedAt: new Date(),
+        },
+        include: productInclude,
+      });
+
+      return { product, pausedOfferCount: activeOffers.length };
+    });
+
+    await this.audit.log({
+      action: 'ADMIN_PRODUCT_ARCHIVED',
+      actorUserId,
+      organizationId: existing.organizationId,
+      entityType: EntityOwnerType.PRODUCT,
+      entityId: id,
+      previousData: { status: existing.status, deletedAt: null },
+      newData: {
+        status: result.product.status,
+        deletedAt: result.product.deletedAt,
+        pausedOffers: result.pausedOfferCount,
+        reason,
+      },
+    });
+
+    return result;
+  }
+
+  /** Reverse archive for accidental removals (clears deletedAt, sets PAUSED). */
+  async restore(id: string, actorUserId: string) {
+    const existing = await this.prisma.product.findFirst({
+      where: { id },
+      include: productInclude,
+    });
+    if (!existing) throw new NotFoundException('Product not found');
+    if (!existing.deletedAt && existing.status !== ProductStatus.ARCHIVED) {
+      throw new BadRequestException('Product is not archived');
+    }
+
+    const product = await this.prisma.product.update({
+      where: { id },
+      data: {
+        deletedAt: null,
+        status: ProductStatus.PAUSED,
+      },
+      include: productInclude,
+    });
+
+    await this.audit.log({
+      action: 'ADMIN_PRODUCT_RESTORED',
+      actorUserId,
+      organizationId: existing.organizationId,
+      entityType: EntityOwnerType.PRODUCT,
+      entityId: id,
+      previousData: {
+        status: existing.status,
+        deletedAt: existing.deletedAt,
+      },
+      newData: { status: product.status, deletedAt: null },
     });
 
     return product;

@@ -37,6 +37,7 @@ export type AppConfig = {
     jwtExpiresIn: string;
     throttleTtlMs: number;
     throttleLimit: number;
+    throttleMarketplaceLimit: number;
     otpLength: number;
     otpExpiresInSeconds: number;
     otpMaxAttempts: number;
@@ -312,7 +313,11 @@ export default (): AppConfig => {
       jwtSecret: accessSecret,
       jwtExpiresIn: accessExpires,
       throttleTtlMs: Number(process.env.THROTTLE_TTL_MS ?? 60_000),
-      throttleLimit: Number(process.env.THROTTLE_LIMIT ?? 100),
+      // Catalogue browsing needs headroom; OTP/auth remains on dedicated limiters.
+      throttleLimit: Number(process.env.THROTTLE_LIMIT ?? 300),
+      throttleMarketplaceLimit: Number(
+        process.env.THROTTLE_MARKETPLACE_LIMIT ?? 600,
+      ),
       otpLength: Number(process.env.OTP_LENGTH ?? 6),
       otpExpiresInSeconds: Number(process.env.OTP_EXPIRES_IN_SECONDS ?? 600),
       otpMaxAttempts: Number(process.env.OTP_MAX_ATTEMPTS ?? 5),
