@@ -498,10 +498,10 @@ export default (): AppConfig => {
         supportEmail:
           trim(process.env.PUBLIC_SUPPORT_EMAIL) || 'connect@polystorex.com',
         supportPhone:
-          trim(process.env.PUBLIC_SUPPORT_PHONE) || '+91 99626 20101',
+          trim(process.env.PUBLIC_SUPPORT_PHONE) || '+91 82484 00787',
         supportWhatsapp:
           trim(process.env.PUBLIC_SUPPORT_WHATSAPP) ||
-          'https://wa.me/919962620101',
+          'https://wa.me/918248400787',
       };
     })(),
   };
