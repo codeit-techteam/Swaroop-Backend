@@ -305,8 +305,24 @@ export function listingManufacturer(
   );
 }
 
-/** Approved generic manufacturer label for buyer-facing marketplace payloads. */
-export const BLIND_MANUFACTURER_LABEL = 'PRIVATE';
+/**
+ * Catalogue manufacturer shown to buyers.
+ * Seller / supplier identity stays on `supplier.displayName` ("ANONYMOUS SUPPLIER").
+ * Do not replace a real grade-master manufacturer with PRIVATE.
+ */
+export function publicCatalogueManufacturer(
+  manufacturer?: string | null,
+): string | null {
+  const value = manufacturer?.trim();
+  return value ? value : null;
+}
+
+/** @deprecated Use publicCatalogueManufacturer. Kept so older imports still compile. */
+export function blindManufacturerLabel(
+  manufacturer?: string | null,
+): string | null {
+  return publicCatalogueManufacturer(manufacturer);
+}
 
 /**
  * Strip trailing manufacturer suffixes from listing titles so buyers do not
@@ -347,11 +363,6 @@ export function sanitizeBlindDisplayName(
       .trim();
   }
   return next || name.trim();
-}
-
-/** Buyer-facing manufacturer field — never the real maker name. */
-export function blindManufacturerLabel(): string {
-  return BLIND_MANUFACTURER_LABEL;
 }
 
 /** Remove manufacturer tokens from codes shown to buyers (e.g. SO-ABS-3000D-TAITA-…). */
@@ -543,7 +554,7 @@ export function toBlindProduct(product: {
     product.brand,
     product.grade,
   );
-  const manufacturer = blindManufacturerLabel();
+  const manufacturer = publicCatalogueManufacturer(product.grade?.manufacturer);
   const publicName = sanitizeBlindDisplayName(
     listingDisplayName(product.name, product.grade),
     internalManufacturer,
@@ -785,7 +796,7 @@ export function toBlindOffer(offer: {
             ),
           ),
           unit: offer.product.unit,
-          manufacturer: blindManufacturerLabel(),
+          manufacturer: publicCatalogueManufacturer(offer.grade?.manufacturer),
         }
       : null,
     grade: offer.grade
@@ -807,7 +818,7 @@ export function toBlindOffer(offer: {
             : null,
           gradeNo: offer.grade.gradeNo ?? null,
           gradeGroup: offer.grade.gradeGroup ?? null,
-          manufacturer: blindManufacturerLabel(),
+          manufacturer: publicCatalogueManufacturer(offer.grade?.manufacturer),
         }
       : null,
     priceTiers: commercialPriceTiers(offer.priceTiers, offer.metadata).map(

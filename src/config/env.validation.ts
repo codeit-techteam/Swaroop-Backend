@@ -179,6 +179,22 @@ export const envSchema = z
       .union([z.literal(''), z.string().email()])
       .optional()
       .default(''),
+    /** Ignored. Direct FCM replaced the Expo Push sender. Kept so old env files still parse. */
+    EXPO_PUSH_ENABLED: booleanFromString.optional().default(true),
+    /** Ignored. Do not put a Google service-account key here. */
+    EXPO_ACCESS_TOKEN: z.string().optional().default(''),
+    /** When false, in-app notifications are still stored but FCM is not called. */
+    FCM_ENABLED: booleanFromString.optional().default(true),
+    /** Must be polystorex-7b42a before FCM is initialized. */
+    FIREBASE_PROJECT_ID: z.string().optional().default(''),
+    /** Path to the rotated service-account JSON. Never commit that file. */
+    GOOGLE_APPLICATION_CREDENTIALS: z.string().optional().default(''),
+    /**
+     * Rotated service-account JSON for hosts that only accept env secrets.
+     * The value is never logged. A key from any other Firebase project is rejected.
+     */
+    FIREBASE_SERVICE_ACCOUNT_JSON: z.string().optional().default(''),
+    FCM_DEVICE_REGISTER_LIMIT: z.coerce.number().int().min(1).max(100).default(30),
   })
   .superRefine((data, ctx) => {
     const accessSecret = data.JWT_ACCESS_SECRET || data.JWT_SECRET;

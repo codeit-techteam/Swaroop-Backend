@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import {
   EntityOwnerType,
   NotificationChannel,
@@ -7,6 +7,7 @@ import {
 } from '../../generated/prisma/client.js';
 import { PrismaService } from '../../database/prisma.service.js';
 import { paginationMeta, skipTake } from '../master-data/common/pagination.js';
+import { FcmDispatcher } from './fcm.dispatcher.js';
 
 export type CreateNotificationInput = {
   userId: string;
@@ -99,7 +100,12 @@ export function toPublicNotification<
 
 @Injectable()
 export class NotificationService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(NotificationService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly push?: FcmDispatcher,
+  ) {}
 
   async create(input: CreateNotificationInput) {
     const metadata = { ...(input.metadata ?? {}) };
@@ -107,7 +113,7 @@ export class NotificationService {
     if (displayReference && !metadata.displayReference) {
       metadata.displayReference = displayReference;
     }
-    return this.prisma.notification.create({
+    const row = await this.prisma.notification.create({
       data: {
         userId: input.userId,
         organizationId: input.organizationId,
@@ -121,6 +127,26 @@ export class NotificationService {
         sentAt: new Date(),
       },
     });
+    if (row.userId && this.push) {
+      try {
+        await this.push.dispatch({
+          id: row.id,
+          userId: row.userId,
+          title: row.title,
+          body: row.body,
+          entityType: row.entityType,
+          entityId: row.entityId,
+          metadata: row.metadata,
+        });
+      } catch (error) {
+        this.logger.warn(
+          `Push dispatch failed for notification ${row.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return row;
   }
 
   async listForUser(

@@ -168,6 +168,28 @@ describe('planSourceOneImport', () => {
       const codes = plan.grades.map((g) => g.code);
       expect(new Set(codes).size).toBe(codes.length);
       expect(plan.grades.map((g) => gradeCodeOf(g))).toEqual(codes);
+      for (const code of codes) {
+        expect(code.startsWith('PSX-')).toBe(true);
+        expect(code.startsWith('SO-')).toBe(false);
+      }
+    });
+
+    it('omits manufacturer and seller names from new grade codes', () => {
+      const code = gradeCodeOf({
+        line: 1,
+        category: 'ABS',
+        gradeGroup: 'ABS EXTRUSION',
+        gradeNo: '3000D',
+        manufacturer: 'TAITA',
+        fullGradeName: 'ABS EXTRUSION 3000D - TAITA',
+        inTodaysDelhiPriceList: false,
+        priceTodayRsKg: null,
+        producerPriceRsKg: null,
+        producerPriceType: null,
+      });
+      expect(code).toMatch(/^PSX-ABS_EXTRUSION-3000D-[A-F0-9]{4}$/);
+      expect(code).not.toContain('TAITA');
+      expect(code).not.toContain('SO-');
     });
 
     it('stores prices with at most two decimals', () => {

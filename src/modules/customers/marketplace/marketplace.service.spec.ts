@@ -94,7 +94,7 @@ describe('MarketplaceService grade browsing', () => {
     expect(items[0]).toMatchObject({
       id: 'g1',
       gradeNo: 'F46003',
-      manufacturer: 'PRIVATE',
+      manufacturer: 'RIL',
       liveOfferCount: 3,
       category: { code: 'HDPE', displayName: 'HDPE' },
     });

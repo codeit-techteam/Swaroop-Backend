@@ -36,24 +36,59 @@ async function bootstrap(): Promise<void> {
   app.useBodyParser('urlencoded', { limit: '1mb', extended: true });
 
   const configuredOrigins = new Set(appConfig.corsOrigins);
+  // Exact production origins. These stay allowed even when platform wildcards
+  // are off, so a missing CORS_ORIGINS value cannot lock out the live apps.
+  // api.polystorex.com is listed for the cutover; it has no DNS yet.
+  const firstPartyOrigins = new Set([
+    'https://polystorex.com',
+    'https://www.polystorex.com',
+    'https://customer.polystorex.com',
+    'https://seller.polystorex.com',
+    'https://admin.polystorex.com',
+    'https://api.polystorex.com',
+    'https://swaroop-customer-webapp.vercel.app',
+    'https://swaroop-seller-webapp.vercel.app',
+    'https://swaroop-admin-pi.vercel.app',
+    'https://swaroop-website.vercel.app',
+    'https://swaroop-backend-xzwkz.ondigitalocean.app',
+  ]);
+  const isLocalDevOrigin = (origin: string): boolean => {
+    try {
+      const { hostname } = new URL(origin);
+      if (
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
+        hostname === '::1'
+      ) {
+        return true;
+      }
+      return (
+        /^10\.\d+\.\d+\.\d+$/.test(hostname) ||
+        /^192\.168\.\d+\.\d+$/.test(hostname) ||
+        /^172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+$/.test(hostname)
+      );
+    } catch {
+      return false;
+    }
+  };
   const isAllowedOrigin = (origin: string | undefined): boolean => {
     if (!origin) {
       return true;
     }
-    if (configuredOrigins.has(origin)) {
+    if (configuredOrigins.has(origin) || firstPartyOrigins.has(origin)) {
       return true;
     }
-    // Allow DigitalOcean App Platform + Vercel preview/live hosts without listing every slug.
-    // Disable with CORS_ALLOW_PLATFORM_HOSTS=false once every origin is in CORS_ORIGINS.
+    // Localhost and LAN addresses are development-only.
+    if (appConfig.env !== 'production' && isLocalDevOrigin(origin)) {
+      return true;
+    }
+    // Opt-in only. Arbitrary *.vercel.app / *.ondigitalocean.app hosts are
+    // unknown origins and are rejected unless CORS_ALLOW_PLATFORM_HOSTS=true.
     if (!appConfig.corsAllowPlatformHosts) {
       return false;
     }
     try {
       const { hostname } = new URL(origin);
-      // Platform preview hosts + first-party PolyStoreX production domains.
-      // Custom domains are NOT covered by *.vercel.app — without this, browsers
-      // on customer.polystorex.com get a CORS failure that Axios reports as
-      // "Network Error" when loading the public marketplace catalogue.
       return (
         hostname.endsWith('.ondigitalocean.app') ||
         hostname.endsWith('.ondigitalocean.com') ||
@@ -73,12 +108,9 @@ async function bootstrap(): Promise<void> {
   }
 
   app.enableCors({
-    origin:
-      appConfig.env === 'production'
-        ? (origin, callback) => {
-            callback(null, isAllowedOrigin(origin));
-          }
-        : true,
+    origin: (origin, callback) => {
+      callback(null, isAllowedOrigin(origin));
+    },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'X-Request-Id'],

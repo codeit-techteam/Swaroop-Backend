@@ -21,10 +21,11 @@ import {
   matchGradeFromIndex,
 } from './tds-grade-matcher.js';
 import {
-  blindManufacturerLabel,
+  publicCatalogueManufacturer,
   sanitizeBlindCode,
   sanitizeBlindDisplayName,
 } from '../customers/common/blind-marketplace.mapper.js';
+import { isKnownIncorrectTdsMapping } from './incorrect-tds-mappings.js';
 import {
   buildGradeTdsObjectKey,
   buildImportKey,
@@ -69,16 +70,14 @@ export class GradeTdsService {
     const mime = doc.mimeType ?? 'application/octet-stream';
     const isImage = mime.startsWith('image/');
     const blind = options?.blindManufacturer !== false;
-    const producerLabel = blind
-      ? blindManufacturerLabel()
-      : doc.producerName;
+    const producerLabel = publicCatalogueManufacturer(doc.producerName);
     const gradeCode = blind
       ? sanitizeBlindCode(doc.gradeCode, doc.producerName) ?? doc.gradeCode
       : doc.gradeCode;
     const syncedTitle =
       displayTitle?.trim() ||
       doc.documentTitle ||
-      `${gradeCode} – ${producerLabel}`;
+      (producerLabel ? `${gradeCode} – ${producerLabel}` : gradeCode);
     return {
       id: doc.id,
       type: doc.documentType,
@@ -168,16 +167,32 @@ export class GradeTdsService {
       options?.productDisplayName?.trim() ||
       this.gradeDisplayName(grade, { blindManufacturer });
 
-    const docs = await this.prisma.gradeTdsDocument.findMany({
-      where: {
-        deletedAt: null,
-        isActive: true,
-        gradeId,
-        verificationStatus: { in: CUSTOMER_VISIBLE },
-        storageKey: { not: null },
-      },
-      orderBy: [{ revision: 'desc' }, { approvedAt: 'desc' }, { createdAt: 'desc' }],
-    });
+    const docs = (
+      await this.prisma.gradeTdsDocument.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          gradeId,
+          verificationStatus: { in: CUSTOMER_VISIBLE },
+          storageKey: { not: null },
+        },
+        orderBy: [
+          { revision: 'desc' },
+          { approvedAt: 'desc' },
+          { createdAt: 'desc' },
+        ],
+      })
+    ).filter(
+      (doc) =>
+        !isKnownIncorrectTdsMapping({
+          originalFilename: doc.originalFilename,
+          gradeName: grade.name,
+          gradeNo: grade.gradeNo,
+          fullGradeName: grade.fullGradeName,
+          displayName: grade.displayName,
+          gradeCode: grade.code,
+        }),
+    );
 
     const items = docs.map((d) =>
       this.mapCustomerDoc(d, displayTitle, { blindManufacturer }),
@@ -200,9 +215,7 @@ export class GradeTdsService {
           : grade.code,
         name: displayTitle,
         gradeNo: grade.gradeNo,
-        manufacturer: blindManufacturer
-          ? blindManufacturerLabel()
-          : grade.manufacturer,
+        manufacturer: publicCatalogueManufacturer(grade.manufacturer),
       },
       available: items.length > 0,
       message:

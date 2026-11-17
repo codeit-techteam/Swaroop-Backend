@@ -8,7 +8,6 @@ import {
 } from './commerce-pricing.js';
 import { assertPriceTiersRespectMoq } from '../../sellers/offers/offer-price-tiers.util.js';
 import {
-  BLIND_MANUFACTURER_LABEL,
   toBlindProduct,
 } from '../common/blind-marketplace.mapper.js';
 
@@ -116,10 +115,10 @@ describe('Phase 2 — catalogue / pricing integrity', () => {
       ],
     });
 
-    expect(payload.manufacturer).toBe(BLIND_MANUFACTURER_LABEL);
-    expect(payload.brand).toBe(BLIND_MANUFACTURER_LABEL);
-    expect(payload.supplier?.displayName).toMatch(/ANONYMOUS|PRIVATE/i);
-    expect(JSON.stringify(payload)).not.toMatch(/TAITA/i);
+    expect(payload.manufacturer).toBe('TAITA');
+    expect(payload.brand).toBe('TAITA');
+    expect(payload.supplier?.displayName).toMatch(/ANONYMOUS/i);
+    expect(JSON.stringify(payload)).not.toMatch(/Relindvb|sellerName|organizationId/i);
   });
 
   it('treats expired validUntil as inactive for marketplace filter helper', () => {

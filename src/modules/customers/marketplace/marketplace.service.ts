@@ -13,7 +13,7 @@ import {
   skipTake,
 } from '../../master-data/common/pagination.js';
 import {
-  blindManufacturerLabel,
+  publicCatalogueManufacturer,
   dedupeBlindProducts,
   sanitizeBlindCode,
   sanitizeBlindDisplayName,
@@ -150,7 +150,7 @@ function toCustomerGrade(
     description: g.description,
     gradeGroup: g.gradeGroup,
     gradeNo: g.gradeNo,
-    manufacturer: blindManufacturerLabel(),
+    manufacturer: publicCatalogueManufacturer(maker),
     fullGradeName: g.fullGradeName
       ? sanitizeBlindDisplayName(g.fullGradeName, maker)
       : g.fullGradeName,

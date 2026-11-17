@@ -785,6 +785,7 @@ model User {
   uploadedDocuments       Document[]               @relation("DocumentUploader")
   notifications           Notification[]           @relation("NotificationRecipient")
   notificationPreferences NotificationPreference[]
+  devicePushTokens        DevicePushToken[]
   auditLogs               AuditLog[]               @relation("AuditActor")
   assignedCreditApplications CreditApplication[]   @relation("CreditApplicationAssignee")
   assignedNewGradeRequests NewGradeRequest[]       @relation("NewGradeRequestAssignee")
@@ -3358,14 +3359,53 @@ model Notification {
   sentAt         DateTime?           @map("sent_at")
   createdAt      DateTime            @default(now()) @map("created_at")
 
-  user         User?         @relation("NotificationRecipient", fields: [userId], references: [id])
-  organization Organization? @relation(fields: [organizationId], references: [id])
+  user           User?           @relation("NotificationRecipient", fields: [userId], references: [id])
+  organization   Organization?   @relation(fields: [organizationId], references: [id])
+  pushDeliveries PushDelivery[]
 
   @@index([userId, readAt])
   @@index([organizationId])
   @@index([status, createdAt])
   @@index([entityType, entityId])
   @@map("notifications")
+}
+
+/// One FCM registration per install. `revokedAt` null means the token is active.
+/// Legacy rows may still have provider "expo"; those are not sent.
+model DevicePushToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  token          String    @unique
+  platform       String
+  provider       String    @default("expo")
+  appId          String    @default("com.polystorex.app") @map("app_id")
+  installationId String?   @map("installation_id")
+  lastSeenAt     DateTime  @default(now()) @map("last_seen_at")
+  revokedAt      DateTime? @map("revoked_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deliveries PushDelivery[]
+
+  @@index([userId, revokedAt])
+  @@index([installationId, revokedAt])
+  @@map("device_push_tokens")
+}
+
+/// Successful FCM send for one notification and one device. Stops a retry from sending twice.
+model PushDelivery {
+  id             String   @id @default(uuid()) @db.Uuid
+  notificationId String   @map("notification_id") @db.Uuid
+  tokenId        String   @map("token_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  notification Notification    @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  token        DevicePushToken @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, tokenId])
+  @@index([tokenId])
+  @@map("push_deliveries")
 }
 
 model CmsBanner {

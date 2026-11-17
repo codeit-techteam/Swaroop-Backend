@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../database/prisma.service.js';
 import type { AppConfig, SurepassConfig } from '../config/configuration.js';
+import { fcmRuntimeStatus } from '../modules/notifications/fcm-status.js';
 import { StorageService } from '../storage/storage.service.js';
 
 export type OtpHealthStatus = {
@@ -29,6 +30,8 @@ export type HealthStatus = {
   database: 'connected' | 'disconnected' | 'skipped';
   storage: 'configured' | 'not_configured';
   surepass: 'configured' | 'not_configured';
+  /** Firebase Admin messaging. `disabled` still leaves the in-app inbox available. */
+  fcm: 'ready' | 'disabled';
   otp: OtpHealthStatus;
   timestamp: string;
 };
@@ -140,6 +143,7 @@ export class HealthService {
       database,
       storage,
       surepass,
+      fcm: fcmRuntimeStatus(),
       otp,
       timestamp: new Date().toISOString(),
     };

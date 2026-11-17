@@ -140,6 +140,17 @@ export type AppConfig = {
     supportPhone: string;
     supportWhatsapp: string;
   };
+  /**
+   * Direct Firebase Cloud Messaging. Credentials stay on the server.
+   * Missing credentials leave the in-app inbox running.
+   */
+  fcm: {
+    enabled: boolean;
+    projectId: string;
+    credentialsPath: string;
+    serviceAccountJson: string;
+    deviceRegisterLimit: number;
+  };
 };
 
 export type KycProviderConfig = {
@@ -263,7 +274,8 @@ export default (): AppConfig => {
         process.env.CORS_ORIGINS ??
           'http://localhost:3000,http://localhost:3001,http://localhost:3002,http://localhost:4000,http://localhost:5173,http://localhost:8081',
       ),
-      corsAllowPlatformHosts: process.env.CORS_ALLOW_PLATFORM_HOSTS !== 'false',
+      // Unknown preview hosts are rejected unless this is explicitly true.
+      corsAllowPlatformHosts: process.env.CORS_ALLOW_PLATFORM_HOSTS === 'true',
       skipDbConnectOnBoot:
         process.env.SKIP_DB_CONNECT_ON_BOOT === 'true' ||
         process.env.NODE_ENV === 'test',
@@ -504,5 +516,14 @@ export default (): AppConfig => {
           'https://wa.me/918248400787',
       };
     })(),
+    fcm: {
+      enabled: !['false', '0', 'no', 'off'].includes(
+        (process.env.FCM_ENABLED ?? 'true').trim().toLowerCase(),
+      ),
+      projectId: (process.env.FIREBASE_PROJECT_ID ?? '').trim(),
+      credentialsPath: (process.env.GOOGLE_APPLICATION_CREDENTIALS ?? '').trim(),
+      serviceAccountJson: (process.env.FIREBASE_SERVICE_ACCOUNT_JSON ?? '').trim(),
+      deviceRegisterLimit: Number(process.env.FCM_DEVICE_REGISTER_LIMIT ?? 30) || 30,
+    },
   };
 };

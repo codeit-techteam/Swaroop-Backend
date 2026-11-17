@@ -63,13 +63,13 @@ describe('blind marketplace mapper', () => {
       ],
     });
     expect(payload.name).toBe('HDPE FILM F46003');
-    expect(payload.manufacturer).toBe('PRIVATE');
-    expect(payload.brand).toBe('PRIVATE');
+    expect(payload.manufacturer).toBe('RIL');
+    expect(payload.brand).toBe('RIL');
     expect(payload.mfi).toBe('0.36');
     expect(payload.grade?.fullGradeName).toBe('HDPE FILM F46003');
-    expect(payload.grade?.manufacturer).toBe('PRIVATE');
+    expect(payload.grade?.manufacturer).toBe('RIL');
     expect(payload.grade?.category?.parentGroup).toBe('POLYMERS');
-    expect(JSON.stringify(payload)).not.toContain('RIL');
+    expect(JSON.stringify(payload)).not.toContain('org-seller-secret');
   });
 
   it('merges Grade Master apps/features/specs when seller fields are empty', () => {
@@ -172,14 +172,14 @@ describe('blind marketplace mapper', () => {
         manufacturer: 'TAITA',
       },
     });
-    expect(payload.manufacturer).toBe('PRIVATE');
-    expect(payload.brand).toBe('PRIVATE');
+    expect(payload.manufacturer).toBe('TAITA');
+    expect(payload.brand).toBe('TAITA');
     expect(payload.name).toBe('ABS EXTRUSION 3000D');
     expect(payload.grade?.displayName).toBe('ABS EXTRUSION 3000D');
     const serialized = JSON.stringify(payload);
     expect(serialized).not.toContain('Relindvb');
-    expect(serialized).not.toContain('TAITA');
     expect(serialized).not.toContain('SCG');
+    expect(payload.supplier?.displayName).toBe('ANONYMOUS SUPPLIER');
   });
 
   it('B-06: collapses commercially identical listings but keeps distinct offers', () => {

@@ -151,17 +151,18 @@ export function sourceKeyOf(row: {
     .join('|');
 }
 
-/** Unique, deterministic Grade.code for a Source.One grade. */
+/**
+ * Unique code for a newly imported grade.
+ * Format: PSX-{FAMILY}-{GRADE_TOKEN}-{SEQ4}
+ * Manufacturer and seller names are omitted. Existing database codes are not
+ * rewritten — the importer matches grades on sourceKey and does not update `code`.
+ */
 export function gradeCodeOf(row: PlannedGrade | SourceOneRow): string {
-  const part = (v: string) => masterCode(v).slice(0, 24) || 'NA';
-  const hash = sha256(sourceKeyOf(row)).slice(0, 6).toUpperCase();
-  return [
-    'SO',
-    part(row.category),
-    part(row.gradeNo),
-    part(row.manufacturer ?? 'NA'),
-    hash,
-  ].join('-');
+  const part = (v: string, max = 24) => masterCode(v).slice(0, max) || 'NA';
+  const family = part(row.gradeGroup || row.category, 16);
+  const gradeToken = part(row.gradeNo || 'NA', 24);
+  const seq = sha256(sourceKeyOf(row)).slice(0, 4).toUpperCase();
+  return ['PSX', family, gradeToken, seq].join('-');
 }
 
 /** Display label used when Source.One has no full grade name for the row. */

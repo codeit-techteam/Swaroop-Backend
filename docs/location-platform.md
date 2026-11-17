@@ -29,7 +29,7 @@ Client (web / Expo)  ──JWT──▶  /api/v1/locations/*  ──server key�
 | --- | --- | --- | --- |
 | Server | `GOOGLE_MAPS_SERVER_API_KEY` (backend) | IP addresses of the backend hosts | Places API (New), Geocoding API |
 | Browser | `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` (Customer Web, Seller Web) | HTTP referrers: production + preview domains of both web apps, `http://localhost:3000/*`, `http://localhost:3001/*` | Maps JavaScript API |
-| Android / iOS (optional) | `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` (Expo) | Android package / iOS bundle id `com.swaroop.app` (+ SHA-1) | Maps SDK for Android / iOS |
+| Android / iOS (optional) | `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` (Expo) | Android package / iOS bundle id `com.polystorex.app` (+ SHA-1) | Maps SDK for Android / iOS |
 
 4. Set a daily quota cap and a billing budget alert on the project.
 5. Put the real values in the hosting provider's environment settings (Vercel,
