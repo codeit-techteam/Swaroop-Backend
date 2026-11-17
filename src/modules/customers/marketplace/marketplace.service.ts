@@ -280,6 +280,31 @@ const offerInclude = {
   priceTiers: { orderBy: { minQty: 'asc' as const } },
 } satisfies Prisma.OfferInclude;
 
+type MarketplaceCategoryCard = {
+  id: string;
+  code: string;
+  name: string;
+  displayName: string;
+  parentGroup: Prisma.GradeCategoryGetPayload<{
+    select: { parentGroup: true };
+  }>['parentGroup'];
+  sortOrder: number;
+  gradeCount: number;
+};
+
+type MarketplaceHomePayload = {
+  categories: MarketplaceCategoryCard[];
+  popularGrades: Array<ReturnType<typeof toCustomerGrade>>;
+  featuredProducts: Array<ReturnType<typeof toBlindProduct>>;
+  activeOffers: Array<ReturnType<typeof toBlindOffer>>;
+  summary: {
+    grades: number;
+    products: number;
+    offers: number;
+    categories: number;
+  };
+};
+
 function dedupeGradesById<T extends { id: string }>(grades: T[]): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
@@ -307,7 +332,7 @@ export class MarketplaceService {
   async home(
     userId: string | null | undefined,
     query: MarketplaceHomeQueryDto,
-  ) {
+  ): Promise<MarketplaceHomePayload> {
     await this.ctx(userId);
     const featuredLimit = query.featuredLimit ?? 8;
     const offersLimit = query.offersLimit ?? 8;
@@ -322,7 +347,7 @@ export class MarketplaceService {
     ]);
     if (!userId) {
       const cached = marketplaceReadCache.get(cacheKey);
-      if (cached) return cached as Awaited<ReturnType<MarketplaceService['home']>>;
+      if (cached) return cached as MarketplaceHomePayload;
     }
 
     const now = new Date();
@@ -410,7 +435,9 @@ export class MarketplaceService {
     return payload;
   }
 
-  async listCategories(userId?: string | null) {
+  async listCategories(
+    userId?: string | null,
+  ): Promise<MarketplaceCategoryCard[]> {
     await this.ctx(userId);
     const cacheKey = marketplaceCacheKey([
       'categories',
@@ -418,7 +445,7 @@ export class MarketplaceService {
     ]);
     if (!userId) {
       const cached = marketplaceReadCache.get(cacheKey);
-      if (cached) return cached as Awaited<ReturnType<MarketplaceService['listCategories']>>;
+      if (cached) return cached as MarketplaceCategoryCard[];
     }
     const categories = await this.prisma.gradeCategory.findMany({
       where: {
