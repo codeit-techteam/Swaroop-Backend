@@ -20,7 +20,10 @@ import {
   DEFAULT_DISPATCH_WINDOW,
   estimateDeliveryTerms,
 } from '../../customers/common/delivery-timing.js';
-import { assessMaterialPriceReview } from '../../customers/checkout/commerce-pricing.js';
+import {
+  assessMaterialPriceReview,
+  normalizeMaterialPricePerMt,
+} from '../../customers/checkout/commerce-pricing.js';
 import {
   paginationMeta,
   skipTake,
@@ -283,12 +286,15 @@ export class AdminProductsService {
         'This grade is not customer-visible. Enable Customer Visibility on Grade Master before publishing, or save as draft.',
       );
     }
+
+    const normalizedPrice = normalizeMaterialPricePerMt(dto.sellingPrice);
+    const sellingPrice = normalizedPrice.pricePerMt;
     if (publish) {
-      const review = assessMaterialPriceReview(dto.sellingPrice);
+      const review = assessMaterialPriceReview(sellingPrice);
       if (review.needsPriceReview) {
         throw new BadRequestException(
           review.reason ??
-            'Selling price is below the marketplace freight floor. Enter a realistic ₹/MT price so Customer App/Web can show this listing.',
+            'Selling price is below the marketplace freight floor (₹1,250/MT). Enter ₹/MT (e.g. 90 ₹/kg → 90,000 ₹/MT) so Customer App/Web can show this listing.',
         );
       }
     }
@@ -350,7 +356,7 @@ export class AdminProductsService {
       estimateDeliveryTerms(warehouse.city ?? warehouse.name);
     const dispatchWindow =
       dto.dispatchWindow?.trim() || DEFAULT_DISPATCH_WINDOW;
-    const priceReview = assessMaterialPriceReview(dto.sellingPrice);
+    const priceReview = assessMaterialPriceReview(sellingPrice);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
@@ -414,7 +420,7 @@ export class AdminProductsService {
           quantity: stock,
           moq: dto.moq,
           unit,
-          basePrice: dto.sellingPrice,
+          basePrice: sellingPrice,
           currency: CurrencyCode.INR,
           pricingBasis: 'EXW',
           deliveryTerms,
@@ -427,6 +433,12 @@ export class AdminProductsService {
             needsPriceReview: priceReview.needsPriceReview,
             priceReviewReason: priceReview.reason,
             createdByAdmin: true,
+            ...(normalizedPrice.convertedFromPerKg
+              ? {
+                  priceNormalizedFromPerKg: true,
+                  originalPriceInput: normalizedPrice.original,
+                }
+              : {}),
           } as Prisma.InputJsonValue,
         },
       });
@@ -450,7 +462,9 @@ export class AdminProductsService {
         inventoryId: result.inventoryId,
         status: productStatus,
         published: publish,
-        sellingPrice: dto.sellingPrice,
+        sellingPrice,
+        originalPriceInput: normalizedPrice.original,
+        convertedFromPerKg: normalizedPrice.convertedFromPerKg,
         gradeId: dto.gradeId,
       },
     });

@@ -220,6 +220,39 @@ export function assertSellableUnitPrice(
 }
 
 /**
+ * Polymer sellers often type ₹/kg (e.g. 90–140) into a ₹/MT field.
+ * Values in (0, 500] that sit below the freight floor are treated as ₹/kg and
+ * converted ×1000 so Customer App/Web Live Listings can show the offer.
+ */
+export function normalizeMaterialPricePerMt(
+  materialPricePerMt: Prisma.Decimal | number | string,
+  config: CommercePricingConfig = DEFAULT_COMMERCE_PRICING,
+): {
+  pricePerMt: number;
+  convertedFromPerKg: boolean;
+  original: number;
+} {
+  const original = Number(
+    materialPricePerMt instanceof Prisma.Decimal
+      ? materialPricePerMt.toString()
+      : materialPricePerMt,
+  );
+  if (!Number.isFinite(original) || original <= 0) {
+    return { pricePerMt: original, convertedFromPerKg: false, original };
+  }
+  const freight = Number(config.freightPerMt) || 1250;
+  const likelyPerKgMax = 500;
+  if (original < freight && original <= likelyPerKgMax) {
+    return {
+      pricePerMt: original * 1000,
+      convertedFromPerKg: true,
+      original,
+    };
+  }
+  return { pricePerMt: original, convertedFromPerKg: false, original };
+}
+
+/**
  * Soft commercial review flag — does not block checkout math, but offerings
  * that need review must not go ACTIVE / Best Value on the customer marketplace.
  * Material priced below platform freight/MT is commercially suspicious for

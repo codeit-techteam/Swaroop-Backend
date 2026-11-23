@@ -9,7 +9,10 @@ import {
   DEFAULT_DISPATCH_WINDOW,
   estimateDeliveryTerms,
 } from '../../customers/common/delivery-timing.js';
-import { assessMaterialPriceReview } from '../../customers/checkout/commerce-pricing.js';
+import {
+  assessMaterialPriceReview,
+  normalizeMaterialPricePerMt,
+} from '../../customers/checkout/commerce-pricing.js';
 import { bumpMarketplaceCache } from '../../customers/marketplace/marketplace-cache.js';
 import {
   CurrencyCode,
@@ -372,7 +375,13 @@ export class ProductsService {
           : {}),
     };
 
-    const listingPlan = sellerListingPlan(publish, dto.sellingPrice);
+    const normalizedPrice = normalizeMaterialPricePerMt(dto.sellingPrice);
+    const sellingPrice = normalizedPrice.pricePerMt;
+    const priceTiers = normalizeListingPriceTiers(
+      dto.priceTiers,
+      normalizedPrice.convertedFromPerKg,
+    );
+    const listingPlan = sellerListingPlan(publish, sellingPrice);
     const productStatus = listingPlan.productStatus;
     const offerStatus = listingPlan.offerStatus;
     const stock = Number(dto.availableStock ?? 0);
@@ -439,7 +448,7 @@ export class ProductsService {
             quantity: stock,
             moq: dto.moq,
             unit,
-            basePrice: dto.sellingPrice,
+            basePrice: sellingPrice,
             currency: CurrencyCode.INR,
             pricingBasis: 'EXW',
             deliveryTerms: resolveListingDeliveryTerms(dto, warehouse),
@@ -451,10 +460,16 @@ export class ProductsService {
               dispatchWindow: resolveListingDispatchWindow(dto),
               needsPriceReview: listingPlan.review.needsPriceReview,
               priceReviewReason: listingPlan.review.reason,
+              ...(normalizedPrice.convertedFromPerKg
+                ? {
+                    priceNormalizedFromPerKg: true,
+                    originalPriceInput: normalizedPrice.original,
+                  }
+                : {}),
             } as Prisma.InputJsonValue,
-            priceTiers: dto.priceTiers?.length
+            priceTiers: priceTiers?.length
               ? {
-                  create: dto.priceTiers.map((t) => ({
+                  create: priceTiers.map((t) => ({
                     minQty: t.minQty,
                     maxQty: t.maxQty ?? undefined,
                     price: t.price,
@@ -942,8 +957,13 @@ export class ProductsService {
         null;
 
       const previousBase = offer ? Number(offer.basePrice) : 0;
-      const nextBase = Number(dto.sellingPrice);
-      const incomingTiers = dto.priceTiers ?? [];
+      const normalizedPrice = normalizeMaterialPricePerMt(dto.sellingPrice);
+      const nextBase = normalizedPrice.pricePerMt;
+      const incomingTiers =
+        normalizeListingPriceTiers(
+          dto.priceTiers,
+          normalizedPrice.convertedFromPerKg,
+        ) ?? [];
 
       // Open-ended maxQty must stay undefined (null → 0 breaks tier matching).
       const normalizeMaxQty = (value: unknown): number | undefined => {
@@ -1271,4 +1291,20 @@ function sellerListingPlan(publish: boolean, sellingPricePerMt: number) {
     pendingAdminApproval: false,
     review,
   };
+}
+
+/** When base price was entered as ₹/kg, convert matching tier prices too. */
+function normalizeListingPriceTiers<
+  T extends { minQty: number; maxQty?: number | null; price: number },
+>(
+  tiers: T[] | undefined,
+  convertedFromPerKg: boolean,
+): T[] | undefined {
+  if (!tiers?.length) return tiers;
+  if (!convertedFromPerKg) return tiers;
+  return tiers.map((tier) => {
+    const price = Number(tier.price);
+    if (!Number.isFinite(price) || price <= 0 || price > 500) return tier;
+    return { ...tier, price: price * 1000 };
+  });
 }

@@ -9,6 +9,7 @@ import {
   buildPricingVersion,
   calculateQuoteAmounts,
   isMarketplaceEligibleMaterialPrice,
+  normalizeMaterialPricePerMt,
   platformDiscountBps,
   pricePerKgFromMt,
   pricePerMtFromKg,
@@ -193,6 +194,21 @@ describe('commerce pricing', () => {
     expect(() => assertSellableUnitPrice(0)).toThrow();
     expect(() => assertSellableUnitPrice(null)).toThrow();
     expect(assertSellableUnitPrice('10').toFixed(4)).toBe('10.0000');
+  });
+
+  it('normalizes likely ₹/kg entries to ₹/MT for marketplace publish', () => {
+    expect(normalizeMaterialPricePerMt(90)).toEqual({
+      pricePerMt: 90000,
+      convertedFromPerKg: true,
+      original: 90,
+    });
+    expect(normalizeMaterialPricePerMt(140).pricePerMt).toBe(140000);
+    expect(normalizeMaterialPricePerMt(1250)).toEqual({
+      pricePerMt: 1250,
+      convertedFromPerKg: false,
+      original: 1250,
+    });
+    expect(normalizeMaterialPricePerMt(94500).convertedFromPerKg).toBe(false);
   });
 
   it('honours configured min/max material thresholds and marketplace eligibility', () => {
