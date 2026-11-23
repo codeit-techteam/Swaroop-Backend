@@ -16,6 +16,7 @@ import { JwtAuthGuard, RolesGuard } from '../../auth/index.js';
 import type { AuthenticatedUser } from '../../auth/types/auth.types.js';
 import { ADMIN_CORE_ROLES } from '../common/admin-roles.js';
 import {
+  AdminCreateMarketplaceListingDto,
   AdminCreateProductDto,
   AdminProductsQueryDto,
   AdminUpdateProductDto,
@@ -38,6 +39,21 @@ export class AdminProductsController {
     return successResponse(items, 'Products retrieved', meta);
   }
 
+  @Post('listings')
+  @ApiOperation({
+    summary:
+      'Create marketplace listing (product + inventory + offer) for a seller — appears on Customer App/Web when published',
+  })
+  async createListing(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: AdminCreateMarketplaceListingDto,
+  ) {
+    return successResponse(
+      await this.products.createListing(dto, user.id),
+      'Marketplace listing created',
+    );
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Product detail' })
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
@@ -48,7 +64,10 @@ export class AdminProductsController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create product for a seller org' })
+  @ApiOperation({
+    summary:
+      'Create product SKU only (no offer). Prefer POST /admin/products/listings for Customer marketplace visibility.',
+  })
   async create(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: AdminCreateProductDto,
