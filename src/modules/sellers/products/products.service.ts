@@ -303,37 +303,28 @@ export class ProductsService {
 
     if (publish) this.assertMarketplaceGrade(grade);
 
-    // Prevent duplicate ACTIVE marketplace listings for the same grade + warehouse.
+    // Prevent a second listing for the same grade when any non-archived product
+    // already exists for this seller (avoids Active+Paused twins in Admin Catalog).
     if (publish) {
-      const duplicate = await this.prisma.product.findFirst({
+      const existingListing = await this.prisma.product.findFirst({
         where: {
           organizationId: ctx.organizationId,
           gradeId: dto.gradeId,
           deletedAt: null,
-          status: ProductStatus.ACTIVE,
-          inventory: {
-            some: {
-              warehouseId: warehouse.id,
-              deletedAt: null,
-            },
-          },
-          offers: {
-            some: {
-              deletedAt: null,
-              status: OfferStatus.ACTIVE,
-              OR: [{ visibility: 'MARKETPLACE' }, { visibility: null }],
-            },
-          },
+          status: { not: ProductStatus.ARCHIVED },
         },
-        select: { id: true, code: true },
+        select: { id: true, code: true, status: true },
       });
-      if (duplicate) {
+      if (existingListing) {
         throw new ConflictException({
           code: 'DUPLICATE_LISTING',
           message:
-            'An active marketplace listing already exists for this grade at this warehouse. Update the existing listing instead of creating a duplicate.',
-          existingProductId: duplicate.id,
-          existingProductCode: duplicate.code,
+            existingListing.status === ProductStatus.ACTIVE
+              ? 'An active marketplace listing already exists for this grade. Update the existing listing instead of creating a duplicate.'
+              : `A ${existingListing.status} listing already exists for this grade (${existingListing.code}). Reactivate or update that listing instead of creating another.`,
+          existingProductId: existingListing.id,
+          existingProductCode: existingListing.code,
+          existingProductStatus: existingListing.status,
         });
       }
     }
