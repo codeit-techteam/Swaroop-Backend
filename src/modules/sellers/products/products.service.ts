@@ -103,6 +103,7 @@ const productInclude = {
       warehouseId: true,
       inventoryId: true,
       metadata: true,
+      updatedAt: true,
       priceTiers: {
         orderBy: { minQty: 'asc' as const },
         select: {
@@ -302,6 +303,7 @@ export class ProductsService {
     }
 
     if (publish) this.assertMarketplaceGrade(grade);
+    if (publish) assertMarketplacePublishablePrice(dto.sellingPrice);
 
     // Prevent a second listing for the same grade when any non-archived product
     // already exists for this seller (avoids Active+Paused twins in Admin Catalog).
@@ -825,6 +827,7 @@ export class ProductsService {
         'Only APPROVED sellers can publish listings to the marketplace',
       );
     }
+    if (publish) assertMarketplacePublishablePrice(dto.sellingPrice);
 
     const gradeId = dto.gradeId ?? existing.gradeId;
     if (publish && gradeId) {
@@ -1140,8 +1143,24 @@ export class ProductsService {
   private serialize(
     product: Prisma.ProductGetPayload<{ include: typeof productInclude }>,
   ) {
+    const offers = [...(product.offers ?? [])].sort((a, b) => {
+      const rank = (status: string) =>
+        status === OfferStatus.ACTIVE
+          ? 0
+          : status === OfferStatus.PENDING_REVIEW
+            ? 1
+            : status === OfferStatus.DRAFT
+              ? 2
+              : 3;
+      const byStatus = rank(a.status) - rank(b.status);
+      if (byStatus !== 0) return byStatus;
+      return (
+        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      );
+    });
     return {
       ...product,
+      offers,
       media: product.media.map((m) => this.serializeMedia(m)),
     };
   }
@@ -1201,4 +1220,19 @@ function priceReviewMetadata(sellingPricePerMt: number) {
     needsPriceReview: review.needsPriceReview,
     priceReviewReason: review.reason,
   };
+}
+
+/**
+ * Live marketplace publish must clear the same commercial floor used by
+ * customer Live Listings / offer activate — otherwise sellers see "Grade added"
+ * while Customer App/Web show 0 matches.
+ */
+function assertMarketplacePublishablePrice(sellingPricePerMt: number) {
+  const review = assessMaterialPriceReview(sellingPricePerMt);
+  if (review.needsPriceReview) {
+    throw new BadRequestException(
+      review.reason ??
+        'Selling price requires commercial review before the listing can go live on the marketplace. Enter a realistic ₹/MT material price (at or above platform freight) or save as draft.',
+    );
+  }
 }
