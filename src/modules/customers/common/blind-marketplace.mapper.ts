@@ -10,6 +10,26 @@ import {
 import { resolveProductCredit } from '../../payments/common/payment-eligibility.js';
 import { isPlatformCredit } from '../../payments/common/platform-credit.js';
 import { buildListingPricingPreview } from '../checkout/commerce-pricing.js';
+
+/**
+ * Buyer cards use the same layout as a cleared listing (HD Film SKR).
+ * "Needs price review" stays on Admin / Seller until Approve — it is not a
+ * customer badge once the offer is on this payload.
+ */
+function buyerListingPricingPreview(input: {
+  offerId: string;
+  unitPrice: unknown;
+  moq: unknown;
+  currency?: string | null;
+}) {
+  const preview = buildListingPricingPreview(input);
+  if (!preview) return null;
+  return {
+    ...preview,
+    needsPriceReview: false,
+    priceReviewReason: null,
+  };
+}
 import {
   resolveDeliveryEstimate,
   resolveDispatchWindow,
@@ -726,7 +746,7 @@ export function toBlindProduct(product: {
            * Landed-cost preview at MOQ (ADVANCE). Material price stays in `price`;
            * never substitute finalAmountPerMT as the material price.
            */
-          pricingPreview: buildListingPricingPreview({
+          pricingPreview: buyerListingPricingPreview({
             offerId: offer.id,
             unitPrice: offer.basePrice,
             moq: offer.moq,
@@ -823,7 +843,7 @@ export function toBlindOffer(offer: {
     status: offer.status,
     gstPercent:
       gstPercent != null && Number.isFinite(gstPercent) ? gstPercent : 18,
-    pricingPreview: buildListingPricingPreview({
+    pricingPreview: buyerListingPricingPreview({
       offerId: offer.id,
       unitPrice: offer.basePrice,
       moq: offer.moq,

@@ -35,6 +35,7 @@ type PoItemSource = {
     code: string;
     name: string;
     displayName: string | null;
+    fullGradeName?: string | null;
   } | null;
   product?: {
     id: string;
@@ -263,11 +264,29 @@ export function poStatusesForDisplayFilter(
   }
 }
 
+function gradeDisplayName(
+  grade: NonNullable<PoItemSource['grade']>,
+): string {
+  return (
+    grade.fullGradeName?.trim() ||
+    grade.displayName?.trim() ||
+    grade.name
+  );
+}
+
 function resolveLine(po: SellerPurchaseOrderSource) {
   const snapshot = (
     po.metadata as { commercialSnapshot?: CommercialSnapshot } | null
   )?.commercialSnapshot;
-  const item = po.purchaseRequest?.items?.[0];
+  const items = po.purchaseRequest?.items ?? [];
+  const item =
+    (snapshot?.productId
+      ? items.find((row) => row.product?.id === snapshot.productId)
+      : undefined) ??
+    (snapshot?.gradeId
+      ? items.find((row) => row.grade?.id === snapshot.gradeId)
+      : undefined) ??
+    items[0];
 
   const quantity = qty(
     item?.quantity ?? snapshot?.quantity ?? po.orderedQuantity ?? 0,
@@ -285,7 +304,7 @@ function resolveLine(po: SellerPurchaseOrderSource) {
     ? {
         id: item.grade.id,
         code: item.grade.code,
-        name: item.grade.displayName ?? item.grade.name,
+        name: gradeDisplayName(item.grade),
       }
     : snapshot?.gradeId
       ? { id: snapshot.gradeId, code: null as string | null, name: '—' }

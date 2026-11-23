@@ -110,6 +110,62 @@ describe('seller orders blind mapper', () => {
     );
   });
 
+  it('labels an active order with the accepted line grade, not another line', () => {
+    const dto = toSellerOrderListDto(
+      samplePo({
+        metadata: {
+          commercialSnapshot: {
+            productId: 'p2',
+            gradeId: 'g2',
+            quantity: 10,
+            unit: 'MT',
+            unitPrice: 90,
+            totalValue: 900,
+          },
+        },
+        purchaseRequest: {
+          id: 'pr-1',
+          referenceNumber: 'PR-2026-0001',
+          status: 'CONVERTED_TO_ORDER',
+          destinationRegion: 'West India',
+          deliveryLocation: 'Plot 12, Andheri East, Mumbai',
+          items: [
+            {
+              quantity: 20,
+              unit: 'MT',
+              unitPriceSnapshot: 96,
+              grade: {
+                id: 'g1',
+                code: 'HDPE-FILM',
+                name: 'HDPE Film',
+                displayName: 'HD Film',
+              },
+              product: { id: 'p1', code: 'P-001', name: 'HD Film SKR' },
+            },
+            {
+              quantity: 10,
+              unit: 'MT',
+              unitPriceSnapshot: 90,
+              grade: {
+                id: 'g2',
+                code: 'ABS',
+                name: 'TEST_ONE',
+                displayName: 'TEST_ONE',
+                fullGradeName: 'TEST_ONE -DB',
+              },
+              product: { id: 'p2', code: 'P-002', name: 'Listing title' },
+            },
+          ],
+          events: [],
+        },
+      }),
+    );
+
+    expect(dto.gradeName).toBe('TEST_ONE -DB');
+    expect(dto.product?.id).toBe('p2');
+    expect(dto.grade?.id).toBe('g2');
+  });
+
   it('maps PO statuses to seller display groups', () => {
     expect(toSellerDisplayStatus(samplePo({ status: 'CONFIRMED' }))).toBe(
       'CONFIRMED',

@@ -388,7 +388,7 @@ describe('blind marketplace mapper', () => {
     expect(payload.listing?.pricingPreview?.materialPricePerMT).toBe('10.0000');
     expect(payload.listing?.pricingPreview?.finalAmount).toBe('14862.10');
     expect(payload.listing?.pricingPreview?.finalAmountPerMT).toBe('1486.21');
-    expect(payload.listing?.pricingPreview?.needsPriceReview).toBe(true);
+    expect(payload.listing?.pricingPreview?.needsPriceReview).toBe(false);
   });
 
   it('buildFulfilmentInfo calculates defaults when seller timing is missing', () => {

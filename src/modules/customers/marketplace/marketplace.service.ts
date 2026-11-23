@@ -29,10 +29,6 @@ import {
   parseGradeSearch,
   rankGradeCandidates,
 } from '../../master-data/grades/grade-search.js';
-import {
-  DEFAULT_COMMERCE_PRICING,
-  marketplaceMinSellablePricePerMt,
-} from '../checkout/commerce-pricing.js';
 import type {
   MarketplaceGradeQueryDto,
   MarketplaceHomeQueryDto,
@@ -51,14 +47,14 @@ const customerGradeWhere: Prisma.GradeWhereInput = {
 };
 
 /**
- * Live marketplace offers must clear the commercial price floor so test /
- * invalid prices (e.g. ₹10/MT) never appear as Best Value to buyers.
+ * Live catalogue = ACTIVE offers with a positive material price.
+ * Prices below freight stay off the marketplace until an admin approves them
+ * (seller publish holds those at PENDING_REVIEW). Approval sets ACTIVE, which
+ * is what Customer App and Web list — including HD Film SKR-style cards.
  */
 function marketplaceEligiblePriceWhere(): Prisma.OfferWhereInput {
   return {
-    basePrice: {
-      gte: marketplaceMinSellablePricePerMt(DEFAULT_COMMERCE_PRICING),
-    },
+    basePrice: { gt: 0 },
   };
 }
 

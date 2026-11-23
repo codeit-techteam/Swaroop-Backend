@@ -62,7 +62,14 @@ const isUuid = (value: string): boolean => UUID_RE.test(value);
 const offerInclude = {
   product: { select: { id: true, code: true, name: true, gradeId: true } },
   grade: {
-    select: { id: true, code: true, name: true, displayName: true },
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      displayName: true,
+      fullGradeName: true,
+      category: { select: { id: true, code: true, name: true } },
+    },
   },
   priceTiers: { orderBy: { minQty: 'asc' as const } },
   warehouse: {
@@ -780,8 +787,13 @@ export class OffersService {
     }
 
     const priceReview = assessMaterialPriceReview(offer.basePrice);
-    if (priceReview.needsPriceReview) {
-      // Hold at PENDING_REVIEW — never publish suspicious / test prices live.
+    const alreadyApproved =
+      offer.metadata &&
+      typeof offer.metadata === 'object' &&
+      !Array.isArray(offer.metadata) &&
+      (offer.metadata as Record<string, unknown>).adminPriceApproved === true;
+    if (priceReview.needsPriceReview && !alreadyApproved) {
+      // Hold at PENDING_REVIEW until an admin approves the offer.
       const held = await this.prisma.offer.update({
         where: { id: offer.id },
         data: {
@@ -886,7 +898,12 @@ export class OffersService {
     }
 
     const priceReview = assessMaterialPriceReview(offer.basePrice);
-    if (priceReview.needsPriceReview) {
+    const alreadyApproved =
+      offer.metadata &&
+      typeof offer.metadata === 'object' &&
+      !Array.isArray(offer.metadata) &&
+      (offer.metadata as Record<string, unknown>).adminPriceApproved === true;
+    if (priceReview.needsPriceReview && !alreadyApproved) {
       throw new BadRequestException(
         priceReview.reason ??
           'Offer price requires PolyStoreX commercial review before it can go live',

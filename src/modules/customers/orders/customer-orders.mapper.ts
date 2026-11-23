@@ -37,6 +37,7 @@ type PoItemSource = {
     code: string;
     name: string;
     displayName: string | null;
+    fullGradeName?: string | null;
     category?: { code: string; name: string } | null;
   } | null;
   product?: {
@@ -138,8 +139,22 @@ function resolveItems(po: PurchaseOrderProjectionSource) {
   )?.commercialSnapshot;
   const prItems = po.purchaseRequest?.items ?? [];
 
-  if (prItems.length > 0) {
-    return prItems.map((item) => {
+  const orderedItems = [...prItems].sort((a, b) => {
+    const score = (row: PoItemSource) =>
+      (snapshot?.productId &&
+      (row.productId === snapshot.productId ||
+        row.product?.id === snapshot.productId)
+        ? 2
+        : 0) +
+      (snapshot?.gradeId &&
+      (row.gradeId === snapshot.gradeId || row.grade?.id === snapshot.gradeId)
+        ? 1
+        : 0);
+    return score(b) - score(a);
+  });
+
+  if (orderedItems.length > 0) {
+    return orderedItems.map((item) => {
       const quantity = qty(
         item.quantity ?? snapshot?.quantity ?? po.orderedQuantity ?? 0,
       );
@@ -155,14 +170,15 @@ function resolveItems(po: PurchaseOrderProjectionSource) {
         toDecimal(unitPrice).times(quantity).toFixed(2),
       );
       return {
-        productId: item.productId ?? snapshot?.productId ?? null,
-        gradeId: item.gradeId ?? snapshot?.gradeId ?? null,
+        productId: item.productId ?? item.product?.id ?? snapshot?.productId ?? null,
+        gradeId: item.gradeId ?? item.grade?.id ?? snapshot?.gradeId ?? null,
         productName: item.product?.name ?? 'Material',
         productCode: item.product?.code ?? null,
         gradeName:
-          item.grade?.displayName ??
-          item.grade?.name ??
-          item.grade?.code ??
+          item.grade?.fullGradeName?.trim() ||
+          item.grade?.displayName?.trim() ||
+          item.grade?.name ||
+          item.grade?.code ||
           '—',
         gradeCode: item.grade?.code ?? null,
         categoryCode: item.grade?.category?.code ?? null,

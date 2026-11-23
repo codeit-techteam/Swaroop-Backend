@@ -36,6 +36,7 @@ const poInclude = {
       deliveryLocation: true,
       requiredByDate: true,
       items: {
+        orderBy: { createdAt: 'asc' as const },
         take: 5,
         include: {
           grade: {
@@ -44,6 +45,7 @@ const poInclude = {
               code: true,
               name: true,
               displayName: true,
+              fullGradeName: true,
             },
           },
           product: { select: { id: true, code: true, name: true } },

@@ -10,6 +10,7 @@ import {
   estimateDeliveryTerms,
 } from '../../customers/common/delivery-timing.js';
 import { assessMaterialPriceReview } from '../../customers/checkout/commerce-pricing.js';
+import { bumpMarketplaceCache } from '../../customers/marketplace/marketplace-cache.js';
 import {
   CurrencyCode,
   EntityOwnerType,
@@ -303,7 +304,6 @@ export class ProductsService {
     }
 
     if (publish) this.assertMarketplaceGrade(grade);
-    if (publish) assertMarketplacePublishablePrice(dto.sellingPrice);
 
     // Prevent a second listing for the same grade when any non-archived product
     // already exists for this seller (avoids Active+Paused twins in Admin Catalog).
@@ -372,8 +372,9 @@ export class ProductsService {
           : {}),
     };
 
-    const productStatus = publish ? ProductStatus.ACTIVE : ProductStatus.DRAFT;
-    const offerStatus = publish ? OfferStatus.ACTIVE : OfferStatus.DRAFT;
+    const listingPlan = sellerListingPlan(publish, dto.sellingPrice);
+    const productStatus = listingPlan.productStatus;
+    const offerStatus = listingPlan.offerStatus;
     const stock = Number(dto.availableStock ?? 0);
     const unit = dto.unit ?? 'MT';
     const productCode = await this.allocateUniqueProductCode(
@@ -448,7 +449,8 @@ export class ProductsService {
             metadata: {
               gstPercent: resolveListingGstPercent(dto),
               dispatchWindow: resolveListingDispatchWindow(dto),
-              ...priceReviewMetadata(dto.sellingPrice),
+              needsPriceReview: listingPlan.review.needsPriceReview,
+              priceReviewReason: listingPlan.review.reason,
             } as Prisma.InputJsonValue,
             priceTiers: dto.priceTiers?.length
               ? {
@@ -485,12 +487,14 @@ export class ProductsService {
       });
 
       const product = await this.assertOwnedProduct(ctx, result.productId);
+      if (listingPlan.offerStatus === OfferStatus.ACTIVE) bumpMarketplaceCache();
       return {
         ...this.serialize(product),
         offerId: result.offerId,
         inventoryId: result.inventoryId,
         warehouseId: warehouse.id,
         published: publish,
+        pendingAdminApproval: listingPlan.pendingAdminApproval,
       };
     } catch (error) {
       handlePrismaUnique(error, 'Product code already exists for this seller');
@@ -827,7 +831,6 @@ export class ProductsService {
         'Only APPROVED sellers can publish listings to the marketplace',
       );
     }
-    if (publish) assertMarketplacePublishablePrice(dto.sellingPrice);
 
     const gradeId = dto.gradeId ?? existing.gradeId;
     if (publish && gradeId) {
@@ -986,7 +989,23 @@ export class ProductsService {
       delete offerMeta.inactivePriceTier;
       offerMeta.gstPercent = gstPercent;
       offerMeta.dispatchWindow = resolveListingDispatchWindow(dto);
-      Object.assign(offerMeta, priceReviewMetadata(nextBase));
+      const priceChanged = Math.abs(nextBase - previousBase) >= 0.01;
+      const previouslyApproved = offerMeta.adminPriceApproved === true;
+      if (previouslyApproved && !priceChanged) {
+        offerMeta.needsPriceReview = false;
+        offerMeta.priceReviewReason = null;
+      } else {
+        const review = priceReviewMetadata(nextBase);
+        offerMeta.needsPriceReview = review.needsPriceReview;
+        offerMeta.priceReviewReason = review.priceReviewReason;
+        if (review.needsPriceReview) offerMeta.adminPriceApproved = false;
+      }
+      const publishOfferStatus = !publish
+        ? undefined
+        : offerMeta.adminPriceApproved === true ||
+            offerMeta.needsPriceReview !== true
+          ? OfferStatus.ACTIVE
+          : OfferStatus.PENDING_REVIEW;
 
       if (offer) {
         await tx.offerPriceTier.deleteMany({ where: { offerId: offer.id } });
@@ -1001,7 +1020,7 @@ export class ProductsService {
             basePrice: nextBase,
             deliveryTerms: resolveListingDeliveryTerms(dto, warehouse),
             visibility: 'MARKETPLACE',
-            ...(publish ? { status: OfferStatus.ACTIVE } : {}),
+            ...(publishOfferStatus ? { status: publishOfferStatus } : {}),
             metadata: offerMeta as Prisma.InputJsonValue,
             priceTiers: resolvedTiers.length
               ? {
@@ -1025,7 +1044,7 @@ export class ProductsService {
             data: {
               basePrice: nextBase,
               visibility: 'MARKETPLACE',
-              ...(publish ? { status: OfferStatus.ACTIVE } : {}),
+              ...(publishOfferStatus ? { status: publishOfferStatus } : {}),
             },
           });
         }
@@ -1046,7 +1065,7 @@ export class ProductsService {
             currency: CurrencyCode.INR,
             pricingBasis: 'EXW',
             deliveryTerms: resolveListingDeliveryTerms(dto, warehouse),
-            status: publish ? OfferStatus.ACTIVE : OfferStatus.DRAFT,
+            status: publishOfferStatus ?? OfferStatus.DRAFT,
             visibility: 'MARKETPLACE',
             createdById: userId,
             metadata: offerMeta as Prisma.InputJsonValue,
@@ -1080,6 +1099,7 @@ export class ProductsService {
       },
     });
 
+    if (publish) bumpMarketplaceCache();
     return this.serialize(await this.assertOwnedProduct(ctx, id));
   }
 
@@ -1223,16 +1243,32 @@ function priceReviewMetadata(sellingPricePerMt: number) {
 }
 
 /**
- * Live marketplace publish must clear the same commercial floor used by
- * customer Live Listings / offer activate — otherwise sellers see "Grade added"
- * while Customer App/Web show 0 matches.
+ * Seller can always add the grade. A price below freight is saved as
+ * PENDING_REVIEW so Admin → Approve is what publishes it to Customer App/Web.
+ * A realistic price goes ACTIVE immediately.
  */
-function assertMarketplacePublishablePrice(sellingPricePerMt: number) {
+function sellerListingPlan(publish: boolean, sellingPricePerMt: number) {
   const review = assessMaterialPriceReview(sellingPricePerMt);
-  if (review.needsPriceReview) {
-    throw new BadRequestException(
-      review.reason ??
-        'Selling price requires commercial review before the listing can go live on the marketplace. Enter a realistic ₹/MT material price (at or above platform freight) or save as draft.',
-    );
+  if (!publish) {
+    return {
+      productStatus: ProductStatus.DRAFT,
+      offerStatus: OfferStatus.DRAFT,
+      pendingAdminApproval: false,
+      review,
+    };
   }
+  if (review.needsPriceReview) {
+    return {
+      productStatus: ProductStatus.ACTIVE,
+      offerStatus: OfferStatus.PENDING_REVIEW,
+      pendingAdminApproval: true,
+      review,
+    };
+  }
+  return {
+    productStatus: ProductStatus.ACTIVE,
+    offerStatus: OfferStatus.ACTIVE,
+    pendingAdminApproval: false,
+    review,
+  };
 }

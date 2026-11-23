@@ -7,8 +7,10 @@ import {
   EntityOwnerType,
   OfferStatus,
   Prisma,
+  ProductStatus,
 } from '../../../generated/prisma/client.js';
 import { PrismaService } from '../../../database/prisma.service.js';
+import { bumpMarketplaceCache } from '../../customers/marketplace/marketplace-cache.js';
 import {
   assessMaterialPriceReview,
   pricePerKgFromMt,
@@ -155,14 +157,93 @@ export class AdminOffersService {
     return serializeOffer(offer);
   }
 
-  approve(id: string, actorUserId: string, dto: AdminOfferActionDto) {
-    return this.setStatus(
-      id,
-      OfferStatus.ACTIVE,
+  /**
+   * Admin commercial approval. Clears "Needs price review", activates the
+   * product, renews an expired window, and publishes the offer to Customer
+   * App and Web (same live card as HD Film SKR).
+   */
+  async approve(id: string, actorUserId: string, dto: AdminOfferActionDto) {
+    const existing = await this.prisma.offer.findFirst({
+      where: { id, deletedAt: null },
+      include: {
+        product: { select: { id: true, status: true, deletedAt: true } },
+      },
+    });
+    if (!existing) throw new NotFoundException('Offer not found');
+
+    const now = new Date();
+    const previousMeta =
+      existing.metadata &&
+      typeof existing.metadata === 'object' &&
+      !Array.isArray(existing.metadata)
+        ? (existing.metadata as Record<string, unknown>)
+        : {};
+    const expired = !existing.validUntil || existing.validUntil < now;
+    const validUntil = expired
+      ? new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
+      : existing.validUntil;
+    const reason = dto?.reason ?? dto?.notes;
+
+    const offer = await this.prisma.$transaction(async (tx) => {
+      if (
+        existing.product &&
+        !existing.product.deletedAt &&
+        existing.product.status !== ProductStatus.ACTIVE &&
+        existing.product.status !== ProductStatus.ARCHIVED
+      ) {
+        await tx.product.update({
+          where: { id: existing.product.id },
+          data: { status: ProductStatus.ACTIVE },
+        });
+      }
+      return tx.offer.update({
+        where: { id },
+        data: {
+          status: OfferStatus.ACTIVE,
+          validFrom:
+            existing.validFrom && existing.validFrom <= now
+              ? existing.validFrom
+              : now,
+          validUntil,
+          metadata: {
+            ...previousMeta,
+            needsPriceReview: false,
+            priceReviewReason: null,
+            adminPriceApproved: true,
+            adminApprovedAt: now.toISOString(),
+            ...(expired ? { validityExtendedOnApproval: true } : {}),
+            adminAction: {
+              action: 'OFFER_APPROVED',
+              reason,
+              at: now.toISOString(),
+            },
+          },
+        },
+        include: offerInclude,
+      });
+    });
+
+    await this.audit.log({
+      action: 'OFFER_APPROVED',
       actorUserId,
-      'OFFER_APPROVED',
-      dto,
-    );
+      organizationId: existing.organizationId,
+      entityType: EntityOwnerType.OFFER,
+      entityId: id,
+      previousData: {
+        status: existing.status,
+        validUntil: existing.validUntil?.toISOString() ?? null,
+      },
+      newData: {
+        status: offer.status,
+        adminPriceApproved: true,
+        needsPriceReview: false,
+        validUntil: validUntil?.toISOString() ?? null,
+        reason,
+      },
+    });
+
+    bumpMarketplaceCache();
+    return serializeOffer(offer);
   }
 
   reject(id: string, actorUserId: string, dto: AdminOfferActionDto) {

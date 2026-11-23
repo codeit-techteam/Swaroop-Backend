@@ -37,6 +37,7 @@ const poInclude = {
               code: true,
               name: true,
               displayName: true,
+              fullGradeName: true,
               category: { select: { code: true, name: true } },
             },
           },
