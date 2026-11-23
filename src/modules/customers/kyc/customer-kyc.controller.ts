@@ -1,5 +1,6 @@
 import {
   Body,
+  ConflictException,
   Controller,
   Delete,
   Get,
@@ -36,6 +37,8 @@ import { kycRequestMeta } from '../../kyc-verification/kyc-request-meta.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 
+type RateLimitedRequest = Request & { userRateLimitKey?: string };
+
 @ApiTags('Customer KYC')
 @Controller({ path: 'customer/kyc', version: '1' })
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -45,6 +48,7 @@ export class CustomerKycController {
   constructor(
     private readonly kyc: CustomerKycService,
     private readonly verification: CustomerKycVerificationService,
+    private readonly userRateLimit: UserRateLimitGuard,
   ) {}
 
   @Get()
@@ -74,17 +78,25 @@ export class CustomerKycController {
   async verifyPan(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: VerifyCustomerPanDto,
-    @Req() request: Request,
+    @Req() request: RateLimitedRequest,
   ) {
-    return successResponse(
-      await this.verification.verifyPan(
-        user.id,
-        dto.pan,
-        { fullName: dto.fullName, dob: dto.dob },
-        kycRequestMeta(request, dto.source),
-      ),
-      'PAN verification result',
-    );
+    try {
+      return successResponse(
+        await this.verification.verifyPan(
+          user.id,
+          dto.pan,
+          { fullName: dto.fullName, dob: dto.dob },
+          kycRequestMeta(request, dto.source),
+        ),
+        'PAN verification result',
+      );
+    } catch (error) {
+      // 409 means a prior attempt is still in flight — do not burn the hourly budget.
+      if (error instanceof ConflictException) {
+        this.userRateLimit.refund(request.userRateLimitKey);
+      }
+      throw error;
+    }
   }
 
   @Post('gst/verify')
@@ -106,16 +118,23 @@ export class CustomerKycController {
   async verifyGst(
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: VerifyCustomerGstDto,
-    @Req() request: Request,
+    @Req() request: RateLimitedRequest,
   ) {
-    return successResponse(
-      await this.verification.verifyGst(
-        user.id,
-        dto.gstin,
-        kycRequestMeta(request, dto.source),
-      ),
-      'GST verification result',
-    );
+    try {
+      return successResponse(
+        await this.verification.verifyGst(
+          user.id,
+          dto.gstin,
+          kycRequestMeta(request, dto.source),
+        ),
+        'GST verification result',
+      );
+    } catch (error) {
+      if (error instanceof ConflictException) {
+        this.userRateLimit.refund(request.userRateLimitKey);
+      }
+      throw error;
+    }
   }
 
   @Post('documents')

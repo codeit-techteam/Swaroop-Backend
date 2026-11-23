@@ -181,8 +181,11 @@ export class KycVerificationService {
     if (latest.status === KycVerificationStatus.VERIFYING) {
       const timeoutMs =
         this.config.get<number>('kyc.requestTimeoutMs') ?? 10_000;
-      // Provider calls can be retried once, so allow for two timeouts plus slack.
-      if (ageMs < timeoutMs * 3) {
+      // Align with a single provider attempt + small slack. The previous
+      // timeout*3 window left VERIFYING rows stuck for up to 90–180s while the
+      // client had already timed out, so retries burned the rate-limit budget.
+      const abandonAfterMs = Math.max(timeoutMs + 2_000, 12_000);
+      if (ageMs < abandonAfterMs) {
         throw new ConflictException(
           'Verification is already in progress. Please wait a moment.',
         );

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { UserRateLimitGuard } from '../../common/guards/user-rate-limit.guard.js';
 import { ClientSourceResolver } from '../../common/utils/client-source.js';
 import { AuthModule } from '../auth/index.js';
 import { DocumentsModule } from '../documents/index.js';
@@ -92,6 +93,7 @@ import { TdsModule } from '../tds/tds.module.js';
     ClientSourceResolver,
     BulkLogisticsQuotesService,
     PriceAlertsService,
+    UserRateLimitGuard,
   ],
   exports: [
     CustomerContextService,
