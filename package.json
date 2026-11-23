@@ -41,7 +41,9 @@
     "catalogue:normalize-audit": "node scripts/phase2-data-normalization-audit.mjs",
     "catalogue:integrity-remediate": "node scripts/phase2-data-integrity-remediation.mjs",
     "catalogue:pause-suspicious": "node scripts/pause-suspicious-marketplace-offers.mjs",
-    "catalogue:review": "tsx scripts/report-catalog-review.ts"
+    "catalogue:review": "tsx scripts/report-catalog-review.ts",
+    "catalogue:cross-org": "tsx scripts/report-cross-org-grade-listings.ts",
+    "catalogue:fix-same-org-dupes": "tsx scripts/fix-duplicate-marketplace-listings.ts --dry-run"
   },
   "engines": {
     "node": ">=20.19.0"

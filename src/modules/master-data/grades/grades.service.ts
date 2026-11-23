@@ -340,7 +340,10 @@ export class GradesService {
         return this.mapGrade(grade);
       });
     } catch (error) {
-      handlePrismaUnique(error, 'Grade code already exists');
+      handlePrismaUnique(
+        error,
+        'This grade already exists. Open the existing Grade Master record instead of creating another.',
+      );
     }
   }
 

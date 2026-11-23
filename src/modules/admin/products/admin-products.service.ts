@@ -39,7 +39,32 @@ const productInclude = {
     select: { id: true, name: true, legalName: true, code: true },
   },
   sellerProfile: { select: { id: true, status: true } },
+  inventory: {
+    where: { deletedAt: null },
+    select: { availableQty: true, warehouseId: true },
+  },
+  offers: {
+    where: { deletedAt: null, status: OfferStatus.ACTIVE },
+    select: { id: true, status: true, basePrice: true, moq: true },
+  },
 } satisfies Prisma.ProductInclude;
+
+function withCatalogAggregates<
+  T extends {
+    inventory?: Array<{ availableQty: unknown }>;
+    offers?: Array<{ id: string }>;
+  },
+>(product: T) {
+  const inventoryAvailableQty = (product.inventory ?? []).reduce(
+    (sum, row) => sum + Number(row.availableQty ?? 0),
+    0,
+  );
+  return {
+    ...product,
+    inventoryAvailableQty,
+    activeOfferCount: product.offers?.length ?? 0,
+  };
+}
 
 /** Turn filenames / codes into searchable tokens: ABS_EXTRUSION_SR101_TDS.pdf → ["SR101", ...] */
 function searchTokensFromQuery(raw: string): string[] {
@@ -112,7 +137,10 @@ export class AdminProductsService {
       this.prisma.product.count({ where }),
     ]);
 
-    return { items, meta: paginationMeta(page, limit, total) };
+    return {
+      items: items.map((item) => withCatalogAggregates(item)),
+      meta: paginationMeta(page, limit, total),
+    };
   }
 
   async findOne(id: string) {
@@ -121,7 +149,7 @@ export class AdminProductsService {
       include: productInclude,
     });
     if (!product) throw new NotFoundException('Product not found');
-    return product;
+    return withCatalogAggregates(product);
   }
 
   async create(dto: AdminCreateProductDto, actorUserId: string) {
@@ -141,6 +169,22 @@ export class AdminProductsService {
     });
     if (!grade) {
       throw new BadRequestException('Grade not found or inactive');
+    }
+
+    // One ACTIVE listing per seller org + Grade Master (Catalog must reference gradeId).
+    const existingActive = await this.prisma.product.findFirst({
+      where: {
+        organizationId: dto.organizationId,
+        gradeId: dto.gradeId,
+        deletedAt: null,
+        status: ProductStatus.ACTIVE,
+      },
+      select: { id: true, code: true },
+    });
+    if (existingActive) {
+      throw new BadRequestException(
+        `This grade is already listed for this seller as ${existingActive.code}. Open the existing catalog listing instead of creating another.`,
+      );
     }
 
     const product = await this.prisma.product.create({
@@ -165,10 +209,10 @@ export class AdminProductsService {
       organizationId: dto.organizationId,
       entityType: EntityOwnerType.PRODUCT,
       entityId: product.id,
-      newData: { code: product.code, status: product.status },
+      newData: { code: product.code, status: product.status, gradeId: dto.gradeId },
     });
 
-    return product;
+    return withCatalogAggregates(product);
   }
 
   async update(id: string, dto: AdminUpdateProductDto, actorUserId: string) {
@@ -204,6 +248,7 @@ export class AdminProductsService {
     actorUserId: string,
   ) {
     const existing = await this.findOne(id);
+    // DTO Transform already maps legacy GradeStatus.INACTIVE → ProductStatus.PAUSED.
     const product = await this.prisma.product.update({
       where: { id },
       data: { status: dto.status },
@@ -220,7 +265,7 @@ export class AdminProductsService {
       newData: { status: dto.status },
     });
 
-    return product;
+    return withCatalogAggregates(product);
   }
 
   /**

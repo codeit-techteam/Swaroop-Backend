@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsEnum,
   IsOptional,
@@ -106,7 +107,16 @@ export class AdminUpdateProductDto {
 }
 
 export class AdminUpdateProductStatusDto {
-  @ApiProperty({ enum: ProductStatus })
+  @ApiProperty({
+    enum: ProductStatus,
+    description:
+      'ProductStatus values only. Legacy GradeStatus.INACTIVE is accepted and mapped to PAUSED.',
+  })
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim().toUpperCase() === 'INACTIVE'
+      ? ProductStatus.PAUSED
+      : value,
+  )
   @IsEnum(ProductStatus)
   status!: ProductStatus;
 }
