@@ -5,7 +5,10 @@ import {
   paginationMeta,
   skipTake,
 } from '../../master-data/common/pagination.js';
-import { toBlindOffer } from '../common/blind-marketplace.mapper.js';
+import {
+  dedupeBlindOffers,
+  toBlindOffer,
+} from '../common/blind-marketplace.mapper.js';
 import { CustomerContextService } from '../common/customer-context.service.js';
 import {
   activeMarketplaceOfferWhere,
@@ -95,7 +98,7 @@ export class OffersService {
     ]);
 
     return {
-      items: items.map((o) => toBlindOffer(o)),
+      items: dedupeBlindOffers(items.map((o) => toBlindOffer(o))),
       meta: paginationMeta(page, limit, total),
     };
   }

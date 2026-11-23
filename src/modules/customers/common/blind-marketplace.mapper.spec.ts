@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertMarketplaceOffer,
   buildFulfilmentInfo,
+  dedupeBlindOffers,
   dedupeBlindProducts,
   MarketplaceException,
   mergeGradeCatalogIntoSpecs,
@@ -201,6 +202,10 @@ describe('blind marketplace mapper', () => {
     const twinB = {
       ...twinA,
       id: 'prod-b',
+      technicalSpecs: {
+        origin: 'Northern India Region',
+        warehouseLabel: 'Delhi Hub',
+      },
       listing: { ...twinA.listing, quantityAvailable: 40 },
     };
     const cheaper = {
@@ -209,7 +214,38 @@ describe('blind marketplace mapper', () => {
       listing: { ...twinA.listing, price: 145000, quantityAvailable: 50 },
     };
     const deduped = dedupeBlindProducts([twinA, twinB, cheaper]);
+    // warehouseLabel alone must not keep twins; cheaper price stays distinct.
     expect(deduped.map((p) => p.id).sort()).toEqual(['prod-a', 'prod-c']);
+  });
+
+  it('B-06: collapses commercially identical offer payloads', () => {
+    const offerA = {
+      id: 'offer-a',
+      price: 124800,
+      moq: 12,
+      quantityAvailable: 100,
+      leadTime: '4–6 Days',
+      grade: { id: 'grade-abs', code: 'ABS_INJECTION' },
+      product: {
+        id: 'prod-a',
+        code: 'ABS-IM-150',
+        technicalSpecs: { origin: 'Northern India Region' },
+      },
+    };
+    const offerB = {
+      ...offerA,
+      id: 'offer-b',
+      quantityAvailable: 260,
+      product: { ...offerA.product, id: 'prod-b' },
+    };
+    const dearer = {
+      ...offerA,
+      id: 'offer-c',
+      price: 130000,
+      quantityAvailable: 50,
+    };
+    const deduped = dedupeBlindOffers([offerA, offerB, dearer]);
+    expect(deduped.map((o) => o.id).sort()).toEqual(['offer-b', 'offer-c']);
   });
 
   it('B-05: prefers white TiO2 product name over generic MASTERBATCH_BLACK grade label', () => {

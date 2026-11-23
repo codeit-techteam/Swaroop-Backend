@@ -14,6 +14,7 @@ import {
 } from '../../master-data/common/pagination.js';
 import {
   publicCatalogueManufacturer,
+  dedupeBlindOffers,
   dedupeBlindProducts,
   sanitizeBlindCode,
   sanitizeBlindDisplayName,
@@ -689,7 +690,7 @@ export class MarketplaceService {
     ]);
 
     return {
-      items: items.map((o) => toBlindOffer(o)),
+      items: dedupeBlindOffers(items.map((o) => toBlindOffer(o))),
       meta: paginationMeta(page, limit, total),
     };
   }

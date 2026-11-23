@@ -6,6 +6,7 @@ export {
   toBlindProduct,
   toBlindOffer,
   dedupeBlindProducts,
+  dedupeBlindOffers,
   toCustomerFacingPr,
   resolveOfferUnitPrice,
   assertMarketplaceOffer,

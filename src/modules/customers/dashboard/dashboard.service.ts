@@ -10,6 +10,7 @@ import {
   skipTake,
 } from '../../master-data/common/pagination.js';
 import {
+  dedupeBlindOffers,
   dedupeBlindProducts,
   toBlindOffer,
   toBlindProduct,
@@ -199,7 +200,7 @@ export class DashboardService {
         displayName: g.displayName ?? g.name,
         category: g.category,
       })),
-      offers: offers.map((o) => toBlindOffer(o)),
+      offers: dedupeBlindOffers(offers.map((o) => toBlindOffer(o))),
       meta: paginationMeta(page, limit, productTotal),
     };
   }

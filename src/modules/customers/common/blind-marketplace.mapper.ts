@@ -395,9 +395,10 @@ type BlindDedupeProduct = {
 
 /**
  * B-06: collapse indistinguishable marketplace cards.
- * Keeps distinct commercial offers (different price / MOQ / origin / ETA / warehouse).
+ * Keeps distinct commercial offers (different price / MOQ / origin / ETA).
  * When two listings are commercially identical (common with multi-seller demo seeds),
  * keep the one with more available stock.
+ * Warehouse is excluded — customer cards show origin/ETA, not hub label.
  */
 export function dedupeBlindProducts<T extends BlindDedupeProduct>(
   products: T[],
@@ -416,9 +417,6 @@ export function dedupeBlindProducts<T extends BlindDedupeProduct>(
     const origin = String(specs.origin ?? '')
       .trim()
       .toLowerCase();
-    const warehouse = String(specs.warehouseLabel ?? '')
-      .trim()
-      .toLowerCase();
     const gradeKey =
       product.grade?.id || product.grade?.code || product.code || product.id;
     const price = Number(product.listing?.price ?? 0);
@@ -427,7 +425,7 @@ export function dedupeBlindProducts<T extends BlindDedupeProduct>(
       .trim()
       .toLowerCase()
       .replace(/\s+/g, '');
-    return [gradeKey, price, moq, origin, warehouse, eta].join('::');
+    return [gradeKey, price, moq, origin, eta].join('::');
   };
 
   const bestByFingerprint = new Map<string, T>();
@@ -445,6 +443,69 @@ export function dedupeBlindProducts<T extends BlindDedupeProduct>(
     [...bestByFingerprint.values()].map((product) => product.id),
   );
   return unique.filter((product) => keep.has(product.id));
+}
+
+type BlindDedupeOffer = {
+  id: string;
+  price?: unknown;
+  moq?: unknown;
+  quantityAvailable?: unknown;
+  leadTime?: string | null;
+  grade?: { id?: string; code?: string } | null;
+  product?: {
+    id?: string;
+    code?: string;
+    technicalSpecs?: unknown;
+  } | null;
+  fulfilment?: { origin?: string | null } | null;
+};
+
+/** Same B-06 commercial fingerprint for offer-shaped marketplace payloads. */
+export function dedupeBlindOffers<T extends BlindDedupeOffer>(offers: T[]): T[] {
+  const byId = new Map<string, T>();
+  for (const offer of offers) {
+    if (!byId.has(offer.id)) byId.set(offer.id, offer);
+  }
+  const unique = [...byId.values()];
+
+  const fingerprint = (offer: T): string => {
+    const specs =
+      offer.product?.technicalSpecs &&
+      typeof offer.product.technicalSpecs === 'object'
+        ? (offer.product.technicalSpecs as Record<string, unknown>)
+        : {};
+    const origin = String(offer.fulfilment?.origin ?? specs.origin ?? '')
+      .trim()
+      .toLowerCase();
+    const gradeKey =
+      offer.grade?.id ||
+      offer.grade?.code ||
+      offer.product?.code ||
+      offer.id;
+    const price = Number(offer.price ?? 0);
+    const moq = Number(offer.moq ?? 0);
+    const eta = String(offer.leadTime ?? specs.eta ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '');
+    return [gradeKey, price, moq, origin, eta].join('::');
+  };
+
+  const bestByFingerprint = new Map<string, T>();
+  for (const offer of unique) {
+    const key = fingerprint(offer);
+    const previous = bestByFingerprint.get(key);
+    const stock = Number(offer.quantityAvailable ?? 0);
+    const previousStock = Number(previous?.quantityAvailable ?? 0);
+    if (!previous || stock > previousStock) {
+      bestByFingerprint.set(key, offer);
+    }
+  }
+
+  const keep = new Set(
+    [...bestByFingerprint.values()].map((offer) => offer.id),
+  );
+  return unique.filter((offer) => keep.has(offer.id));
 }
 
 function inactiveTierIds(metadata: unknown): Set<string> {
